@@ -1,0 +1,41 @@
+# Object files
+*.o
+
+# FPC Lib
+lib/
+
+# Compiled binaries
+
+# Compiled Units
+*.dcu
+*.ppu
+
+# Executable files
+*.exe
+*.dll
+
+
+# Model weights (large files)
+flux-klein-*/
+zimage-*/
+
+# Misc directories (tests, images, utilities, markdown files)
+misc/
+documents/
+backup/
+
+# IDE and editor files
+.vscode/
+*.swp
+*.swo
+*~
+
+# Debug file
+*.dbg
+
+.DS_Store
+
+# Build artifacts
+*.a
+*.so
+*.dylib

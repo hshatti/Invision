@@ -1,0 +1,414 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <ProjectSession>
+    <PathDelim Value="\"/>
+    <Version Value="12"/>
+    <BuildModes Active="Release"/>
+    <Units>
+      <Unit>
+        <Filename Value="invision.lpr"/>
+        <IsPartOfProject Value="True"/>
+        <IsVisibleTab Value="True"/>
+        <CursorPos X="64" Y="9"/>
+        <UsageCount Value="223"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\src\safetensor.pas"/>
+        <IsPartOfProject Value="True"/>
+        <EditorIndex Value="1"/>
+        <TopLine Value="321"/>
+        <CursorPos X="11" Y="363"/>
+        <UsageCount Value="223"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\src\quickjson.pas"/>
+        <IsPartOfProject Value="True"/>
+        <EditorIndex Value="8"/>
+        <TopLine Value="497"/>
+        <CursorPos X="21" Y="693"/>
+        <UsageCount Value="200"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\src\quicknn_kernels.pas"/>
+        <IsPartOfProject Value="True"/>
+        <EditorIndex Value="2"/>
+        <TopLine Value="56"/>
+        <CursorPos X="22" Y="75"/>
+        <UsageCount Value="200"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="quicknn_common.pas"/>
+        <IsPartOfProject Value="True"/>
+        <EditorIndex Value="6"/>
+        <TopLine Value="12"/>
+        <CursorPos X="3" Y="53"/>
+        <UsageCount Value="200"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\rtl\inc\systemh.inc"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="1191"/>
+        <CursorPos X="11" Y="1210"/>
+        <UsageCount Value="76"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\darknet\yolo4\pascal\source\NN\source\nXML.pas"/>
+        <EditorIndex Value="13"/>
+        <TopLine Value="227"/>
+        <CursorPos X="54" Y="13"/>
+        <UsageCount Value="100"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\rtl\objpas\sysutils\syswideh.inc"/>
+        <EditorIndex Value="-1"/>
+        <CursorPos X="67" Y="32"/>
+        <UsageCount Value="68"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\rtl\inc\varianth.inc"/>
+        <EditorIndex Value="12"/>
+        <TopLine Value="8"/>
+        <CursorPos X="4" Y="20"/>
+        <UsageCount Value="107"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\rtl\inc\variant.inc"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="1069"/>
+        <CursorPos X="5" Y="1071"/>
+        <UsageCount Value="69"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\packages\rtl-objpas\src\inc\variants.pp"/>
+        <UnitName Value="Variants"/>
+        <EditorIndex Value="11"/>
+        <TopLine Value="56"/>
+        <CursorPos X="10" Y="74"/>
+        <UsageCount Value="99"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\rtl\objpas\sysutils\sysutilh.inc"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="279"/>
+        <CursorPos X="12" Y="319"/>
+        <UsageCount Value="3"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\rtl\inc\file.inc"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="417"/>
+        <CursorPos X="28" Y="428"/>
+        <UsageCount Value="2"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\rtl\win\sysfile.inc"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="160"/>
+        <CursorPos X="10" Y="182"/>
+        <UsageCount Value="2"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\rtl\objpas\math.pp"/>
+        <UnitName Value="Math"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="1603"/>
+        <CursorPos X="6" Y="1605"/>
+        <UsageCount Value="67"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\darknet\yolo4\pascal\source\NN\source\ntensors.pas"/>
+        <EditorIndex Value="7"/>
+        <TopLine Value="12304"/>
+        <CursorPos Y="12326"/>
+        <FoldState Value=" TM HotT22&apos;"/>
+        <UsageCount Value="100"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\src\steroids.pas"/>
+        <EditorIndex Value="3"/>
+        <TopLine Value="563"/>
+        <CursorPos Y="581"/>
+        <UsageCount Value="102"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\packages\winunits-base\src\ole2.pp"/>
+        <UnitName Value="Ole2"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="47"/>
+        <UsageCount Value="16"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\packages\winunits-base\src\oleserver.pp"/>
+        <UnitName Value="OleServer"/>
+        <EditorIndex Value="-1"/>
+        <UsageCount Value="16"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\packages\winunits-base\src\comobj.pp"/>
+        <UnitName Value="ComObj"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="10"/>
+        <CursorPos X="40" Y="28"/>
+        <UsageCount Value="16"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\packages\winunits-base\src\activex.pp"/>
+        <UnitName Value="ActiveX"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="61"/>
+        <CursorPos X="31" Y="78"/>
+        <UsageCount Value="16"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\rtl\objpas\sysutils\sysstrh.inc"/>
+        <EditorIndex Value="9"/>
+        <TopLine Value="86"/>
+        <CursorPos X="10" Y="105"/>
+        <UsageCount Value="43"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\src\quicknn_tokenizer.pas"/>
+        <IsPartOfProject Value="True"/>
+        <EditorIndex Value="4"/>
+        <TopLine Value="291"/>
+        <CursorPos Y="246"/>
+        <UsageCount Value="176"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\packages\rtl-objpas\src\inc\widestrutils.pp"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="79"/>
+        <UsageCount Value="1"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\rtl\inc\ustringh.inc"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="134"/>
+        <CursorPos X="16" Y="141"/>
+        <UsageCount Value="2"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\rtl\inc\ustrings.inc"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="2384"/>
+        <CursorPos X="3" Y="2389"/>
+        <UsageCount Value="2"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\rtl\inc\strings.pp"/>
+        <UnitName Value="Strings"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="76"/>
+        <UsageCount Value="1"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\rtl\objpas\sysutils\sysstr.inc"/>
+        <EditorIndex Value="10"/>
+        <TopLine Value="626"/>
+        <CursorPos X="7" Y="632"/>
+        <UsageCount Value="43"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\packages\rtl-generics\src\inc\generics.dictionariesh.inc"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="246"/>
+        <CursorPos X="14" Y="265"/>
+        <UsageCount Value="6"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\packages\rtl-generics\src\inc\generics.dictionaries.inc"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="31"/>
+        <CursorPos X="3" Y="34"/>
+        <UsageCount Value="6"/>
+      </Unit>
+      <Unit>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <IsPartOfProject Value="True"/>
+        <EditorIndex Value="5"/>
+        <TopLine Value="493"/>
+        <CursorPos X="68" Y="509"/>
+        <UsageCount Value="110"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\rtl\inc\sstrings.inc"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="245"/>
+        <CursorPos X="3" Y="253"/>
+        <UsageCount Value="7"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\rtl\objpas\sysutils\sysunih.inc"/>
+        <EditorIndex Value="-1"/>
+        <CursorPos X="10" Y="22"/>
+        <UsageCount Value="6"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\lazarus\fpc\3.2.2\source\rtl\objpas\sysutils\sysuni.inc"/>
+        <EditorIndex Value="-1"/>
+        <TopLine Value="89"/>
+        <CursorPos X="5" Y="93"/>
+        <UsageCount Value="6"/>
+      </Unit>
+    </Units>
+    <JumpHistory HistoryIndex="29">
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="87" Column="26" TopLine="59"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="92" Column="26" TopLine="64"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="97" Column="26" TopLine="69"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="104" Column="30" TopLine="89"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="381" Column="33" TopLine="355"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="50" Column="16" TopLine="33"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="112" Column="19" TopLine="106"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="354" Column="20" TopLine="332"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="112" Column="10" TopLine="95"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="82" Column="22" TopLine="59"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="84" TopLine="59"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="114" Column="26" TopLine="89"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="479" Column="69" TopLine="501"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="535" Column="21" TopLine="501"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="533" Column="55" TopLine="501"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="534" TopLine="501"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="535" TopLine="501"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="537" TopLine="501"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="534" TopLine="501"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="535" TopLine="501"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="534" TopLine="501"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="533" TopLine="501"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="537" TopLine="501"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="533" TopLine="501"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="537" TopLine="501"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="533" TopLine="501"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="537" TopLine="501"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="533" TopLine="501"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="537" TopLine="501"/>
+      </Position>
+      <Position>
+        <Filename Value="qwen3_tokenizer.pas"/>
+        <Caret Line="533" TopLine="501"/>
+      </Position>
+    </JumpHistory>
+    <RunParams>
+      <FormatVersion Value="2"/>
+      <Modes ActiveMode=""/>
+    </RunParams>
+  </ProjectSession>
+  <Debugging>
+    <BreakPoints>
+      <Item>
+        <Kind Value="bpkSource"/>
+        <WatchScope Value="wpsLocal"/>
+        <WatchKind Value="wpkWrite"/>
+        <Source Value="..\..\..\lazarus\fpc\3.2.2\source\rtl\inc\ustrings.inc"/>
+        <Line Value="1714"/>
+      </Item>
+    </BreakPoints>
+    <Watches>
+      <Item>
+        <Expression Value="i"/>
+      </Item>
+      <Item>
+        <Expression Value="str[i]"/>
+      </Item>
+    </Watches>
+  </Debugging>
+</CONFIG>
