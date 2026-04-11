@@ -194,11 +194,6 @@ begin
 
 end;
 
-function ifthen(const cond:boolean; const ifTrue, ifFalse:longint):longint;
-begin
-  if cond then result:= ifTrue else result := iffalse
-end;
-
 function TQNNTokenizer.tokenize(const aText: RawByteString; maxLen: longint): TArray<longint>;
 var
   words : TArray<RawByteString>;

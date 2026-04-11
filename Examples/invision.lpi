@@ -42,6 +42,9 @@
             </Debugging>
             <LinkSmart Value="True"/>
           </Linking>
+          <Other>
+            <CustomOptions Value="-dUSE_MULTITHREADING"/>
+          </Other>
         </CompilerOptions>
       </Item>
     </BuildModes>
@@ -70,7 +73,7 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
-        <Filename Value="quicknn_common.pas"/>
+        <Filename Value="..\src\quicknn_common.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
@@ -79,6 +82,14 @@
       </Unit>
       <Unit>
         <Filename Value="qwen3_tokenizer.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\src\quicknn_transformers.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\src\sixel.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
     </Units>
@@ -115,6 +126,10 @@
         <TrashVariables Value="True"/>
       </Debugging>
     </Linking>
+    <Other>
+      <CustomOptions Value="-dUSE_MULTITHREADING
+-dDEBUG"/>
+    </Other>
   </CompilerOptions>
   <Debugging>
     <Exceptions>

@@ -119,8 +119,8 @@ type
     TJSONType = (jtNone, jtNull, jtString, jtInteger, jtFloat, jtBoolean, jtArray, jtObject);
     //TNestedStack = array[0..MAX_STACK] of TToken;
   private
-    function GetElement(key: variant): TJSON;
-    procedure SetElement(key: variant; AValue: TJSON);
+    function GetElement(const key: variant): TJSON;
+    procedure SetElement(const key: variant; const AValue: TJSON);
   public
     jsonType : TJSONType;
     name : string;
@@ -139,9 +139,9 @@ type
     // remove will return true on success, false if no key found
     function remove(const key:string):boolean; overload;
     function remove(const index:int64):boolean; overload;
-    property element[const key:variant]:TJSON read GetElement write Setelement ;default;
+    property element[const key:variant]:TJSON read GetElement write SetElement ;default;
     class function parse(jsonText:string):TJSON; overload; static;
-    class function LoadFromFile(const filename:string):TJSON; static;  overload;
+    class function LoadFromFile(const filename:string):TJSON; overload; static;
 
     class operator implicit(const val: TArray<variant>):TJSON;
 
@@ -158,12 +158,14 @@ type
     class operator implicit(const val: TJSON):int64;
     class operator implicit(const val: TJSON):longint;
     class operator implicit(const val: TJSON):double;
+    class operator implicit(const val: TJSON):single;
     class operator implicit(const val: TJSON):string;
     class operator implicit(const val: TJSON):boolean;
 
     class operator implicit(const val: int64):TJSON;
     class operator implicit(const val: longint):TJSON;
     class operator implicit(const val: double):TJSON;
+    class operator implicit(const val: single):TJSON;
     class operator implicit(const val: string):TJSON;
     class operator implicit(const val: boolean):TJSON;
 
@@ -191,7 +193,7 @@ begin
   i:=1;
   while i<=length(str) do begin
     if (i<length(str)) and (str[i]=aEsc) then begin
-      case LowerCase(str[i+1]) of
+      case PCHAR(LowerCase(str[i+1]))^ of
         ESCAPE:
           begin
             result[j]:=ESCAPE;
@@ -237,14 +239,18 @@ begin
   while i<=length(str) do begin
     case str[i] of
       CARRIAGE_RETURN:
-        result := result + ESCAPE+'r';
+        insert(ESCAPE+'r', result, length(result)+1);
+        //result := result + ESCAPE+'r';
       LINE_FEED:
-        result := result + ESCAPE+'n';
+        insert(ESCAPE+'n', result, length(result)+1);
+        //result := result + ESCAPE+'n';
 
       DBLQUOTE,TAB, ESCAPE:
-        result := result + ESCAPE+str[i]
+        insert(ESCAPE+str[i], result, length(result)+1);
+        //result := result + ESCAPE+str[i]
 
       else
+        insert(str[i], result, length(result)+1);
         result := result + str[i]
     end;
     inc(i);
@@ -268,6 +274,9 @@ function c_quote(const str:string; const aQuote:char=DBLQUOTE):string;
 begin
   result := aQuote+c_desanitize(str)+aQuote ;
 end;
+
+// TODO [splitBy]  mayberevisit parsing to use 2D array of string returned by <splitBy> instead of 1D,
+// where it should parse the depth and the string in one shot instead of using recursion
 
 function splitBy(str:string; out keys:TArray<string>;const seperator:char = COMMA; const openBrackets: string = OPEN_BRACKETS; const closeBrackets:string = CLOSE_BRACKETS; const aQuote:char = DBLQUOTE; const aEsc:char = ESCAPE):TArray<string>;
 var
@@ -411,7 +420,7 @@ end;
 
 { TJSON }
 
-function TJSON.GetElement(key: variant): TJSON;
+function TJSON.GetElement(const key: variant): TJSON;
 var i:int64;
   obj: TArray<TJSON>;
 begin
@@ -454,7 +463,7 @@ begin
   end
 end;
 
-procedure TJSON.SetElement(key: variant; AValue: TJSON);
+procedure TJSON.SetElement(const key: variant; const AValue: TJSON);
 var i:int64;
 begin
   case tvardata(key).vtype of
@@ -464,12 +473,14 @@ begin
         jsonType:=jtObject;
         for i:=0 to high(childObjs) do // todo implement a hashmap instead of scan search
           if sameStr(childObjs[i].name, key) then begin
-            AValue.name := key;
+            //AValue.name := key;
             childObjs[i] := AValue;
+            childObjs[i].name := key;
             exit
           end;
-        AValue.name := key;
+        //AValue.name := key;
         insert(AValue, childObjs, length(childObjs));
+        childObjs[high(childObjs)].name := key
 
       end;
     varInt64:
@@ -672,14 +683,15 @@ end;
 class function TJSON.parse(jsonText: string): TJSON;
 const ERR = 'ERROR : Invalid JSON format!';
 var
-  vals : array of string;
-  keys: array of string;
+  vals : TArray<string>;
+  keys: TArray<string>;
   sVal:string;
-  iVal, i, t:int64;
+  iVal, i:int64;
   fVal:double;
   bVal:boolean;
   elementPtr : ^TJSON;
 begin
+
   jsonText:= trim(jsonText);
   result := default(TJSON);
   assert(length(jsonText)>1, ERR);
@@ -688,13 +700,15 @@ begin
       begin
         assert(jsonText[length(jsonText)]=OBJ_CLOSE,ERR+ ' incorrect character at the end of the string, must be a curly bracket.');
         result.jsonType:=jtObject;
-        //t:=GetTickCount64;
+        // todo [parse] maybe we should return an array of
+        // <TJSONStrView = record str: PCHAR {string start}; Len:NativeInt end;>
+        // instead of copyinging (implicitly allocating) a whole sub string to an array element
         vals := splitBy(copy(jsonText,2, length(jsonText)-2), keys);
-        //t:= GetTickCount64-t;
         if assigned(vals) then
           assert(assigned(keys), 'ERROR : no key specified:'+sLineBreak+copy(jsonText, 1, MAX_ERR_MSG)+ELPS);
         assert(length(keys)=length(vals), 'ERROR : Unable to parse :'+sLineBreak+copy(jsonText, 1, MAX_ERR_MSG)+ELPS);
         for i:=0 to high(vals) do begin
+          // todo [parse] implement a hashmap insead of appending to an array
           setLength(result.childObjs, length(result.ChildObjs)+1);
           elementPtr := @result.childObjs[high(result.childObjs)];
           elementPtr.name:= c_unquote(keys[i]);
@@ -702,19 +716,23 @@ begin
             elementPtr.value := iVal;
             elementPtr.jsonType:=jtInteger;
           end else
-          if TryStrToBool(vals[i], bVal) then begin
-            elementPtr.value := bVal;
-            elementPtr.jsonType:=jtBoolean;
+          if tryStrToFloat(vals[i], fVal) then begin
+            elementPtr.value := fVal;
+            elementPtr.jsonType:=jtFloat;
           end else
           if SameText(vals[i],'null') then begin
             elementPtr.value := Null;
             elementPtr.jsonType:=jtNull;
           end else
-          if tryStrToFloat(vals[i], fVal) then begin
-            elementPtr.value := fVal;
-            elementPtr.jsonType:=jtFloat;
+          if TryStrToBool(vals[i], bVal) then begin
+            elementPtr.value := bVal;
+            elementPtr.jsonType:=jtBoolean;
           end else
+          // TODO [parse] revisit to use 2D Array of strings instead of recursion
           if vals[i][1] in [OBJ_OPEN,ARR_OPEN] then
+            // todo [parse] maybe better to pass the string as a reference to a
+            // <TJSONStrView = record str: PCHAR {string start}; Len:NativeInt end;>
+            // instead of copying a string)
             insert(TJSON.parse(vals[i]), elementPtr.childObjs, length(elementPtr.childObjs))
           else begin
             elementPtr.value:=c_unquote(vals[i], true);
@@ -737,17 +755,17 @@ begin
             elementPtr.value := iVal;
             elementPtr.jsonType:=jtInteger;
           end else
-          if TryStrToBool(vals[i], bVal) then begin
-            elementPtr.value := bVal;
-            elementPtr.jsonType:=jtBoolean;
+          if tryStrToFloat(vals[i], fVal) then begin
+            elementPtr.value := fVal;
+            elementPtr.jsonType:=jtFloat;
           end else
           if SameText(vals[i],'null') then begin
             elementPtr.value := Null;
             elementPtr.jsonType:=jtNull;
           end else
-          if tryStrToFloat(vals[i], fVal) then begin
-            elementPtr.value := fVal;
-            elementPtr.jsonType:=jtFloat;
+          if TryStrToBool(vals[i], bVal) then begin
+            elementPtr.value := bVal;
+            elementPtr.jsonType:=jtBoolean;
           end else
           if vals[i][1] in [OBJ_OPEN,ARR_OPEN] then
             insert(TJSON.parse(vals[i]), elementPtr.childObjs, length(elementPtr.childObjs))
@@ -881,6 +899,12 @@ begin
   result := val.value
 end;
 
+class operator TJSON.implicit(const val: TJSON): single;
+begin
+  assert(val.jsonType=jtFloat, 'ERROR : element is not of a float!');
+  result := val.value
+end;
+
 class operator TJSON.implicit(const val: TJSON): string;
 begin
   assert(val.jsonType=jtString, 'ERROR : element is not of a string!');
@@ -908,6 +932,13 @@ begin
 end;
 
 class operator TJSON.implicit(const val: double): TJSON;
+begin
+  result := default(TJSON);
+  result.jsonType := jtFloat;
+  result.value := val
+end;
+
+class operator TJSON.implicit(const val: single): TJSON;
 begin
   result := default(TJSON);
   result.jsonType := jtFloat;

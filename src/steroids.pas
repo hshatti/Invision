@@ -416,7 +416,7 @@ begin
     {$else}
     {$ifdef MSWINDOWS}setEvent(Pool[i].Fire){$else}Pool[i].Fire.SetEvent{$endif};
     {$endif}
-    // FPC is raising an exception while freeing
+    // If terminated thread will be automatically destroyed when fired, no need to free
     //pool[i].free
     //freeandNil(Pool[i]);
   end;
@@ -427,7 +427,6 @@ begin
   FreeAndNil(PoolDone);
   {$endif}
   inherited Destroy;
-
 end;
 
 procedure TOPool.setWorkers(Count: longint);
@@ -478,57 +477,65 @@ begin
     {$else}
     {$ifdef MSWINDOWS}WaitForSingleObject(Fire,INFINITE){$else}Fire.WaitFor(){$endif};
     {$endif}
-    //if not Terminated then begin
-      if Assigned(FProc) then begin
-        FProc(FStart,FEnd,FParams);
-        FProc:=nil;
-      end;
+    if Terminated then begin
+      //FBusy:=false;
+      //{$ifdef FPC}
+      ////RTLEventSetEvent(FPool.PoolDone);
+      //InterLockedDecrement(FPool.OTCount);
+      //{$else}
+      ////FPool.PoolDone.SetEvent;
+      //TInterLocked.Decrement(FPool.OTCount);
+      //{$endif}
+      exit;
+    end;
 
-      if Assigned(FProcNested) then begin
-        FProcNested(FStart,FEnd,FParams);
-        FProcNested:=nil;
-      end;
-      if Assigned(FMethod) then begin
-        FMethod(FStart,FEnd,FParams);
-        FMethod:=nil;
-      end;
+    if Assigned(FProc) then begin
+      FProc(FStart,FEnd,FParams);
+      FProc:=nil;
+    end;
 
-      if Assigned(FThreadProc2) then begin
-        while FStart<FEnd do begin
-           FThreadProc2(FStart,FParams);
-           if assigned(FSync) then
-                Queue(FSync);
-           inc(FStart, FSpan);
-        end;
-        FThreadProc2:=nil;
+    if Assigned(FProcNested) then begin
+      FProcNested(FStart,FEnd,FParams);
+      FProcNested:=nil;
+    end;
+    if Assigned(FMethod) then begin
+      FMethod(FStart,FEnd,FParams);
+      FMethod:=nil;
+    end;
+
+    if Assigned(FThreadProc2) then begin
+      while FStart<FEnd do begin
+         FThreadProc2(FStart,FParams);
+         if assigned(FSync) then
+              Queue(FSync);
+         inc(FStart, FSpan);
       end;
-      if Assigned(FThreadProcNested) then begin
-        while FStart<FEnd do begin
-           FThreadProcNested(FStart,FParams);
-           if assigned(FSync) then
-                Queue(FSync);
-           inc(FStart, FSpan);
-        end;
-        FThreadProcNested:=nil;
+      FThreadProc2:=nil;
+    end;
+    if Assigned(FThreadProcNested) then begin
+      while FStart<FEnd do begin
+         FThreadProcNested(FStart,FParams);
+         if assigned(FSync) then
+              Queue(FSync);
+         inc(FStart, FSpan);
       end;
-      {$ifndef FPC}
-      {$ifdef MSWINDOWS}
+      FThreadProcNested:=nil;
+    end;
+    {$ifndef FPC}
+    {$ifdef MSWINDOWS}
 //        ResetEvent(Fire);
-      {$else}
-        Fire.ResetEvent();
-      {$endif}
-      {$endif}
-      FBusy:=false;
-      {$ifdef FPC}
-      RTLEventSetEvent(FPool.PoolDone);
-      InterLockedDecrement(FPool.OTCount);
-      {$else}
-      FPool.PoolDone.SetEvent;
-      TInterLocked.Decrement(FPool.OTCount);
-      {$endif}
-    //end
-    //else
-    //    exit;
+    {$else}
+      Fire.ResetEvent();
+    {$endif}
+    {$endif}
+    FBusy:=false;
+    {$ifdef FPC}
+    RTLEventSetEvent(FPool.PoolDone);
+    InterLockedDecrement(FPool.OTCount);
+    {$else}
+    FPool.PoolDone.SetEvent;
+    TInterLocked.Decrement(FPool.OTCount);
+    {$endif}
   end
 end;
 
@@ -576,6 +583,9 @@ begin
   {$else}
   Fire.Free;
   {$endif}
+  {$endif}
+  {$ifdef DEBUG}
+  //writeln('[Steroids] Freeing thread pool, Current pool size is : ', length(FPool.Pool));
   {$endif}
   inherited Destroy;
 end;
@@ -801,7 +811,7 @@ initialization
   MP2:=TOPool.Create(2);
   MP4:=TOPool.Create(4);
   MP8:=TOPool.Create(8);
-
+  //
 
 finalization
   if assigned(mp8) then
