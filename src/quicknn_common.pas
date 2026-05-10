@@ -15,16 +15,19 @@ unit quicknn_common;
 {$pointermath on}
 {$Z4}  // enums ar aligned to 4 bytes to match C API
 
+{$define USE_CALLOC}
+
 interface
 uses Classes, Types, typinfo, generics.Collections;
-{$if not declared(FP16)}
+
+//{$if not declared(FP16)}
 type
   BF16 = type word;
   PBF16 = ^BF16;
 
   FP16  = type word;
   PFP16 = ^FP16;
-{$endif}
+//{$endif}
 
 {$if not declared(TThreadProcNested)}
 type
@@ -40,13 +43,6 @@ type
 {$endif}
 
 type
-  PQNNImage = ^TQNNImage;
-  TQNNImage = record
-      width : longint;
-      height : longint;
-      channels : longint;// RGB
-      data : PByte;      (* Row-major, channel-interleaved *)
-  end;
 
   INT4 = -8..7;
   TINT4Array = packed array[0..MaxInt-1] of INT4;
@@ -81,6 +77,20 @@ type
   PQNNFloat = PSingle;//^QNNFloat;
   QNNFloat = single;
 
+
+  PQNNImage = ^TQNNImage;
+
+  { TQNNImage }
+
+  TQNNImage = record
+      width : longint;
+      height : longint;
+      channels : longint;// RGB
+      data : TArray<byte>;      (* Row-major, channel-interleaved *)
+      constructor Create(const aWidth, aHeight:longint; const aChannels : longint =3; const aData:PQNNFloat =nil);
+      procedure free();
+  end;
+
 const
   DATATYPE_BITS : array[low(TQNNDataType)..high(TQNNDataType)] of byte=
         (0, 16, 16, 32, 32, 8, 8, 64, 1, 8, 8, 4, 4, 8, 4, 4, 16, 16) ;
@@ -94,13 +104,27 @@ type
   TMemoryBlock = record
       DataType : TQNNDataType;
       DataPtr  : pointer;
+{$ifdef USE_CALLOC}
+      size     : NativeInt;
+      Data32   : PLongWord;
+      Data16   : PSmallInt;
+      Data8    : PByte;
+      Data4    : PInt4;
+{$else}
       Data32   : TArray<LongWord>;
       Data16   : TArray<WORD>;
       Data8    : TArray<Byte>;
       Data4    : TArray<INT4>;
+{$endif}
       constructor Create(const aSize:NativeInt; const dType:TQNNDataType = QNN_DATATYPE; const src : pointer =nil);
+      procedure reSize(const aSize:NativeInt);
+      procedure free();
       function count:NativeInt;
-      class operator implicit(const val:Pointer ):TMemoryBlock;
+      function isAssigned():boolean;
+      procedure printStat;
+      //class operator implicit(const val:Pointer ):TMemoryBlock;
+
+{$ifndef USE_CALLOC}
       class operator implicit(const val:TArray<longint> ):TMemoryBlock;
       class operator implicit(const val:TArray<single>  ):TMemoryBlock;
       class operator implicit(const val:TArray<BF16>    ):TMemoryBlock;
@@ -116,7 +140,7 @@ type
       class operator implicit(const val:TMemoryBlock):TArray<smallint>;
       class operator implicit(const val:TMemoryBlock):TArray<shortint>;
       class operator implicit(const val:TMemoryBlock):TArray<INT4>;
-
+{$endif}
       class operator implicit(const val:PLongint ):TMemoryBlock;
       class operator implicit(const val:PSingle  ):TMemoryBlock;
       class operator implicit(const val:PBF16    ):TMemoryBlock;
@@ -135,6 +159,14 @@ type
       class operator implicit(const val:TMemoryBlock):boolean ;
 
       class operator Initialize({$ifdef FPC}var{$else}out{$endif} val:TMemoryBlock);
+  end;
+
+  { TImageRef }
+  PImageRef = ^TImageRef;
+
+  TImageRef = record
+    w, h, offset : longint;
+    latent : PQNNFloat;
   end;
 
   { IMemoryArena }
@@ -162,6 +194,8 @@ type
 
   TVocabs = TDictionary<string, longint>;
 
+  TCHMult = array[0..3] of longint;
+
 const
   TAB = #9;
   LF  = #10;
@@ -184,6 +218,7 @@ const
   QNN_VAE_CH_MULT_1      = 2    ;
   QNN_VAE_CH_MULT_2      = 4    ;
   QNN_VAE_CH_MULT_3      = 4    ;
+  QNN_VAE_CH_MULT        : TCHMult = (QNN_VAE_CH_MULT_0, QNN_VAE_CH_MULT_1, QNN_VAE_CH_MULT_2, QNN_VAE_CH_MULT_3);
   QNN_VAE_NUM_RES        = 2    ;
   QNN_VAE_GROUPS         = 32   ;
   QNN_VAE_MAX_DIM        = 1792 ; (* Max image dimension for VAE *)
@@ -195,60 +230,19 @@ const
   (* Sampling *)
   QNN_MAX_STEPS          = 256     ;
 
-type
-  (* ========================================================================
-   * Opaque Types
-   * ======================================================================== *)
 
-  TQNNctx = record
-
-      (* Configuration *)
-      max_width          : longint ;
-      max_height         : longint ;
-      default_steps      : longint ;
-      default_guidance   : QNNFloat ;
-      is_distilled       : longint ;  (* 1 = distilled (4-step), 0 = base (50-step CFG) *)
-      text_dim           : longint ;      (* Text embedding dimension (7680 for 4B, varies for 9B) *)
-      is_non_commercial  : longint ; (* 1 if model has non-commercial license (9B) *)
-      num_heads          : longint ;     (* Transformer attention heads (24 for 4B, 32 for 9B) *)
-      is_zimage          : longint ;     (* 1 = Z-Image S3-DiT, 0 = Flux MMDiT *)
-
-      (* Z-Image specific config (from transformer/config.json) *)
-      zi_dim             : longint   ;            (* Hidden dim (3840) *)
-      zi_n_layers        : longint   ;       (* Main transformer layers (30) *)
-      zi_n_refiner       : longint   ;      (* Noise/context refiner layers (2) *)
-      zi_cap_feat_dim    : longint   ;   (* Caption feature dim (2560) *)
-      zi_in_channels     : longint   ;    (* VAE latent channels (16) *)
-      zi_patch_size      : longint   ;     (* Spatial patch size (2) *)
-      zi_rope_theta      : QNNFloat ;   (* RoPE theta (256.0) *)
-      zi_axes_dims       : array[0..2] of longint   ;   (* RoPE axis dims [32, 48, 48] *)
-      zi_latent_channels : longint   ;(* Patchified latent channels (64 = 16*2*2) *)
-
-      (* VAE config (read from vae/config.json) *)
-      vae_z_channels     : longint   ;    (* Latent channels before patchify (32 Flux, 16 Z-Image) *)
-      vae_scaling        : QNNFloat ;     (* Scaling factor (0.3611 for Z-Image, 0 = use batch norm) *)
-      vae_shift          : QNNFloat ;       (* Shift factor (0.1159 for Z-Image, 0 = use batch norm) *)
-
-      (* Model info *)
-      model_name, model_version, model_dir : string  ;  (* For reloading text encoder if released *)
-
-      (* Memory mode *)
-      use_mmap           : boolean   ;  (* Use mmap for text encoder (lower memory, slower) *)
-  end;
-
-
-const
+//const
   (* ========================================================================
    * Generation Parameters
    * ======================================================================== *)
 
   (* Schedule type: 0 = model default (sigmoid for Flux, flowmatch for Z-Image) *)
 
-  QNN_SCHEDULE_DEFAULT   = 0;
-  QNN_SCHEDULE_LINEAR    = 1;
-  QNN_SCHEDULE_POWER     = 2;
-  QNN_SCHEDULE_SIGMOID   = 3;  (* Flux shifted sigmoid *)
-  QNN_SCHEDULE_FLOWMATCH = 4;  (* Z-Image FlowMatch Euler *)
+  //QNN_SCHEDULE_DEFAULT   = 0;
+  //QNN_SCHEDULE_LINEAR    = 1;
+  //QNN_SCHEDULE_POWER     = 2;
+  //QNN_SCHEDULE_SIGMOID   = 3;  (* Flux shifted sigmoid *)
+  //QNN_SCHEDULE_FLOWMATCH = 4;  (* Z-Image FlowMatch Euler *)
 
 type
   TQNNParams = record
@@ -271,7 +265,7 @@ const
      num_steps : 0;
      seed      : -1;
      guidance  : 0.0;
-     schedule  : QNN_SCHEDULE_DEFAULT;
+     schedule  : 0;//QNN_SCHEDULE_DEFAULT;
      power_alpha : 2.0
   );
 
@@ -293,24 +287,269 @@ function ifthen(const cond:boolean; const ifTrue, ifFalse:double):double;   over
 function ifthen(const cond:boolean; const ifTrue, ifFalse:string):string;   overload;inline;
 
 
+function readInt(var f:file):longint;
+function readSingles(var f:file; const count:longint):TMemoryBlock;
+
+{$if defined(MSWINDOWS)}
+function calloc(count, size:UIntPtr):pointer;WINAPI;external 'msvcrt.dll';
+function malloc(size:UIntPtr):pointer;WINAPI;external 'msvcrt.dll';
+function realloc(mem:pointer; size:UIntPtr):pointer;WINAPI;external 'msvcrt.dll';
+procedure free(mem:pointer);WINAPI;external 'msvcrt.dll';
+{$else}
+function calloc(count, size:UIntPtr):pointer;WINAPI;external;
+function malloc(size:UIntPtr):pointer;WINAPI;external;
+function realloc(mem:pointer; size:UIntPtr):pointer;WINAPI;external;
+procedure free(mem:pointer);WINAPI;external;
+{$endif}
+
+type
+  TSubstepType = (
+    SUBSTEP_DOUBLE_BLOCK,  // Double-stream block completed
+    SUBSTEP_SINGLE_BLOCK,  // Single-stream block completed
+    SUBSTEP_FINAL_LAYER    // Final layer completed
+  ) ;
+
+  (*
+   * Substep callback - called during transformer forward pass.
+   * type: which operation completed
+   * index: 0-based index of this substep within its type
+   * total: total count for this substep type
+   *)
+  TSubstepCallback = procedure( &type :TSubstepType; index :longint; total: longint);
+
+  (*
+   * Step callback - called at sampling step boundaries.
+   * step: current step (1-based), or 0 to indicate sampling is starting
+   * total: total number of steps
+   *)
+  TStepCallback = procedure (step:longint; total:longint);
+
+
+  (*
+   * Phase callback - called at major phase boundaries.
+   * phase: descriptive name ("encoding text", "decoding image", etc.)
+   * done: 0 when starting, 1 when finished
+   *)
+  TPhaseCallback = procedure (const phase :string; const done:boolean);
+
+  (*
+   * Step image callback - called after each denoising step with decoded image.
+   * step: current step (1-based)
+   * total: total number of steps
+   * img: decoded image at this step (caller must NOT free)
+   *
+   * To use: set both iris_step_image_callback and iris_step_image_vae before
+   * calling the sampling function. The callback is only invoked when both are set.
+   *)
+  TStepImageCallback = procedure (step: longint; total: longint; const img : TQNNimage(* todo maybe its an array? *));
+
+  (*
+   * Text encoder progress callback - called once per Qwen3 layer.
+   * layer: current layer (0-based)
+   * total: total number of layers (36)
+   *)
+  TTextProgressCallback = procedure (layer : longint; total : longint);
+
+  (*
+   * VAE progress callback - called once per resblock/attention block.
+   * block: current block (0-based)
+   * total: total number of blocks (11 for encoder, 15 for decoder)
+   *)
+  TVAEProgressCallback = procedure ( block: longint; total: longint );
+
+var
+  substep_callback : TSubstepCallback;
+  step_callback    : TStepCallback;
+  phase_callback   : TPhaseCallBack;
+  step_image_callback : TStepImageCallback;
+  step_image_vae : pointer;  (* Set to iris_vae_t* for step image decoding *)
+  text_progress_callback : TTextProgressCallback;
+  vae_progress_callback  : TVAEProgressCallback;
+
+
 implementation
+uses quicknn_kernels;
+
+function readInt(var f:file):longint;
+begin
+    blockread(f, result, sizeof(longint))
+end;
+
+function readSingles(var f:file; const count:longint):TMemoryBlock;
+begin
+    result := TMemoryBlock.Create(count, dtF32);
+    blockread(f, PSingle(result)^, count*sizeof(single))
+end;
+
+{ TQNNImage }
+
+constructor TQNNImage.Create(const aWidth, aHeight: longint; const aChannels: longint; const aData: PQNNFloat);
+var y, x, ch : longint; val: QNNFloat;
+begin
+  //data := nil;
+  width := aWidth;
+  height := aHeight;
+  channels := aChannels;
+  setLength(data, width*height*channels);
+  if assigned(data) then
+    for y := 0 to height -1 do
+      for x := 0 to width -1 do
+        for ch := 0 to channels -1 do
+          begin
+              val := aData[(ch* height + y)*width + x];
+              val := (val+1.0) * 0.5;
+              val := val * 255.0;
+              if val < 0 then
+                  val := 0;
+              if val > 255 then
+                  val := 255;
+              data[(y*width + x)*3 + ch] := round(val)
+          end;
+end;
+
+procedure TQNNImage.free();
+begin
+  setLength(Data, 0);
+  self := default(TQNNImage)
+end;
 
 constructor TMemoryBlock.create(const aSize:NativeInt; const dType:TQNNDataType; const src : pointer);
 begin
+  self := default(TMemoryBlock);
   DataType := dType;
   case DATATYPE_BITS[dType] of
     //1 : setlength(Data1, aSize);
-    4  : begin setLength(Data4 , aSize);  if assigned(src) then move(src^, pointer(Data4) , aSize*DATATYPE_BITS[dType]) end;
-    8  : begin setLength(Data8 , aSize);  if assigned(src) then move(src^, pointer(Data8) , aSize*DATATYPE_BITS[dType]) end;
-    16 : begin setLength(Data16, aSize);  if assigned(src) then move(src^, pointer(Data16), aSize*DATATYPE_BITS[dType]) end;
-    32 : begin setLength(Data32, aSize);  if assigned(src) then move(src^, pointer(Data32), aSize*DATATYPE_BITS[dType]) end;
+    4  : begin
+      {$ifdef USE_CALLOC}
+      size := aSize;
+      Data4 := nil;
+      Data4 := malloc((aSize*DATATYPE_BITS[dtype]) div 8);
+      {$else}
+      setLength(Data4 , aSize);
+      {$endif}
+      assert(assigned(data4), 'ERROR : TMemoryBlock.Create, not enough memory!');
+      if assigned(src) then
+        move(src^, pointer(Data4) , (aSize*DATATYPE_BITS[dType]) div 8)
+    end;
+
+    8  : begin
+      {$ifdef USE_CALLOC}
+      size := aSize;
+      Data8 := nil;
+      Data8 := malloc((aSize*DATATYPE_BITS[dtype]) div 8);
+      {$else}
+      setLength(Data8 , aSize);
+      {$endif}
+      assert(assigned(data8), 'ERROR : TMemoryBlock.Create, not enough memory!');
+      if assigned(src) then
+        move(src^, pointer(Data8) , (aSize*DATATYPE_BITS[dType]) div 8)
+    end;
+
+    16 : begin
+      {$ifdef USE_CALLOC}
+      size := aSize;
+      Data16 := nil;
+      Data16 := malloc((aSize*DATATYPE_BITS[dtype]) div 8);
+      {$else}
+      setLength(Data16, aSize);
+      {$endif}
+      assert(assigned(data16), 'ERROR : TMemoryBlock.Create, not enough memory!');
+      if assigned(src) then
+        move(src^, pointer(Data16), (aSize*DATATYPE_BITS[dType]) div 8)
+    end;
+
+    32 : begin
+      {$ifdef USE_CALLOC}
+      size := aSize;
+      Data32 := nil;
+      Data32 := malloc((aSize*DATATYPE_BITS[dtype]) div 8);
+      //Data32 := calloc(aSize, sizeOf(longint));
+      {$else}
+      setLength(Data32, aSize);
+      {$endif}
+      assert(assigned(data32), 'ERROR : TMemoryBlock.Create, not enough memory!');
+      if assigned(src) then
+        move(src^, pointer(Data32), (aSize*DATATYPE_BITS[dType]) div 8)
+    end;
   else
     assert(false, 'ERROR : TMemoryBlock.create, Unsupported data type ')
   end;
 end;
 
+procedure TMemoryBlock.reSize(const aSize:NativeInt);
+begin
+  case DATATYPE_BITS[DataType] of
+    //1 : setlength(Data1, aSize);
+    4  : begin
+      {$ifdef USE_CALLOC}
+      size := aSize;
+      Data4 := realloc(Data4, (aSize*DATATYPE_BITS[Datatype]) div 8);
+      {$else}
+      setLength(Data4 , aSize);
+      {$endif}
+      assert(assigned(data4), 'ERROR : TMemoryBlock.Create, not enough memory!');
+    end;
+
+    8  : begin
+      {$ifdef USE_CALLOC}
+      size := aSize;
+      Data8 := realloc(Data8, (aSize*DATATYPE_BITS[Datatype]) div 8);
+      {$else}
+      setLength(Data8 , aSize);
+      {$endif}
+      assert(assigned(data8), 'ERROR : TMemoryBlock.Create, not enough memory!');
+    end;
+
+    16 : begin
+      {$ifdef USE_CALLOC}
+      size := aSize;
+      Data16 := realloc(Data16, (aSize*DATATYPE_BITS[Datatype]) div 8);
+      {$else}
+      setLength(Data16, aSize);
+      {$endif}
+      assert(assigned(data16), 'ERROR : TMemoryBlock.Create, not enough memory!');
+    end;
+
+    32 : begin
+      {$ifdef USE_CALLOC}
+      size := aSize;
+      Data32 := realloc(Data32, (aSize*DATATYPE_BITS[Datatype]) div 8);
+      {$else}
+      setLength(Data32, aSize);
+      {$endif}
+      assert(assigned(data32), 'ERROR : TMemoryBlock.Create, not enough memory!');
+    end;
+  else
+    assert(false, 'ERROR : TMemoryBlock.create, Unsupported data type ')
+  end;
+end;
+
+procedure TMemoryBlock.free();
+var m:pointer;
+begin
+  {$ifdef USE_CALLOC}
+  case DATATYPE_BITS[DataType] of
+    4 :if assigned(Data4 ) and (size>0) then begin m := Data4 ; Data4  :=nil; quicknn_common.free(m) end;
+    8 :if assigned(Data8 ) and (size>0) then begin m := Data8 ; Data8  :=nil; quicknn_common.free(m) end;
+    16:if assigned(Data16) and (size>0) then begin m := Data16; Data16 :=nil; quicknn_common.free(m) end;
+    32:if assigned(Data32) and (size>0) then begin m := Data32; Data32 :=nil; quicknn_common.free(m) end;
+  end;
+  {$else}
+  case DATATYPE_BITS[DataType] of
+    4 :setLength(Data4 , 0);
+    8 :setLength(Data8 , 0);
+    16:setLength(Data16, 0);
+    32:setLength(Data32, 0);
+  end;
+ {$endif}
+  self := default(TMemoryBlock);
+end;
+
 function TMemoryBlock.count:NativeInt;
 begin
+  {$ifdef USE_CALLOC}
+  result := size;
+  {$else}
   case DATATYPE_BITS[DataType] of
     4  : exit(length(Data4));
     8  : exit(length(Data8));
@@ -318,13 +557,33 @@ begin
     32 : exit(length(Data32))
   end;
   result := 0
+  {$endif}
 end;
 
-class operator TMemoryBlock.implicit(const val:Pointer ):TMemoryBlock;
+function TMemoryBlock.isAssigned():boolean;
 begin
-  assert(false, 'ERROR : Untyped tensors not allowed.')
+  result := false;
+  case DATATYPE_BITS[DataType] of
+    4  : result := assigned(Data4 );
+    8  : result := assigned(Data8 );
+    16 : result := assigned(Data16);
+    32 : result := assigned(Data32)
+  end;
+  if not result then
+    result := assigned(DataPtr)
 end;
 
+procedure TMemoryBlock.printStat;
+begin
+  quicknn_kernels.printStat(self);
+end;
+
+//class operator TMemoryBlock.implicit(const val:Pointer ):TMemoryBlock;
+//begin
+//  assert(false, 'ERROR : Untyped tensors not allowed.')
+//end;
+
+{$ifndef USE_CALLOC}
 class operator TMemoryBlock.implicit(const val:TArray<longint> ):TMemoryBlock;
 begin
   result.DataType := dts32;
@@ -365,19 +624,6 @@ class operator TMemoryBlock.implicit(const val: TArray<INT4>):TMemoryBlock;
 begin
   result.DataType := dtS4;
   result.Data4 := val;
-end;
-
-class operator TMemoryBlock.implicit(const val:TMemoryBlock):boolean ;
-begin
-  case DATATYPE_BITS[val.DataType] of
-    4  : result := assigned(val.Data4 );
-    8  : result := assigned(val.Data8 );
-    16 : result := assigned(val.Data16);
-    32 : result := assigned(val.Data32)
-  end;
-  if not result then
-    result := assigned(val.DataPtr)
-
 end;
 
 class operator TMemoryBlock.implicit(const val:TMemoryBlock):TArray<longint>  ;
@@ -422,6 +668,12 @@ begin
   result := TArray<INT4>(val.Data4);
 end;
 
+{$endif}
+
+class operator TMemoryBlock.implicit(const val:TMemoryBlock):boolean ;
+begin
+  result := val.isAssigned();
+end;
 
 class operator TMemoryBlock.implicit(const val:PLongint ):TMemoryBlock;
 begin

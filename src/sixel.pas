@@ -26,7 +26,7 @@ procedure printSixel(const buf:Pointer; const width, height:NativeInt; const Dit
 
 implementation
 
-(*
+
 function mapX(const x:single):single;inline;
 begin
   exit( x*3-2.1);
@@ -38,7 +38,7 @@ begin
   exit( y*3 - 1.5);
 end;
 
-function mandel(buf :pbyte; const w, h:integer):TSingleTensor;
+procedure mandel(buf :pbyte; const w, h:integer);
 const
      max_iteration = 10000 ;
      _max          = 4.0  ;
@@ -98,9 +98,12 @@ begin
       end else
       begin
           c         := trunc($ff * LnXP1(coverageNum)/lnxp1_max_iteration);
-          d[_x+0] := trunc((0.5+0.5*sin(c/25)) * $FF);          //R
-          d[_x+1] := trunc((0.5+0.5*sin(PI/3+c/25)) * $FF);   //G
-          d[_x+2] := trunc((0.5+0.5*sin(PI*2/3+c/25)) * $FF);   //B
+          d[_x+0] := c;
+          d[_x+1] := c;
+          d[_x+2] := c;
+          //d[_x+0] := trunc((0.5+0.5*sin(c/25)) * $FF);          //R
+          //d[_x+1] := trunc((0.5+0.5*sin(PI/3+c/25)) * $FF);   //G
+          //d[_x+2] := trunc((0.5+0.5*sin(PI*2/3+c/25)) * $FF);   //B
           //buf[_x+3] := $ff;
       end
     end;
@@ -111,7 +114,7 @@ var
 begin
 {$endif}
   lnxp1_max_iteration := LnXP1(max_iteration);
-  {$if defined(USE_MULTITHREADING)}
+  {$if defined(_USE_MULTITHREADING)}
   mp.&For(renderLine, 0, h);
   {$else}
   for y:=0 to h-1 do begin
@@ -119,7 +122,6 @@ begin
   end
   {$endif}
 end;
-*)
 
 type
 
@@ -562,10 +564,11 @@ begin
 end;
 
 
+//const W = 400;
+//      H = 400;
 //var
-//  bt : TSingleTensor;
-//  t:int64;
-
+//  bt : array[0..3*H*W-1] of byte;
+  //t:int64;
 
 initialization
 // ************ test sixel draw ***************
@@ -577,14 +580,14 @@ initialization
   ////bt.print(0.2);
   ////bt := bt.Permute([1, 2, 0]);
   ////bt.resize([400, 600, 3]);
-  ////Mandel(bt.Data, bt.h(), bt.c());
+  //Mandel(@bt, H, W);
   ////bt := bt.Permute([1, 2 , 0]);
   ////bt.SaveToImage('mandel.jpg');
   //repeat
   //  cursorHome();
   //  t := getTickCount64;
   //  bt.print(psSIXELGray);
-  //  //printSixel(bt.data, bt.h, bt.c, true);
+    //printSixel(@bt[0], H, W, true);
   //  write((GetTickCount64-t)/1000:1:3,'s');
   //  readln
   //until false;

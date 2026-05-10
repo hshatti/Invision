@@ -193,7 +193,7 @@ begin
   i:=1;
   while i<=length(str) do begin
     if (i<length(str)) and (str[i]=aEsc) then begin
-      case PCHAR(LowerCase(str[i+1]))^ of
+      case LowerCase(str[i+1]) of
         ESCAPE:
           begin
             result[j]:=ESCAPE;
@@ -895,13 +895,13 @@ end;
 
 class operator TJSON.implicit(const val: TJSON): double;
 begin
-  assert(val.jsonType=jtFloat, 'ERROR : element is not of a float!');
+  assert(val.jsonType in [jtFloat, jtInteger], 'ERROR : element is not of a float!');
   result := val.value
 end;
 
 class operator TJSON.implicit(const val: TJSON): single;
 begin
-  assert(val.jsonType=jtFloat, 'ERROR : element is not of a float!');
+  assert(val.jsonType in [jtFloat, jtInteger], 'ERROR : element is not of a float!');
   result := val.value
 end;
 

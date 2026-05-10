@@ -14,6 +14,8 @@ unit safetensor;
 {$pointermath on}
 {$T+}
 
+{$define USE_CALLOC}
+
 interface
 
 uses
@@ -76,6 +78,7 @@ type
   //https://github.com/huggingface/safetensors/blob/main/safetensors/src/tensor.rs
 
   TSafeTensorType = (
+      stUNKNOWN =-1,
       /// Boolan type
       stBOOL,
       /// MXF4 (E2M1) <https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf>_
@@ -116,8 +119,9 @@ type
       stI64,
       /// Unsigned integer (64-bit)
       stU64,
+      /// INT4
+      stI4
 
-      stUNKNOWN =-1
   );
 
 const
@@ -125,7 +129,7 @@ const
       /// Boolan type
       'UNKNOWN',
       'BOOL',
-      'F4',
+      'F4', //e1m2
       'F6_E2M3',
       'F6_E3M2',
       'U8',
@@ -143,11 +147,13 @@ const
       'C64',
       'F64',
       'I64',
-      'U64'
+      'U64',
+      'I4'
   );
 
   SAFETENSORTYPE_TO_DATATYPE : array[low(TSafeTensorType)..high(TSafeTensorType)] of TQNNDatatype = (
       /// Boolan type
+      dtUndef,// UNKNOWEN
       dtBoolean,
       dtF4_e2m1,
       dtUndef, //'F6_E2M3',
@@ -168,7 +174,7 @@ const
       dtF64,//'F64',
       dtUndef,//'I64',
       dtUndef,//'U64',
-      dtUndef //'UNKNOWN'
+      dtS4   //I4
   );
 
 
@@ -179,6 +185,8 @@ type
   TSafeTensorTypeHelper = record helper for TSafeTensorType
     function bits: byte;
     class function fromString(const str:string):TSafeTensorType; static;
+    function toString():string;
+    function toDataType():TQNNDataType;
   end;
 
   PSafeTensor = ^TSafeTensor;
@@ -193,7 +201,11 @@ type
     data_offset : int64;
     data_size : int64;
     function is_bf16():boolean;
+{$ifdef USE_CALLOC}
+    function asSingle:TMemoryBlock;
+{$else}
     function asSingle:TArray<single>;
+{$endif}
     function asSinglePtr():PSingle;
     function asMappedPtr():pointer;
     function asBF16:TArray<BF16>;
@@ -236,8 +248,8 @@ type
     constructor open(const apath:string);
     procedure close();
     function find(const name:ansistring):PSafeTensor;
-    function getData(const safeTensor:PSafeTensor):pointer;  overload;
-    function getData(const tensorName:string):pointer;  overload;
+    function getData(const safeTensor:PSafeTensor; const useMMap:boolean=true):TMemoryBlock;  overload;
+    function getData(const tensorName:string; const useMMap:boolean=true):TMemoryBlock;  overload;
     procedure print();
   end;
 
@@ -245,7 +257,7 @@ type
 
   { TSafetensoFilesHelper }
 
-  TSafetensoFilesHelper = record helper for TSafeTensorFiles
+  TSafeTensorFilesHelper = record helper for TSafeTensorFiles
     // getData will allocate memory only if useMMap is false, result is always in F32
     function getTensorDataMemBlock(const name: string; const useMMap: boolean):TMemoryBlock;      overload;
     //function getTensorDataMemBlock(const name: string): TMemoryBlock; overload;
@@ -255,8 +267,10 @@ type
 
   end;
 
-implementation
+const IsLoadVerbose:boolean = false;
 
+implementation
+uses quicknn_kernels;
 {$if defined(MSWINDOWS)}
 function mmapFile(var f:file; const size:uint64=0; const offset:uint64=0):pointer;
 var mapped_handle:THandle;
@@ -315,7 +329,7 @@ function TSafeTensorTypeHelper.bits: byte;
 begin
   case self of
     stBOOL : result := 1;
-    stF4 :   result := 4;
+    stF4, stI4 :   result := 4;
     stF6_E2M3, stF6_E3M2 : result := 6;
     stU8, stI8, stF8_E5M2, stF8_E4M3, stF8_E8M0 : result := 8;
     stI16, stU16, stF16, stBF16 : result := 16 ;
@@ -334,32 +348,49 @@ begin
       exit(i);
 end;
 
+function TSafeTensorTypeHelper.toString(): string;
+begin
+  result := dtype_names[self]
+end;
+
+function TSafeTensorTypeHelper.toDataType(): TQNNDataType;
+begin
+  result := SAFETENSORTYPE_TO_DATATYPE[self]
+end;
+
 { TSafeTensor }
 
 function TSafeTensor.is_bf16(): boolean;
 begin
   result := dtype = stBF16;
 end;
-
+{$ifdef USE_CALLOC}
+function TSafeTensor.asSingle:TMemoryBlock;
+{$else}
 function TSafeTensor.asSingle: TArray<single>;
+{$endif}
 begin
   assert(dtype in [stBF16, stF16, stF32], 'ERROR : unsupported tensor type!');
+{$ifdef USE_CALLOC}
+  result := TMemoryBlock.Create(count);
+{$else}
   result := nil;
   setlength(result, count);
+{$endif}
   case dtype of
     stF32:
       begin
-        move(data^, result[0], sizeof(single)*length(result))
+        move(data^, PSingle(result)[0], sizeof(single)*count)
       end;
 
     stF16:
       begin
-        FP16ToSingle(length(result), data, pointer(result));
+        FP16ToSingle(count, data, PSingle(result));
       end;
 
     stBF16:
       begin
-        BF16ToSingle(length(result), data, pointer(result));
+        BF16ToSingle(count, data, PSingle(result));
       end;
   end;
 end;
@@ -459,11 +490,13 @@ begin
     tensors[i].data := PByte(data) + tensors[i].data_offset;
     tensors[i].data_size := data_offsets[1] - data_offsets[0];
     tensors[i].shape := t['shape'];
-    assert(assigned(tensors[i].shape), 'ERROR : tensor['+intToStr(i)+']['+tensors[i].name+'] has no shape!');
+    //assert(assigned(tensors[i].shape), 'ERROR : tensor['+intToStr(i)+']['+tensors[i].name+'] has no shape!');
+    if not(assigned(tensors[i].shape)) then
+      tensors[i].shape := [tensors[i].data_size div (tensors[i].dtype.bits div 8)];
     tensors[i].ndim := length(tensors[i].shape);
     inc(o, tensors[i].data_size);
     if (o<offset) or (file_size < o) then begin
-      close;
+      close; // file is already closed this will just unmmap the file
       assert(false, 'ERROR : Truncated Safetensor file, try to download again');
     end;
   end;
@@ -487,17 +520,31 @@ begin
   result := nil
 end;
 
-function TSafeTensorFile.getData(const safeTensor: PSafeTensor): pointer;
+function TSafeTensorFile.getData(const safeTensor: PSafeTensor; const useMMap: boolean): TMemoryBlock;
 begin
-  result := PByte(data) + safeTensor.data_offset;
+  if useMMAp then begin
+    case safetensor.dtype of
+      stF32  : result := PSingle(PByte(data) + safeTensor.data_offset);
+      stF16  : result := PFP16(PByte(data) + safeTensor.data_offset);
+      stBF16 : result := PBF16(PByte(data) + safeTensor.data_offset);
+      sti32  : result := PLongint(PByte(data) + safeTensor.data_offset);
+      sti16  : result := PSmallInt(PByte(data) + safeTensor.data_offset);
+      sti8   : result := PShortInt(PByte(data) + safeTensor.data_offset);
+      //sti4   : result := PINT4(PByte(data) + safeTensor.data_offset);
+    else
+      assert(false, 'ERROR : tensor DataType '+safetensor.dtype.toString()+' is not implemented.')
+    end;
+  end
+  else
+    result := TMemoryBlock.Create(safeTensor.count(), safeTensor.dtype.toDataType(), PByte(data) + safeTensor.data_offset);
 end;
 
-function TSafeTensorFile.getData(const tensorName: string): pointer;
+function TSafeTensorFile.getData(const tensorName: string; const useMMap: boolean): TMemoryBlock;
 var sf : PSafeTensor;
 begin
+  result := default(TMemoryBlock);
   sf := find(tensorName);
-  if assigned(sf) then exit(getData(sf));
-  result := nil;
+  if assigned(sf) then exit(getData(sf, useMMap));
 end;
 
 procedure TSafeTensorFile.print;
@@ -514,10 +561,10 @@ begin
 end;
 
 
-{ TSafetensoFilesHelper }
+{ TSafeTensorFilesHelper }
 
 // result will be F32
-function TSafetensoFilesHelper.getTensorDataMemBlock(const name: string; const useMMap:boolean): TMemoryBlock;
+function TSafeTensorFilesHelper.getTensorDataMemBlock(const name: string; const useMMap:boolean): TMemoryBlock;
 var i:integer;
   d:PSafeTensor;
 begin
@@ -567,15 +614,16 @@ begin
             assert(false, 'ERROR [getTnsorData] : Unimplemented data type conversion : '+ name);
           end;
         end;
+        if IsLoadVerbose then result.printStat;
         exit
       end;
     end;
   result := nil;
-  writeln(ErrOutput, 'ERROR : Tensor [', name, '] not found');
+  if isConsole then writeln(ErrOutput, 'ERROR : Tensor [', name, '] not found');
 end;
 
 // result will be BF16
-function TSafetensoFilesHelper.getTensorDataMemBlockBF16(const name: string; const useMMap: boolean): TMemoryBlock;
+function TSafeTensorFilesHelper.getTensorDataMemBlockBF16(const name: string; const useMMap: boolean): TMemoryBlock;
 var i, sz:integer;
   d:PSafeTensor;
 begin
@@ -586,6 +634,7 @@ begin
         assert(d.dtype in [stF32, stBF16], 'ERROR [getTnsorDataB16] : Unimplemented data type conversion : '+name);
         if useMMap then begin
           assert(d.dtype = stBF16, 'ERROR [getTnsorDataB16] : Cannot convert data type in mmap mode : '+name);
+          result := default(TMemoryBlock);
           result.DataType:=dtBf16;
           result.DataPtr := d.data
         end else begin
@@ -601,10 +650,10 @@ begin
       end;
     end;
   result := nil;
-  writeln(ErrOutput, 'ERROR : Tensor [', name, '] not found');
+  if isConsole then writeln(ErrOutput, 'ERROR : Tensor [', name, '] not found');
 end;
 
-//function TSafetensoFilesHelper.getTensorDataMemBlock(const name: string): TMemoryBlock;
+//function TSafeTensorFilesHelper.getTensorDataMemBlock(const name: string): TMemoryBlock;
 //var i, sz:integer;
 //  d:PSafeTensor;
 //begin
@@ -620,7 +669,7 @@ end;
 //  writeln(StdErr, 'ERROR : Tensor [', name, '] not found');
 //end;
 
-function TSafetensoFilesHelper.getTensor(const name: string): PSafeTensor;
+function TSafeTensorFilesHelper.getTensor(const name: string): PSafeTensor;
 var i, j:integer;
 begin
   for i:=0 to high(self) do
@@ -629,10 +678,10 @@ begin
       if assigned(result) then exit(result);
     end;
   result := nil;
-  writeln(ErrOutput, 'ERROR : Tensor [', name, '] not found');
+  if isConsole then writeln(ErrOutput, 'ERROR : Tensor [', name, '] not found');
 end;
 
-procedure hello(const a:integer);begin writeln('hello', a); end;
+//procedure hello(const a:integer);begin writeln('hello', a); end;
 //var sf : TSafeTensorFile;
 //  ss: TArray<single>;
 

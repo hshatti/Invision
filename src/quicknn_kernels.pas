@@ -66,62 +66,9 @@ const
 {$endif}
 
 type
-  TSubstepType = (
-    SUBSTEP_DOUBLE_BLOCK,  // Double-stream block completed
-    SUBSTEP_SINGLE_BLOCK,  // Single-stream block completed
-    SUBSTEP_FINAL_LAYER    // Final layer completed
-  ) ;
-
-
-  (*
-   * Substep callback - called during transformer forward pass.
-   * type: which operation completed
-   * index: 0-based index of this substep within its type
-   * total: total count for this substep type
-   *)
-  TSubstepCallback = procedure( &type :TSubstepType; index :longint; total: longint);
-
-  (*
-   * Step callback - called at sampling step boundaries.
-   * step: current step (1-based), or 0 to indicate sampling is starting
-   * total: total number of steps
-   *)
-  TStepCallback = procedure (step:longint; total:longint);
-
-
-  (*
-   * Phase callback - called at major phase boundaries.
-   * phase: descriptive name ("encoding text", "decoding image", etc.)
-   * done: 0 when starting, 1 when finished
-   *)
-  TPhaseCallback = procedure (const phase :pchar (* todo maybe a string*); done:longint);
-
-  (*
-   * Step image callback - called after each denoising step with decoded image.
-   * step: current step (1-based)
-   * total: total number of steps
-   * img: decoded image at this step (caller must NOT free)
-   *
-   * To use: set both iris_step_image_callback and iris_step_image_vae before
-   * calling the sampling function. The callback is only invoked when both are set.
-   *)
-  TStepImageCallback = procedure (step: longint; total: longint; const img : PQNNimage(* todo maybe its an array? *));
-
-  (*
-   * Text encoder progress callback - called once per Qwen3 layer.
-   * layer: current layer (0-based)
-   * total: total number of layers (36)
-   *)
-  TTextProgressCallback = procedure (layer : longint; total : longint);
-
-  (*
-   * VAE progress callback - called once per resblock/attention block.
-   * block: current block (0-based)
-   * total: total number of blocks (11 for encoder, 15 for decoder)
-   *)
-  TVAEProgressCallback = procedure ( block: longint; total: longint );
-
-
+  TSingleArray = TArray<Single>;
+  PFloatarray = ^TFloatArray;
+  TFloatArray = array[0..MaxLongint div 4] of single;
   TInterpolation = ( iNearest, iLinear, iCubic, iLanczos);
 
 var
@@ -149,15 +96,6 @@ var
 
   workspace : TArray<QNNFloat>;
 (* Global callback pointers - set by caller before inference *)
-  substep_callback : TSubstepCallback;
-  step_callback    : TStepCallback;
-  phase_callback   : TPhaseCallBack;
-  step_image_callback : TStepImageCallback;
-  step_image_vae : pointer;  (* Set to iris_vae_t* for step image decoding *)
-  text_progress_callback_t : TTextProgressCallback;
-  vae_progress_callback_t  : TVAEProgressCallback;
-  verbose : longint;
-
 // Add and Mul terms used for vector vector element wise operations
 // Scale and Bias terms used for vector Scalar element wise operations
 
@@ -179,8 +117,9 @@ function QNNDot(const a, b:PQNNFloat; const N:longint):QNNFloat;
 
 procedure QNNAccAdd(const dst, a, b: PQNNFloat; const N:integer);   overload;
 procedure QNNAccMul(const dst, a, b: PQNNFloat; const N:integer);   overload;
-procedure QNNMatMulNN(const A, B, C: PQNNFloat; const M,N,K:integer);   overload;
-procedure QNNMatMulNT(const A, B, C: PQNNFloat; const M,N,K:integer);   overload;
+procedure QNNMatMulNN(const C, A, B: TMemoryBlock; const M, K, N:integer);   overload;
+procedure QNNMatMulNT(const C, A, B: TMemoryBlock; const M, K, N:integer);   overload;
+procedure QNNMatTranspose(const dst, src: PQNNFloat; const srcRows, srcCols: longint);
 procedure QNNLinear(const dst, x, W, b:PQNNFloat; const seqLen, inDIM, outDIM: integer);
 procedure QNNLinearNoBias(const dst, x, W:PQNNFloat; const seqLen, inDIM, outDIM: integer);
 procedure QNNLinearNoBias_BF16(const dst, x:PQNNFloat; const W: PBF16; const seqLen, inDIM, outDIM: integer);
@@ -212,18 +151,25 @@ procedure QNNGroupNorm(const dst, src, gamma, beta : PQNNFloat; const batch, cha
 procedure QNNBatchNorm(const dst, src,
                       running_mean, running_var, gamma, beta : PQNNFloat;
                       const batch, channels, H, W: integer);
-function QNNMax(const N:integer; const src:PQNNFloat; const stride:integer=1):QNNFloat;
-function QNNMin(const N:integer; const src:PQNNFloat; const stride:integer=1):QNNFloat;
+function QNNMax(const N:integer; const src:PQNNFloat; const arg:PInteger = nil; const stride:integer=1):QNNFloat;
+function QNNMin(const N:integer; const src:PQNNFloat; const arg:PInteger = nil; const stride:integer=1):QNNFloat;
+function QNNMaxAbs(const N:integer; const src:PQNNFloat; const stride:integer=1):QNNFloat;
+function QNNMinAbs(const N:integer; const src:PQNNFloat; const stride:integer=1):QNNFloat;
 function QNNArgMax(const N:integer; const src:PQNNFloat; const stride:integer=1):integer;
 function QNNArgMin(const N:integer; const src:PQNNFloat; const stride:integer=1):integer;
 function QNNSum(const N:integer; const src:PQNNFloat; const stride:integer=1):QNNFloat;
 function QNNSumSqr(const N:integer; const src:PQNNFloat; const stride:integer=1):QNNFloat;
-function QNNSumSqrDiff(const N:integer; const src:PQNNFloat; const aMean:QNNFloat; const stride:integer=1):QNNFloat;
+function QNNSumSqrDiff(const N:integer; const src:PQNNFloat; const aMean:QNNFloat; const stride:integer=1):QNNFloat;overload;
+function QNNSumSqrDiff(const N:integer; const src1, src2:PQNNFloat; const stride:integer=1):QNNFloat;overload;
 function QNNMean(const N:integer; const src:PQNNFloat; const stride:integer=1):QNNFloat;
 function QNNVariance(const N:integer; const src:PQNNFloat; const aMean:QNNFloat; const stride:integer=1; const isPopulation:boolean=true):QNNFloat;
-procedure QNNSilu(const x:PQNNFloat; const n:integer);
+procedure QNNSigmoid(const x: PQNNFloat; const N:integer); overload;
+procedure QNNSigmoid(const dst, src: PQNNFloat; const N:integer); overload;
+procedure QNNSilu(const x:PQNNFloat; const N:integer);     overload;
+procedure QNNSilu(const dst, src:PQNNFloat; const N:integer);     overload;
 procedure QNNSiluMul(const gate, up:PQNNFloat; const N:integer);
-procedure QNNSoftmax(const x: PQNNFloat; const rows, cols: integer);
+procedure QNNSoftmax(const x: PQNNFloat; const N: integer); overload;
+procedure QNNSoftmax(const x: PQNNFloat; const rows, cols: integer); overload;
 procedure QNNAttention(const dst, Q, K, V: PQNNFloat; const batch, heads, seq_q, seq_k, head_dim: longint; const scale: QNNFloat);
 procedure QNNFlashAttentionHead(const dst, Q, K, V: PQNNFloat; const seq_q, seq_k, head_dim: longint; const scale: QNNFloat);
 procedure QNNFlashAttentionHeadTiled(const dst, Q, K, V: PQNNFloat; const seq_q, seq_k, head_dim: longint; const scale: QNNFloat; const tile_scores: PQNNFloat; const q_tile_size, k_tile_size: longint);
@@ -237,28 +183,78 @@ procedure QNNCopy(const dst:PQNNFloat; const dstStride:integer; const src:PQNNFl
 procedure QNNFill(const dst:PQNNFloat; const val:QNNFloat; const N:integer; const stride:integer=1);
 procedure QNNBroadcast(const dst:pointer; const src; const srcSize, N:integer; const stride:integer=1);
 procedure QNNGatedAdd(const dst, gate, proj:psingle; const seq, hidden:integer);
-procedure QNNComputeRoPE(const dst:PQNNFloat; const maxSeq, dim:longint; const theta:QNNFloat);
+procedure QNNComputeRoPE(const dst:PQNNFloat; const maxSeq, dim:longint; const theta:QNNFloat);           overload;
+procedure QNNComputeRoPE(const cosOut,sinOut:PQNNFloat; const maxSeqLen, headDim:longint; const theta:QNNFloat); overload;
 procedure QNNComputeRoPE2D(const cosDst,sinDst:PQNNFloat; const patch_h, patch_w, dim:longint; const theta:QNNFloat);
 procedure QNNComputeRoPE2DOffset(const cosDst,sinDst:PQNNFloat; const patch_h, patch_w, dim:longint; const theta:QNNFloat; const offset_t:longint);
 procedure QNNComputeRoPEText(const cosDst, sinDst: PQNNFloat; const txt_seq, axis_dim: longint; const theta: QNNFloat);
-procedure QNNApplyRoPE(const dst, freqs: PQNNFloat; const batch, seq, heads, head_dim: longint);
-procedure QNNApplyRoPE2D(const dst, cos_freq, sin_freq : PQNNFloat; const seq, heads, head_dim, dim: longint);
+procedure QNNApplyRoPE(const dst, freqs: PQNNFloat; const batch, seq, heads, head_dim: longint);        overload;
+procedure QNNApplyRoPE(const dst, cosIn, sinIn: PQNNFloat; const numHeads, headDim: longint); overload;
+procedure QNNApplyRoPE(const dst, cosIn, sinIn: PQNNFloat; const seqLen, numHeads, headDim: longint); overload;
 
+procedure QNNApplyRoPE2D(const dst, cos_freq, sin_freq : PQNNFloat; const seq, heads, head_dim, dim: longint);
+//Positional Embedding
 procedure QNNTimestepEmbedding(const dst :PQNNFloat; const t : QNNFloat;const dim:integer; const max_period:QNNFloat);
 
 // Adaptive Layer Normalization
 procedure QNNAdaLN(const dst, src, bias, scale:PQNNFloat; const seq, hidden:longint; const eps:QNNFloat=EPSILON);
 
-procedure QNNLINEAR_BF16_OR_F32(const dst, src:PSingle; const weight:PSingle; const weight_bf16:PBF16; const seq, srcDim, dstDim:integer);inline;
+procedure QNNLINEAR_BF16_OR_F32(const dst, src:PSingle; const weight:TMemoryBlock; const weight_bf16:TMemoryBlock; const seq, srcDim, dstDim:integer);inline;
+
+{$if not declared(FillWord)}
+   {$define FILLWORD}
+procedure FillWord(var dst; const count:IntPtr; const val:Word);
+{$endif}
+{$if not declared(FillDWord)}
+   {$define FILLDWORD}
+procedure FillDWord(var dst; const count:IntPtr; const val:longword);
+{$endif}
+{$if not declared(FillQWord)}
+   {$define FILLQWORD}
+procedure FillQWord(var dst; const count:IntPtr; const val:UInt64);
+{$endif}
+
+procedure printStat(const src:PQNNFloat; const N:longint);  overload;
+procedure printStat(const src:TMemoryBlock);                overload;
 
 implementation
+
+{$if defined(FILLWORD)}
+procedure FillWord(var dst ; const count:IntPtr; const val:Word);
+var i:IntPtr;  d:PWord;
+begin
+  d := @dst;
+  for i:=0 to count-1 do
+    d[i] := val
+end;
+{$endif}
+
+{$if defined(FILLDWORD)}
+procedure FillDWord(var dst ; const count:IntPtr; const val:longword);
+var i:IntPtr;  d:PLongword;
+begin
+  d := @dst;
+  for i:=0 to count-1 do
+    d[i] := val
+end;
+{$endif}
+
+{$if defined(FILLQWORD)}
+procedure FillQWord(var dst ; const count:IntPtr; const val:UInt64);
+var i:IntPtr; d:PUInt64;
+begin
+  d := @dst;
+  for i:=0 to count-1 do
+    d[i] := val
+end;
+{$endif}
 
 function sqr(const x:QNNFloat):QNNFloat;inline;
 begin
   exit(x*x)
 end;
 
-function fast_expf(const x:single):single; inline;
+function fast_expf(const x:single):single;// inline;
 var
   n, r, p:single;
   v : record
@@ -275,35 +271,86 @@ begin
     p := 1.0 + r * (1.0 + r * (0.5 + r * (0.16666667 +
               r * (0.04166667 + r * 0.00833333))));
     v.f := p;
-    v.i := v.i + PLongword(@n)^ shl 23;
+    inc(v.i, trunc(n) shl 23);
     result := v.f;
 end;
 
-function QNNMax(const N: integer; const src: PQNNFloat; const stride: integer): QNNFloat;
-var i:integer;
+function QNNMax(const N: integer; const src: PQNNFloat; const arg: PInteger;
+  const stride: integer): QNNFloat;
+var i,m:integer;
 begin
   assert(assigned(src), 'ERROR QNNMax: [src] is empty!');
   result := src[0];
+  if assigned(arg) then arg^ := 0;
   if stride=1 then begin
     for i:=1 to N-1 do
-      if src[i]>result then result := src[i]
+      if src[i]>result then begin
+        result := src[i];
+        if assigned(arg) then arg^ :=i
+      end
   end else
     for i:=1 to N-1 do
-      if src[i*stride]>result then result := src[i*stride]
+      if src[i*stride]>result then begin
+        result := src[i*stride];
+        if assigned(arg) then arg^ :=i*stride
+      end
 
 end;
 
-function QNNMin(const N: integer; const src: PQNNFloat; const stride: integer): QNNFloat;
-var i:integer;
+function QNNMin(const N: integer; const src: PQNNFloat; const arg:PInteger; const stride: integer): QNNFloat;
+var i,m:integer;
 begin
   assert(assigned(src), 'ERROR QNNMin: [src] is empty!');
   result := src[0];
+  if assigned(arg) then arg^ := 0;
   if stride=1 then begin
     for i:=1 to N-1 do
-      if src[i]<result then result := src[i]
+      if src[i]<result then begin
+        result := src[i];
+        if assigned(arg) then arg^ := i
+      end;
   end else
     for i:=1 to N-1 do
-      if src[i*stride]<result then result := src[i*stride]
+      if src[i*stride]<result then begin
+        result := src[i*stride];
+        if assigned(arg) then arg^ := i*stride
+      end
+end;
+
+function QNNMaxAbs(const N: integer; const src: PQNNFloat; const stride: integer): QNNFloat;
+var i:integer;
+  ab:QNNFloat;
+begin
+  assert(assigned(src), 'ERROR QNNMin: [src] is empty!');
+  result := abs(src[0]);
+  if stride=1 then begin
+    for i:=1 to N-1 do begin
+      ab := abs(src[i]);
+      if ab>result then result := ab;
+    end;
+  end else begin
+    for i:=1 to N-1 do
+      ab := abs(src[i*stride]);
+      if ab>result then result := ab;
+  end;
+end;
+
+function QNNMinAbs(const N: integer; const src: PQNNFloat; const stride: integer): QNNFloat;
+var i:integer;
+  ab:QNNFloat;
+begin
+  assert(assigned(src), 'ERROR QNNMin: [src] is empty!');
+  result := abs(src[0]);
+  if stride=1 then begin
+    for i:=1 to N-1 do begin
+      ab := abs(src[i]);
+      if ab<result then result := ab;
+    end;
+  end else begin
+    for i:=1 to N-1 do
+      ab := abs(src[i*stride]);
+      if ab<result then result := ab;
+  end;
 end;
 
 function QNNArgMax(const N: integer; const src: PQNNFloat; const stride: integer): integer;
@@ -353,7 +400,7 @@ end;
 function QNNSumSqr(const N: integer; const src: PQNNFloat; const stride: integer): QNNFloat;
 var i: integer;
 begin
-  // todo simdify mean
+  // todo simdify SumSqr
   result := 0;
   if stride=1 then
     for i:=0 to N-1 do
@@ -374,6 +421,19 @@ begin
   else
     for i:=0 to N-1 do
       result := result + sqr(src[i*stride]-aMean);
+end;
+
+function QNNSumSqrDiff(const N: integer; const src1, src2: PQNNFloat; const stride: integer): QNNFloat;
+var i: integer;
+begin
+  // todo simdify mean
+  result := 0;
+  if stride=1 then
+    for i:=0 to N-1 do
+      result := result + sqr(src1[i]-src2[i])
+  else
+    for i:=0 to N-1 do
+      result := result + sqr(src1[i*stride]-src2[i*stride]);
 end;
 
 function QNNMean(const N:integer; const src:PQNNFloat; const stride:integer):QNNFloat;
@@ -515,23 +575,44 @@ end;
 //RoPE (Rotary Position Embeddings)
 procedure QNNComputeRoPE(const dst: PQNNFloat; const maxSeq, dim: longint; const theta: QNNFloat);
 var
-  i, d, halfdim:longint;
+  pos, i, halfdim, d:longint;
   freq, angle:QNNFloat;
 begin
   halfdim := dim div 2;
-  for i := 0 to maxSeq-1 do
-    for d :=0 to halfdim-1 do begin
-      freq  :=  1/power(theta, (2*d)/dim);
-      angle := i*freq;
-      dst[i*halfdim*2 + d*2]     := cos(angle);
-      dst[i*halfdim*2 + d*2 + 1] := Sin(angle);
-    end;
+  for pos := 0 to maxSeq-1 do begin
+      d := pos*halfdim*2;
+      for i :=0 to halfdim-1 do begin
+          freq  := 1.0 / power(theta, (2*i)/dim);
+          angle := pos*freq;
+          inc(d, 2);
+          dst[d]     := cos(angle);
+          dst[d + 1] := Sin(angle);
+      end;
+  end;
+end;
+
+procedure QNNComputeRoPE(const cosOut, sinOut: PQNNFloat; const maxSeqLen,
+  headDim: longint; const theta: QNNFloat);
+var
+  half_dim, pos, i:longint;
+  freq, angle : QNNFloat;
+begin
+  half_dim := headDim div 2;
+
+  for pos := 0 to maxSeqLen-1 do begin
+      for i := 0 to half_dim-1 do begin
+          freq  := 1.0 / power(theta, (2*i) / headDim);
+          angle := pos * freq;
+          cosOut[pos * half_dim + i] := cos(angle);
+          sinOut[pos * half_dim + i] := sin(angle);
+      end
+  end;
 end;
 
 procedure QNNComputeRoPE2D(const cosDst, sinDst: PQNNFloat; const patch_h,
   patch_w, dim: longint; const theta: QNNFloat);
 var
-  i, d, hy, wx,pos, halfdim:longint;
+  d, hy, wx, pos, halfdim:longint;
   cos_p, sin_p : PQNNFloat;
   angle_h, angle_w, cos_h, cos_w, sin_h, sin_w: QNNFloat;
   freqs: array[0..15] of QNNFloat;
@@ -541,8 +622,8 @@ begin
   //(void)seq;
 
   (* Precompute base frequencies on stack (axis_dim is always 32, half_axis=16) *)
-  for i:= 0 to halfdim-1 do
-    freqs[d] := 1 / power(theta, (2 * d) / halfdim);
+  for d:= 0 to halfdim-1 do
+    freqs[d] := 1 / power(theta, (2*d) / dim);
 
   for hy := 0 to patch_h-1 do begin
     for wx := 0 to patch_w-1 do begin
@@ -566,10 +647,11 @@ begin
           cos_h := cos(angle_h);
           sin_h := sin(angle_h);
           (* Each frequency contributes to a pair of dimensions *)
-          cos_p[dim + d * 2] := cos_h;
-          cos_p[dim + d * 2 + 1] := cos_h;
-          sin_p[dim + d * 2] := sin_h;
-          sin_p[dim + d * 2 + 1] := sin_h;
+          pos := dim + d * 2;
+          cos_p[pos] := cos_h;
+          cos_p[pos + 1] := cos_h;
+          sin_p[pos] := sin_h;
+          sin_p[pos + 1] := sin_h;
       end;
 
       (* Axis 2 (dims 64-95): W position (x/width) *)
@@ -577,16 +659,18 @@ begin
           angle_w := wx * freqs[d];
           cos_w := cos(angle_w);
           sin_w := sin(angle_w);
-          cos_p[dim * 2 + d * 2] := cos_w;
-          cos_p[dim * 2 + d * 2 + 1] := cos_w;
-          sin_p[dim * 2 + d * 2] := sin_w;
-          sin_p[dim * 2 + d * 2 + 1] := sin_w;
+          pos := dim*2 + d*2;
+          cos_p[pos] := cos_w;
+          cos_p[pos + 1] := cos_w;
+          sin_p[pos] := sin_w;
+          sin_p[pos + 1] := sin_w;
       end;
 
       (* Axis 3 (dims 96-127): L position = 0, so cos=1, sin=0 *)
       for d := 0 to dim -1  do begin
-          cos_p[dim * 3 + d] := 1.0;
-          sin_p[dim * 3 + d] := 0.0;
+          pos := dim*3 + d;
+          cos_p[pos] := 1.0;
+          sin_p[pos] := 0.0;
       end
     end
   end
@@ -661,7 +745,7 @@ end;
 
 procedure QNNComputeRoPEText(const cosDst, sinDst: PQNNFloat; const txt_seq, axis_dim: longint; const theta: QNNFloat);
 var
-  half_axis, head_dim, d, s: longint;
+  half_axis, head_dim, d, s, pos: longint;
   cos_p: PQNNFloat;
   sin_p: PQNNFloat;
   angle, cos_l, sin_l: QNNFloat;
@@ -670,7 +754,7 @@ begin
   half_axis := axis_dim div 2;
   head_dim := axis_dim * 4;
   for d := 0 to half_axis -1 do
-    freqs[d] := 1.0 / power(theta, (2 * d) div axis_dim);
+    freqs[d] := 1.0 / power(theta, (2 * d) / axis_dim);
   for s := 0 to txt_seq -1 do
     begin
       cos_p := cosDst+s * head_dim;
@@ -685,10 +769,11 @@ begin
           angle := s * freqs[d];
           cos_l := cos(angle);
           sin_l := sin(angle);
-          cos_p[axis_dim*3 + d*2]     := cos_l;
-          cos_p[axis_dim*3 + d*2 + 1] := cos_l;
-          sin_p[axis_dim*3 + d*2]     := sin_l;
-          sin_p[axis_dim*3 + d*2 + 1] := sin_l
+          pos := axis_dim*3 + d*2;
+          cos_p[pos]     := cos_l;
+          cos_p[pos + 1] := cos_l;
+          sin_p[pos]     := sin_l;
+          sin_p[pos + 1] := sin_l
         end
     end
 end;
@@ -818,8 +903,11 @@ begin
   for i:=0 to N-1 do dst[i] := dst[i] + a[i]*b[i]
 end;
 
-procedure QNNMatMulNN(const A, B, C: PQNNFloat; const M, N, K: integer);
+procedure QNNMatMulNN(const C, A, B: TMemoryBlock; const M, K, N: integer);
 begin
+  assert(A.count>=M*K, 'ERROR : QNNMatMul out of bound [A]');
+  assert(B.count>=K*N, 'ERROR : QNNMatMul out of bound [B]');
+  assert(C.count>=M*N, 'ERROR : QNNMatMul out of bound [C]');
     cblas_gemm(CBLASRowMajor, CBLASNoTrans, CBLASNoTrans
     , M, N, K, 1
     , A, K
@@ -828,14 +916,25 @@ begin
     , C, N);
 end;
 
-procedure QNNMatMulNT(const A, B, C: PQNNFloat; const M, N, K: integer);
+procedure QNNMatMulNT(const C, A, B: TMemoryBlock; const M, K, N: integer);
 begin
+  assert(A.count>=M*K, 'ERROR : QNNMatMul out of bound [A]');
+  assert(B.count>=N*K, 'ERROR : QNNMatMul out of bound [B]');
+  assert(C.count>=M*N, 'ERROR : QNNMatMul out of bound [C]');
     cblas_gemm(CBLASRowMajor, CblasNoTrans, CBLASTrans
     , M, N, K, 1
     , A, K
     , B, K
     , 0
     , C, N);
+end;
+
+procedure QNNMatTranspose(const dst, src: PQNNFloat; const srcRows, srcCols: longint);
+var c, r:longint;
+begin
+  for c:=0 to srcCols-1 do
+    for r:=0 to srcRows-1 do
+      dst[c*srcRows + r] := src[r*srcCols + c]
 end;
 
 procedure QNNLinear(const dst, x, W, b: PQNNFloat; const seqLen, inDIM, outDIM: integer);
@@ -995,13 +1094,151 @@ begin
       mt);
 end;
 
+{$define USE_IM2Col}
 procedure QNNConv2d(const dst, src, weights, bias: PQNNFloat; const in_ch,
   out_ch, H, W, kH, kW, stride, padding: blasint; const batch: blasint);
 var
   outW, outH, kSize, imColSize, filters, outImgSize
   , k, inVolume, b, strideA, strideB, strideC: integer;
   workspacePtr : PQNNFloat;
+{$if defined(USE_NAIVE)}
+procedure kernel(idx:IntPtr; data:pointer);
+var
+  oc, oh, ow, ic, khi, kwi, ih, iw, in_idx, w_idx, out_idx:longint;
+  sum : QNNFloat;
+  SS, WW, DD : PQNNFloat;
 begin
+  SS := src; WW := weights; DD := dst;
+  oc := idx div out_ch;
+  oh := idx mod outH;
+  for ow := 0 to outW-1 do begin
+      if assigned(bias) then sum := bias[oc] else sum := 0.0;
+      for ic := 0 to in_ch-1 do
+          for khi := 0 to kH-1 do
+              for kwi := 0 to KW-1 do begin
+                  ih := oh * stride - padding + khi;
+                  iw := ow * stride - padding + kwi;
+
+                  if (ih >= 0) and (ih < H) and (iw >= 0) and (iw < W) then begin
+                      in_idx := b * in_ch * H * W + ic * H * W + ih * W + iw;
+                      w_idx  := oc * in_ch * kH * kW + ic * kH * kW + khi * kW + kwi;
+                      sum := sum + SS[in_idx] * WW[w_idx];
+                  end;
+              end;
+
+      out_idx := b * out_ch * outH * outW + oc * outH * outW + oh * outW + ow;
+      DD[out_idx] := sum;
+  end;
+end;
+
+var
+  i:longint;
+{$elseif defined(USE_IM2COL)}
+    col_size, max_col_size, row_size, tile_col_size: IntPtr;
+    col: TMemoryBlock;
+    col_ptr, in_b, out_b, out_tile, out_ch_ptr: PQNNFloat;
+    tile_rows, tile_start, tile_end, tile_h, tile_pixels,
+      col_row, ic, khi, kwi, oh, ow, ih, iw, col_idx, oc, i: longint;
+    b_val: single;
+{$endif}
+begin
+  assert(assigned(dst) and assigned(src) and assigned(weights), 'ERROR : dst, src and weights must be assigned');
+
+{$if defined(USE_NAIVE)}
+  outH := (H + 2 * padding - kH) div stride + 1;
+  outW := (W + 2 * padding - kW) div stride + 1;
+  // Naive implementation with threadings (fallback)
+  for b := 0 to batch-1 do
+    {$ifdef USE_MULTITHREADING}
+    mp.&For(kernel, 0,  out_ch*outH);
+    {$else}
+    for i:= 0 to out_ch*outH-1 do
+      kernel(i, nil);
+    {$endif}
+      //for oc := 0 to out_ch-1 do
+      //    for oh := 0 to outH-1 do
+              //for ow := 0 to outW-1 do begin
+              //    if assigned(bias) then sum := bias[oc] else sum := 0.0;
+              //    for ic := 0 to in_ch-1 do
+              //        for khi := 0 to kH-1 do
+              //            for kwi := 0 to KW-1 do begin
+              //                ih := oh * stride - padding + khi;
+              //                iw := ow * stride - padding + kwi;
+              //
+              //                if (ih >= 0) and (ih < H) and (iw >= 0) and (iw < W) then begin
+              //                    in_idx := b * in_ch * H * W + ic * H * W + ih * W + iw;
+              //                    w_idx  := oc * in_ch * kH * kW + ic * kH * kW + khi * kW + kwi;
+              //                    sum := sum + src[in_idx] * weights[w_idx];
+              //                end;
+              //            end;
+              //
+              //    out_idx := b * out_ch * outH * outW + oc * outH * outW + oh * outW + ow;
+              //    dst[out_idx] := sum;
+              //end;
+  exit;
+{$elseif defined(USE_IM2COL)}
+    outH := (H + 2 * padding - kH) div stride + 1;
+    outW := (W + 2 * padding - kW) div stride + 1;
+    col_size := in_ch * kH * kW * outH * outW;
+    max_col_size := 256 * 1024 * 1024;
+    tile_rows := outH;
+    if col_size > max_col_size then
+        begin
+            row_size := in_ch * kH * kW * outW;
+            tile_rows := max_col_size div row_size;
+            if tile_rows < 1 then
+                tile_rows := 1
+        end;
+    tile_col_size := in_ch * kH * kW * tile_rows * outW;
+    col := TMemoryBlock.Create(tile_col_size);
+    col_ptr := col;
+    for b := 0 to batch -1 do
+        begin
+            in_b := src + b * in_ch * H * W;
+            out_b := dst+b * out_ch * outH * outW;
+            tile_start := 0;
+            while tile_start < outH do begin
+                tile_end := tile_start+tile_rows;
+                if tile_end > outH then
+                    tile_end := outH;
+                tile_h := tile_end-tile_start;
+                tile_pixels := tile_h * outW;
+                col_row := 0;
+                for ic := 0 to in_ch -1 do
+                    for khi := 0 to kH -1 do
+                        for kwi := 0 to kW -1 do
+                            begin
+                                for oh := tile_start to tile_end -1 do
+                                    for ow := 0 to outW -1 do
+                                        begin
+                                            ih := oh * stride-padding+khi;
+                                            iw := ow * stride-padding+kwi;
+                                            col_idx := col_row * tile_pixels+(oh-tile_start) * outW+ow;
+                                            if (ih >= 0) and (ih < H) and (iw >= 0) and (iw < W) then
+                                                col_ptr[col_idx] := in_b[ic * H * W+ih * W+iw]
+                                            else
+                                                col_ptr[col_idx] := 0.0
+                                        end;
+                                inc(col_row)
+                            end;
+                K := in_ch * kH * kW;
+                out_tile := out_b+tile_start * outW;
+                cblas_gemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, out_ch, tile_pixels, K, 1.0, weights, K, col_ptr, tile_pixels, 0.0, out_tile, outH * outW);
+                tile_start := tile_start + tile_rows
+            end;
+            if assigned(bias) then
+                for oc := 0 to out_ch -1 do
+                    begin
+                        b_val := bias[oc];
+                        out_ch_ptr := out_b+oc * outH * outW;
+                        for i := 0 to outH * outW -1 do
+                            out_ch_ptr[i] := out_ch_ptr[i] + b_val
+                    end
+        end;
+    col.free;
+    exit();
+{$endif}
+
   outW := W div Stride + Padding * 2 - kW + 1 ;
   outH := H div Stride + Padding * 2 - kH + 1 ;
   kSize := kW*kH;
@@ -1173,25 +1410,25 @@ begin
 
             //mean := 0.0;
             //count := 0;
-            //for c_start to c_end-1 do begin
-                //for i := 0 to spatial-1 do begin
-                //    idx := b * channels * spatial + c * spatial + i;
-                //    mean := mean + src[idx];
-                //    inc(count);
-                //end
+            //for c := c_start to c_end-1 do begin
+            //    for i := 0 to spatial-1 do begin
+            //        idx := b*channels*spatial + c*spatial + i;
+            //        mean := mean + src[idx];
+            //        inc(count);
+            //    end
             //end;
             //mean := mean/count;
 
             src1 := src + b*channels*spatial + c_start*spatial;
-            dst1 := src + b*channels*spatial + c_start*spatial;
+            dst1 := dst + b*channels*spatial + c_start*spatial;
             mean :=QNNMean(spatial*channels_per_group, src1, 1);
 
             //variance := 0.0;
             //for c := c_start to c_end-1 do begin
             //    for i := 0 to spatial-1 do begin
-            //        idx := b * channels * spatial + c * spatial + i;
+            //        idx := b*channels*spatial + c*spatial + i;
             //        diff := src[idx] - mean;
-            //        variance := variance + diff * diff;
+            //        variance := variance + diff*diff;
             //    end
             //end;
             //variance := variance / count;
@@ -1243,15 +1480,43 @@ begin
     end
 end;
 
-procedure QNNSilu(const x: PQNNFloat; const n: integer);
+procedure QNNSigmoid(const x: PQNNFloat; const N: integer);
+var i:integer;
+begin
+  // todo sigmoid inplace simdify
+  for i := 0 to N-1 do
+    x[i] := 1.0 / (1.0 + fast_expf(-x[i]));
+end;
+
+procedure QNNSigmoid(const dst, src: PQNNFloat; const N: integer);
+var i:integer;
+begin
+  // todo sigmoid simdify
+  for i := 0 to N-1 do
+    dst[i] := 1.0 / (1.0 + fast_expf(-src[i]));
+end;
+
+procedure QNNSilu(const x: PQNNFloat; const N: integer);
+var
+  i:integer;
+  val :QNNFloat;
+begin
+  // todo silu inplace simdify
+    for i := 0 to N-1 do begin
+        val := x[i];
+        x[i] := val / (1.0 + fast_expf(-val));
+    end
+end;
+
+procedure QNNSilu(const dst, src: PQNNFloat; const N: integer);
 var
   i:integer;
   val :QNNFloat;
 begin
   // todo silu simdify
-    for i := 0 to n-1 do begin
-        val := x[i];
-        x[i] := val / (1.0 + fast_expf(-val));
+    for i := 0 to N-1 do begin
+        val := src[i];
+        dst[i] := val / (1.0 + fast_expf(-val));
     end
 end;
 
@@ -1268,42 +1533,63 @@ begin
   end
 end;
 
+procedure QNNSoftmax(const x: PQNNFloat; const N: integer);
+var
+  i: longint;
+  max_val, sum, inv_sum: QNNFloat;
+begin
+  // todo softmax simdify
+  //max_val := x[0];
+  //for i := 1 to cols -1 do
+  //    if x[i] > max_val then
+  //        max_val := x[i];
+  max_val := QNNMax(N, x);
+  sum := 0.0;
+  for i := 0 to N-1 do begin
+      x[i] := fast_expf(x[i]-max_val);
+      sum := sum + x[i]
+  end;
+  inv_sum := 1.0 / sum;
+  for i := 0 to N-1 do
+      x[i] := x[i] * inv_sum
+end;
+
 procedure QNNSoftmax(const x: PQNNFloat; const rows, cols: integer);
 var
-    r, c: longint;
+    i, c: longint;
     row: PQNNFloat;
     max_val, sum, inv_sum: QNNFloat;
 begin
   // todo softmax simdify
-    for r := 0 to rows -1 do
-        begin
-            row := x+r * cols;
-            max_val := row[0];
-            for c := 1 to cols -1 do
-                if row[c] > max_val then
-                    max_val := row[c];
-            sum := 0.0;
-            for c := 0 to cols -1 do
-                begin
-                    row[c] := fast_expf(row[c]-max_val);
-                    sum := sum + row[c]
-                end;
-            inv_sum := 1.0 / sum;
-            for c := 0 to cols -1 do
-                row[c] := row[c] * inv_sum
-        end
+    for i := 0 to rows -1 do
+      //QNNSoftmax(x + i*cols, cols);
+      begin
+        row := x+ i*cols;
+        max_val := row[0];
+        for c := 1 to cols -1 do
+            if row[c] > max_val then
+                max_val := row[c];
+        sum := 0.0;
+        for c := 0 to cols -1 do
+            begin
+                row[c] := fast_expf(row[c]-max_val);
+                sum := sum + row[c]
+            end;
+        inv_sum := 1.0 / sum;
+        for c := 0 to cols -1 do
+            row[c] := row[c] * inv_sum
+      end
 end;
 
 (* ========================================================================
  * Attention Operations
  * ======================================================================== *)
 
-(* Scaled dot-product attention: softmax(Q @ K^T / sqrt(d)) @ V.
+(* SDPA (Scaled dot-product attention): softmax(Q @ K^T / sqrt(d)) @ V.
  * This is the naive implementation that materializes the full seq_q x seq_k
  * attention matrix. Used only for small sequences; the transformer's main
  * attention path uses iris_flash_attention() or the GPU kernel instead. *)
-procedure QNNAttention(const dst, Q, K, V: PQNNFloat; const batch, heads,
-  seq_q, seq_k, head_dim: longint; const scale: QNNFloat);
+procedure QNNAttention(const dst, Q, K, V: PQNNFloat; const batch, heads, seq_q, seq_k, head_dim: longint; const scale: QNNFloat);
 var
     scores, qq, kk, vv, o: PQNNFloat;
     b, h, i, j, d: longint;
@@ -1320,6 +1606,10 @@ begin
                 kk := K+(b * heads+h) * seq_k * head_dim;
                 vv := V+(b * heads+h) * seq_k * head_dim;
                 o := dst+(b * heads+h) * seq_q * head_dim;
+                {$if 1=1}
+                cblas_gemm(CblasRowMajor, CblasNoTrans, CblasTrans, seq_q, seq_k, head_dim, scale,  qq, head_dim, kk, head_dim, 0, scores, seq_k);
+                //if scale<>1 then QNNScale(scores, scores, scale, seq_q*seq_k);
+                {$else}
                 for i := 0 to seq_q -1 do
                     for j := 0 to seq_k -1 do
                         begin
@@ -1328,15 +1618,20 @@ begin
                                 dot := dot + (qq[i * head_dim+d] * kk[j * head_dim+d]);
                             scores[i * seq_k+j] := dot * scale
                         end;
+                {$endif}
                 QNNSoftmax(scores, seq_q, seq_k);
+                {$if 1=1}
+                cblas_gemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, seq_q, head_dim, seq_k, 1, scores, seq_k, vv, head_dim, 0, o, head_dim);
+                {$else}
                 for i := 0 to seq_q -1 do
                     for d := 0 to head_dim -1 do
                         begin
                             sum := 0.0;
                             for j := 0 to seq_k -1 do
-                                sum := sum + (scores[i * seq_k+j] * vv[j * head_dim+d]);
+                                sum := sum + (scores[i*seq_k + j] * vv[j*head_dim + d]);
                             o[i * head_dim+d] := sum
                         end
+                {$endif}
             end;
 end;
 
@@ -1535,11 +1830,11 @@ begin
 (*
   scores := pointer(workspace);
   for i := 0 to heads-1 do begin
-      //qh := Q      + h*head_dim;
-      //kh := K      + h*head_dim;
-      //vh := V      + h*head_dim;
-      //oh := dst    + h*head_dim;
-      //sh := scores + h*seq_q*seq_k;
+      //qh := Q      + i*head_dim;
+      //kh := K      + i*head_dim;
+      //vh := V      + i*head_dim;
+      //oh := dst    + i*head_dim;
+      //sh := scores + i*seq_q*seq_k;
 
       cblas_gemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                   seq_q, seq_k, head_dim,
@@ -1562,9 +1857,9 @@ begin
 *)
 
   off :=0;
-  Q_contig   := @workspace[off]; inc(off, seq_q * head_dim);
-  K_contig   := @workspace[off]; inc(off, seq_k * head_dim);
-  V_contig   := @workspace[off]; inc(off, seq_k * head_dim);
+  Q_contig   := @workspace[off]; inc(off, seq_q*head_dim);
+  K_contig   := @workspace[off]; inc(off, seq_k*head_dim);
+  V_contig   := @workspace[off]; inc(off, seq_k*head_dim);
   out_contig := @workspace[off];
 
   for h := 0 to heads -1 do begin
@@ -1623,8 +1918,8 @@ end;
 procedure QNNApplyRoPE(const dst, freqs: PQNNFloat; const batch, seq, heads,
   head_dim: longint);
 var
-    vec: PQNNFloat;
-    half_dim, b, s, h, d: longint;
+    head: PQNNFloat;
+    half_dim, b, s, h, i: longint;
     cos_val, sin_val: QNNFloat;
     x0, x1: QNNFloat;
 begin
@@ -1632,19 +1927,44 @@ begin
     half_dim := head_dim div 2;
     for b := 0 to batch -1 do
       for s := 0 to seq -1 do
-        for h := 0 to heads -1 do
-          begin
-            vec := dst+((b * seq+s) * heads+h) * head_dim;
-            for d := 0 to half_dim -1 do
-              begin
-                  cos_val := freqs[s * half_dim * 2+d * 2];
-                  sin_val := freqs[s * half_dim * 2+d * 2+1];
-                  x0 := vec[d];
-                  x1 := vec[d+half_dim];
-                  vec[d] := x0 * cos_val-x1 * sin_val;
-                  vec[d+half_dim] := x0 * sin_val+x1 * cos_val
-              end
+        for h := 0 to heads -1 do begin
+            head := dst+((b * seq+s) * heads+h) * head_dim;
+            for i := 0 to half_dim -1 do begin
+                cos_val := freqs[s*half_dim*2 + i*2];
+                sin_val := freqs[s*half_dim*2 + i*2+1];
+                x0 := head[i];
+                x1 := head[i+half_dim];
+                head[i]          := x0*cos_val - x1*sin_val;
+                head[i+half_dim] := x0*sin_val + x1*cos_val
             end
+        end
+end;
+
+procedure QNNApplyRoPE(const dst, cosIn, sinIn: PQNNFloat; const numHeads, headDim: longint);
+var
+  halfDim, h, i :longint;
+  head : PQNNFloat;
+  x0, x1 : QNNFloat;
+begin
+  halfDim := headDim div 2;
+  for h:=0 to numHeads-1 do begin
+    head := dst + h*headDim;
+    for i:=0 to halfDim-1 do begin
+      x0 := head[i];
+      x1 := head[i+halfDim];
+      head[i]           := x0*cosIn[i] - x1*sinIn[i];
+      head[i + halfDim] := x0*sinIn[i] + x1*cosIn[i];
+    end;
+  end;
+end;
+
+procedure QNNApplyRoPE(const dst, cosIn, sinIn: PQNNFloat; const seqLen, numHeads, headDim: longint);
+var
+  halfDim, s:longint;
+begin
+  halfDim := headDim div 2;
+  for s := 0 to seqLen-1 do
+    QNNApplyRope(dst + s*numHeads*headDim, cosIn + s*halfDim, sinIn + s*halfDim, numHeads, headDim)
 end;
 
 procedure QNNApplyRoPE2D(const dst, cos_freq, sin_freq: PQNNFloat; const seq, heads, head_dim, dim: longint);
@@ -1707,18 +2027,19 @@ begin
     variance := QNNVariance(hidden, inRow, mean);
     stdInv := 1.0/sqrt(variance + EPSILON);
     for j:=0 to hidden-1 do begin
-      norm := (inRow[i] - mean)*stdInv;
+      norm := (inRow[j] - mean)*stdInv;
       outRow[j] := (1 + scale[j])*norm + bias[j]
     end;
   end;
 
 end;
 
-procedure QNNLINEAR_BF16_OR_F32(const dst, src: PSingle; const weight: PSingle;
-  const weight_bf16: PBF16; const seq, srcDim, dstDim: integer);
+procedure QNNLINEAR_BF16_OR_F32(const dst, src: PSingle;
+  const weight: TMemoryBlock; const weight_bf16: TMemoryBlock; const seq,
+  srcDim, dstDim: integer);
 begin
-  assert(assigned(weight) or assigned(weight_bf16),'ERROR QNNLINEAR_BF16_OR_F32 : no weight or weight_16 assigned!');
-  if assigned(weight_bf16) then
+  assert(weight.isAssigned() or weight_bf16.isAssigned(),'ERROR QNNLINEAR_BF16_OR_F32 : no weight or weight_16 assigned!');
+  if weight_bf16.isAssigned() then
     QNNLinearNoBias_BF16(dst, src, weight_bf16, seq, srcDim, dstDim)
   else
     QNNLinearNoBias     (dst, src, weight     , seq, srcDim, dstDim);
@@ -1749,12 +2070,22 @@ begin
   result := a + t*(b-a)
 end;
 
-function cubicInterpolation(const a, b, c, d, t:QNNFloat):QNNFloat;
+function cubicInterpolation(const a, b, c, d, t:QNNFloat):QNNFloat; overload;
 begin
   //result := b + t*(0.5*c - 0.5*a + t*(a -2.5*b + 2*c -0.5*d + t*(1.5*b - 0.5*a - 1.5*c + 0.5*d))) ;
 
   result := b + 0.5 * t*(c - a + t*(2.0*a - 5.0*b + 4.0*c - d + t*(3.0*(b - c) + d - a)))
 end;
+
+function cubicInterpolation(const b, c, t:QNNFloat):QNNFloat;  overload;
+begin
+  //result := b + t*(0.5*c - 0.5*a + t*(a -2.5*b + 2*c -0.5*d + t*(1.5*b - 0.5*a - 1.5*c + 0.5*d))) ;
+
+  //result := b + 0.5 * t*(c - a + t*(2.0*a - 5.0*b + 4.0*c - d + t*(3.0*(b - c) + d - a)))
+  result := b + 0.5 * t*(c + t*(-5.0*b + 4.0*c + t*(3.0*(b - c))))
+
+end;
+
 
 procedure QNNUpSample(const dst, src: PQNNFloat; const batch, channels, H, W: longint; const scale_h, scale_w: QNNFloat; const interpolation: TInterpolation);
 var
@@ -1773,7 +2104,7 @@ begin
           ih := trunc(oh / scale_h);
           for ow := 0 to outW -ceil(scale_w) do
             begin
-              iw := round(ow / scale_w);
+              iw := trunc(ow / scale_w);
               out_idx := b * channels * outH * outW+c * outH * outW+oh * outW+ow;
               in_idx := b * channels * H * W+c * H * W+ih * W+iw;
               dst[out_idx] := src[in_idx];
@@ -1784,11 +2115,11 @@ begin
   if interpolation = iLinear then begin
     for b := 0 to batch -1 do
       for c := 0 to channels -1 do
-        for oh := 0 to outH - trunc(scale_h)-1 do begin
+        for oh := 0 to outH - ceil(scale_h)-1 do begin
           fy := oh/scale_h;
           ih := trunc(fy);
           fy := frac(fy);
-          for ow := 0 to outW - trunc(scale_w)-1 do
+          for ow := 0 to outW - ceil(scale_w)-1 do
             begin
               fx := ow/scale_w;
               iw := trunc(fx);
@@ -1805,23 +2136,55 @@ begin
   if interpolation = iCubic then begin
     for b := 0 to batch -1 do
       for c := 0 to channels -1 do
-        for oh := trunc(scale_h) to outH - trunc(2*scale_h)-1 do begin
+        for oh := 0 to outH - ceil(scale_h)-1 do begin
           fy := oh/scale_h;
           ih := trunc(fy);
           fy := frac(fy);
-          for ow := trunc(scale_w) to outW - trunc(2*scale_w)-1 do
+          for ow := 0 to outW - ceil(scale_w)-1 do
             begin
               fx := ow/scale_w;
               iw := trunc(fx);
               fx := frac(fx);
               out_idx := b * channels * outH * outW + c * outH * outW+oh * outW+ow;
               in_idx := b * channels * H * W+c * H * W+ih * W+iw;
-              p1 := cubicInterpolation(src[in_idx-W-1], src[in_idx-W], src[in_idx-W+1], src[in_idx-W+2], fx);
-              p2 := cubicInterpolation(src[in_idx-1], src[in_idx], src[in_idx+1], src[in_idx+2], fx);
-              p3 := cubicInterpolation(src[in_idx+W-1], src[in_idx+W], src[in_idx+W+1], src[in_idx+W+2], fx);
-              p4 := cubicInterpolation(src[in_idx+2*W-1], src[in_idx+2*W], src[in_idx+2*W+1], src[in_idx+2*W+2], fx);
-              dst[out_idx] := cubicInterpolation(p1, p2, p3, p4, fy);
+              p1 := cubicInterpolation(src[in_idx], src[in_idx+1], fx);
+              p2 := cubicInterpolation(src[in_idx+W], src[in_idx+W+1], fx);
+              dst[out_idx] := cubicInterpolation(p1, p2, fy);
             end;
+          //fy := oh/scale_h;
+          //ih := trunc(fy);
+          //fy := frac(fy);
+          //if ih<1 then begin
+          //  ih:=1 ; fy := -1+fy
+          //end else
+          //if ih> H-2 then begin
+          //  ih := H-2 ; fy := 1
+          //end else
+          //if ih> H-3 then begin
+          //  ih := H-3 ; fy := 1+fy
+          //end;
+          //for ow := 0 to outW - ceil(scale_w)-1 do
+          //  begin
+          //    fx := ow/scale_w;
+          //    iw := trunc(fx);
+          //    fx := frac(fx);
+          //    out_idx := b * channels * outH * outW + c * outH * outW+oh * outW+ow;
+          //    if iw<1 then begin
+          //      iw:=1 ; fx := -1+fx
+          //    end else
+          //    if iw> W-2 then begin
+          //      iw := W-2 ; fx := 1
+          //    end else
+          //    if iw> W-3 then begin
+          //      iw := W-3 ; fx := 1+fx
+          //    end;
+          //    in_idx := b * channels * H * W+c * H * W+ih * W+iw;
+          //    p1 := cubicInterpolation(src[in_idx-W-1], src[in_idx-W], src[in_idx-W+1], src[in_idx-W+2], fx);
+          //    p2 := cubicInterpolation(src[in_idx-1], src[in_idx], src[in_idx+1], src[in_idx+2], fx);
+          //    p3 := cubicInterpolation(src[in_idx+W-1], src[in_idx+W], src[in_idx+W+1], src[in_idx+W+2], fx);
+          //    p4 := cubicInterpolation(src[in_idx+2*W-1], src[in_idx+2*W], src[in_idx+2*W+1], src[in_idx+2*W+2], fx);
+          //    dst[out_idx] := cubicInterpolation(p1, p2, p3, p4, fy);
+          //  end;
         end;
     exit
   end;
@@ -1835,46 +2198,44 @@ end;
  * The transformer operates on these patch tokens, not individual spatial
  * positions, reducing sequence length by ps*ps (4x for ps=2). *)
 procedure QNNPatchify(const dst, src: PQNNFloat; const batch, channels, H, W, patch_size: longint);
-var p, outH, outW, out_ch, b, c, ph, pw, pi, pj, ih, iw, in_idx, out_c, out_idx: longint;
+var outH, outW, out_ch, b, c, ph, pw, pi, pj, ih, iw, in_idx, out_c, out_idx: longint;
 begin
-    p := patch_size;
-    outH := H div p;
-    outW := W div p;
-    out_ch := channels * p * p;
+    outH := H div patch_size;
+    outW := W div patch_size;
+    out_ch := channels * patch_size * patch_size;
     for b := 0 to batch -1 do
       for c := 0 to channels -1 do
         for ph := 0 to outH -1 do
           for pw := 0 to outW -1 do
-            for pi := 0 to p -1 do
-              for pj := 0 to p -1 do
+            for pi := 0 to patch_size -1 do
+              for pj := 0 to patch_size -1 do
                 begin
-                  ih := ph * p+pi;
-                  iw := pw * p+pj;
+                  ih := ph * patch_size+pi;
+                  iw := pw * patch_size+pj;
                   in_idx := b * channels * H * W+c * H * W+ih * W+iw;
-                  out_c := c * p * p+pi * p+pj;
+                  out_c := c * patch_size * patch_size+pi * patch_size+pj;
                   out_idx := b * out_ch * outH * outW+out_c * outH * outW+ph * outW+pw;
                   dst[out_idx] := src[in_idx]
                 end
 end;
 
 procedure QNNUnpatchify(const dst, src: PQNNFloat; const batch, channels, H, W, patch_size: longint);
-var p, in_ch, outH, outW, b, c, ph, pw, pi, pj, in_c, in_idx, oh, ow, out_idx: longint;
+var in_ch, outH, outW, b, c, ph, pw, pi, pj, in_c, in_idx, oh, ow, out_idx: longint;
 begin
-    p := patch_size;
-    in_ch := channels * p * p;
-    outH := H * p;
-    outW := W * p;
+    in_ch := channels * patch_size * patch_size;
+    outH := H * patch_size;
+    outW := W * patch_size;
     for b := 0 to batch -1 do
       for c := 0 to channels -1 do
         for ph := 0 to H -1 do
           for pw := 0 to W -1 do
-            for pi := 0 to p -1 do
-              for pj := 0 to p -1 do
+            for pi := 0 to patch_size -1 do
+              for pj := 0 to patch_size -1 do
                 begin
-                  in_c := c*p*p + pi*p + pj;
+                  in_c := c*patch_size*patch_size + pi*patch_size + pj;
                   in_idx := b*in_ch*H*W + in_c*H*W + ph*W + pw;
-                  oh := ph*p + pi;
-                  ow := pw*p + pj;
+                  oh := ph*patch_size + pi;
+                  ow := pw*patch_size + pj;
                   out_idx := b*channels*outH*outW + c*outH*outW + oh*outW + ow;
                   dst[out_idx] := src[in_idx]
                 end
@@ -1921,7 +2282,7 @@ const
   {$elseif defined(MACOS) or defined(DARWIN)}
   {$endif}
 
-
+(*
 procedure s2b(const a:TArray<single>; const result : TArray<byte>);
 var
   i: Integer;
@@ -1955,9 +2316,55 @@ var
   im1, om1:  TArray<byte>;
   im2, om2 : TArray<single>;
   i : longint;
+*)
+
+procedure printStat(const src:PQNNFloat; const N:longint);
+const DECIMALS =6;
+var mi, ma, ami, ama, mean, stddev:QNNFLoat;
+  argma, argmi : longint;
+begin
+  mi := QNNMin(N, src, @argmi);
+  ma := QNNMax(N, src, @argma);
+  ami := QNNMinAbs(N, src);
+  ama := QNNMaxAbs(N, src);
+  mean := QNNMean(N, src);
+  stdDev := sqrt(QNNVariance(N, src, mean));
+  writeln('[', N,']', 'Min :', mi:1:DECIMALS,'@',argmi, ', Max:', ma:1:DECIMALS,'@',argma,', minAbs:', ami:1:DECIMALS,', maxAbs:', ama:1:DECIMALS,', mean:', mean:1:DECIMALS, ', stddev:', stddev:1:DECIMALS);
+end;
+
+procedure printStat(const src: TMemoryBlock);
+begin
+  printStat(src, src.count)
+end;
+
+procedure printArray(const src:PQNNFloat; const N:longint);
+var i:longint;
+begin
+  write('[');
+  if N>0 then begin
+    write(src[0]:1:4);
+    for i:=1 to N-1 do
+      write(', ', src[i]:1:4)
+
+  end;
+  writeln(']')
+end;
+
+{
+type
+  PF = ^TF;
+  TF = array[0..7] of QNNFloat;
+const
+  batch = 1; heads = 64; seq = 64; dim = 64;
+var
+  Q, K, V, O, O2 : TMemoryBlock;
+  QPTR,KPTR,VPTR, OPTR, OPTR2 : PQNNFloat;
+  i : longint;
+  t, t2:Int64;     }
 
 initialization
 
+(*
   setLength(im1, 3*WW*HH);
   setLength(im2, length(im1));
   setlength(om1, 3*ceil(WW*scale)*ceil(HH*scale));
@@ -1966,13 +2373,30 @@ initialization
     im1[i] := not(im1[i-1]);
 
   b2s(im1, im2);
+  QNNUpSample(pointer(om2), pointer(im2), 1, 3, HH, WW, scale, scale, iNearest);
+  s2b(om2, om1);
+  //printSixel(pointer(im1), WW, HH, true, false, poCHW);
+  printSixel(pointer(om1), ceil(WW*scale), ceil(HH*scale), true, false, poCHW);
 
+  fillchar(om2[0], length(om1)*sizeof(om2[0]), #0);
+  b2s(im1, im2);
+  QNNUpSample(pointer(om2), pointer(im2), 1, 3, HH, WW, scale, scale, iLinear);
+  s2b(om2, om1);
+  //printSixel(pointer(im1), WW, HH, true, false, poCHW);
+  printSixel(pointer(om1), ceil(WW*scale), ceil(HH*scale), true, false, poCHW);
+
+  fillchar(om2[0], length(om1)*sizeof(om2[0]), #0);
+  b2s(im1, im2);
   QNNUpSample(pointer(om2), pointer(im2), 1, 3, HH, WW, scale, scale, iCubic);
   s2b(om2, om1);
-  printSixel(pointer(im1), WW, HH, true, false, poCHW);
+  //printSixel(pointer(im1), WW, HH, true, false, poCHW);
   printSixel(pointer(om1), ceil(WW*scale), ceil(HH*scale), true, false, poCHW);
+//writeln(cubicInterpolation(-1, 3.3, 2, 0, 0):1:4);
+  //writeln(cubicInterpolation(-1, 3.3, 2, 0, 1):1:4);
+  //writeln(cubicInterpolation(-1, 3.3, 2, 0, 2):1:4);
+  //writeln(cubicInterpolation(-1, 3.3, 2, 0, 3):1:4);
   readln;
-
+*)
 
   cblas_axpy := qaxpy;
   cblas_dot  := qdot;
@@ -2027,6 +2451,40 @@ initialization
       //  end;
     end;
   {$endif}
+
+
+  //Q := TMemoryBlock.Create(seq*heads*dim);
+  //K := TMemoryBlock.Create(seq*heads*dim);
+  //V := TMemoryBlock.Create(seq*heads*dim);
+  //O := TMemoryBlock.Create(seq*heads*dim);
+  //O2 := TMemoryBlock.Create(seq*heads*dim);
+  //
+  //QPTR := Q;
+  //KPTR := K;
+  //VPTR := V;
+  //OPTR := O;
+  //OPTR2 := O2;
+  //for i:=0 to Q.count-1 do begin
+  //  QPTR[i] := {i mod 10;        }random()*2-1.0;
+  //  KPTR[i] := {(i div 2) mod 10;}random()*2-1.0;
+  //  VPTR[i] := {(i div 3) mod 10;}random()*2-1.0;
+  //end;
+  //QueryPerformanceCounter(t);
+  //QNNAttention(O, Q, K, V, batch, heads, seq, seq, dim, 1/sqrt(dim));
+  //QueryPerformanceCounter(t2);
+  //PrintArray(O , 8{seq*heads*dim});
+  //writeln('SPDA ms:', t2-t);
+  //QueryPerformanceCounter(t);
+  //QNNFlashAttention(O2, Q, K, V, seq, seq, heads, dim, 1/sqrt(dim));
+  //QueryPerformanceCounter(t2);
+  //writeln('FATT ms:',t2-t);
+  //printStat(O, seq*heads*dim);
+  //printStat(O2, seq*heads*dim);
+  //writeln('SumSqrDiff : ',QNNSumSqrDiff(seq*heads*dim, O, O2):1:4);
+  //writeln;
+  //PrintArray(O2, 8{seq*heads*dim});
+  //
+  //readln;
 
 
 finalization

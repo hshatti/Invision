@@ -30,7 +30,7 @@ type
   end;
 
   { TQNNTokenizer }
-
+  PQNNTokenizer = ^TQNNTokenizer;
   TQNNTokenizer = record
       (* Vocabulary: id -> token string *)
       vocabs    : TArray<string>;
@@ -55,6 +55,9 @@ type
 
       class operator initialize({$ifdef fpc}var{$else}out{$endif} val : TQNNTokenizer);
   end;
+
+
+
   function padTokens(const tokens:TArray<longint>; const max_len:longint; const attentionMask : TArray<longint>):TArray<longint>;
 
 implementation
