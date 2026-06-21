@@ -1,7 +1,7 @@
 # A Lightweight FLUX2 or ZImage Inference engine – Written in Pure Pascal for (FPC, Lazarus or Delphi)
 
 TL;DR
-{#what-is-it}
+
 > A lightweight, pure‑Pascal inference engine for text‑to‑image and image‑to‑image generation (FLUX2 / ZImage). Nativly parses .SafeTensor and .JSON files. Runs out‑of‑the‑box with no external dependencies. If OpenBLAS is present on Windows/Linux it will automatically bind to it and gain ~20× speed‑up. On macOS the native Accelerate framework is used.
 
 ## Table of Contents
