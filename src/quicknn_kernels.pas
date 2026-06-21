@@ -1,5 +1,10 @@
 ﻿unit quicknn_kernels;
+
 {$ifdef FPC}
+  {$ifdef USE_CPP_GEMM}
+    {$linklib msvcrt.dll}
+    {$linklib gomp.dll.a}
+  {$endif}
   {$PackRecords C}
   {$mode Delphi}
   {$modeswitch advancedrecords}
@@ -7,16 +12,22 @@
   {$modeswitch nestedprocvars}
   {$ifdef CPUX64}
     {$asmmode intel}
+    {$FPUType AVX2}
   {$endif}
   {$if defined(darwin)}
     {$LinkFramework accelerate}
   {$endif}
 {$endif}
+{$ifdef CPUX64}
+//{$EXCESSPRECISION OFF}
+{$endif}
 {$C+} // enable assertions
 {$H+} // longstrings
+{$M+} // include typeinfo
 {$pointermath on} // manipulate, inc, dec, cast pointers
 {$T+} // typed pointer when @ is used
 {$R+} // raise an error when trying to access arrays out of their bounds
+{$Z4} // aligh enums to 4 bytes (compatibility with external routines)
 
 //{$define USE_MULTITHREADING}
 
@@ -35,45 +46,43 @@ uses
   , sixel
   ;
 
-const EPSILON = 0.000001;
+const EPSILON = 1e-6;
 {$if not declared(blasint)}
 type
   blasint = longint;
 {$endif}
-{$if not declared(CBLAS_LAYOUT)}
+//{$if not declared(CBLAS_LAYOUT)}
 type
   CBLAS_Layout = (CblasRowMajor = 101, CblasColMajor = 102);
-{$else}
-const
-  CblasRowMajor = CBLAS_Layout.CblasRowMajor;
-  CblasColMajor = CBLAS_Layout.CblasColMajor;
-{$endif}
+//{$else}
+//const
+//  CblasRowMajor = CBLAS_Layout.CblasRowMajor;
+//  CblasColMajor = CBLAS_Layout.CblasColMajor;
+//{$endif}
 
-{$if not declared(CBLAS_ORDER)}
+//{$if not declared(CBLAS_ORDER)}
 type
   CBLAS_ORDER = CBLAS_Layout;
-{$endif}
-{$if not declared(CBLAS_TRANSPOSE)}
+//{$endif}
+//{$if not declared(CBLAS_TRANSPOSE)}
 type
   CBLAS_TRANSPOSE = (CblasNoTrans = 111, CblasTrans = 112, CblasConjTrans =
     113, CblasConjNoTrans = 114);
-{$else}
-const
-  CblasNoTrans = CBLAS_TRANSPOSE.CblasNoTrans;
-  CblasTrans = CBLAS_TRANSPOSE.CblasTrans;
-  CblasConjTrans = CBLAS_TRANSPOSE.CblasConjTrans;
-  CblasConjNoTrans = CBLAS_TRANSPOSE.CblasConjNoTrans ;
-{$endif}
+//{$else}
+//const
+  //CblasNoTrans = CBLAS_TRANSPOSE.CblasNoTrans;
+  //CblasTrans = CBLAS_TRANSPOSE.CblasTrans;
+  //CblasConjTrans = CBLAS_TRANSPOSE.CblasConjTrans;
+  //CblasConjNoTrans = CBLAS_TRANSPOSE.CblasConjNoTrans ;
+//{$endif}
 
 type
   TSingleArray = TArray<Single>;
   PFloatarray = ^TFloatArray;
-  TFloatArray = array[0..MaxLongint div 4] of single;
+  TFloatArray = array[0..MaxLongint div 32] of single;
   TInterpolation = ( iNearest, iLinear, iCubic, iLanczos);
 
-var
-  hBLASLib : HMODULE;
-  {$if defined(MACOS) or defined(DARWIN)}
+  {$if defined(MACOS) or defined(DARWIN) or defined(USE_STATIC_LINK)}
   procedure cblas_saxpy(n:blasint; alpha:single; x:Psingle; incx:blasint; y:Psingle; incy:blasint); winapi ; external;
   function  cblas_sdot (n:blasint; x:Psingle; incx:blasint; y:Psingle; incy:blasint):single; winapi ; external;
   function  cblas_sasum(n:blasint; x:Psingle; incx:blasint):single; winapi ; external;
@@ -86,7 +95,9 @@ var
   procedure cblas_dscal(N:blasint; alpha:double; X:PDouble; incX:blasint); winapi ; external;
   procedure cblas_dgemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:blasint; N:blasint; K:blasint; alpha:double; A:PDouble; lda:blasint; B:PDouble; ldb:blasint; beta:double; C:PDouble; ldc:blasint); winapi ; external;
   {$endif}
-  cblas_gemm : procedure (Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:blasint; N:blasint; K:blasint; alpha:single; A:PQNNFloat; lda:blasint; B:PQNNFloat; ldb:blasint; beta:single; C:Psingle; ldc:blasint); winapi ;
+var
+  hBLASLib : HMODULE;
+  cblas_gemm : procedure (Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:blasint; N:blasint; K:blasint; alpha:single; A:PQNNFloat; lda:blasint; B:PQNNFloat; ldb:blasint; beta:single; C:PQNNFloat; ldc:blasint); winapi ;
   cblas_axpy : procedure (n:blasint; alpha:single; x:PQNNFloat; incx:blasint; y:PQNNFloat; incy:blasint); winapi ;
   cblas_dot : function (n:blasint; x:PQNNFloat; incx:blasint; y:PQNNFloat; incy:blasint):single; winapi ;
   cblas_asum : function (n:blasint; x:PQNNFloat; incx:blasint):QNNFloat; winapi ;
@@ -103,8 +114,11 @@ procedure QNNAdd(const dst, a, b: PQNNFloat; const N:integer);   overload;
 procedure QNNAdd(const dst, a: PQNNFloat; const N:integer);   overload;
 procedure QNNMul(const dst, a, b: PQNNFloat; const N:integer);   overload;
 procedure QNNMul(const dst, a: PQNNFloat; const N:integer);   overload;
-procedure QNNScale(const dst, src:PQNNFloat; const aScale:QNNFloat; const N:longint);
-procedure QNNBias(const dst, src:PQNNFloat; const aBias:QNNFloat; const N:longint);
+procedure QNNScale(const dst, src:PQNNFloat; const aScale:QNNFloat; const N:longint);   overload;
+procedure QNNScale(const dst: PQNNFloat; const aScale: QNNFloat; const N: longint);overload;
+procedure QNNBias(const dst, src:PQNNFloat; const aBias:QNNFloat; const N:longint);overload;
+procedure QNNBias(const dst:PQNNFloat; const aBias:QNNFloat; const N:longint);overload;
+
 
 procedure QNNFusedMulAdd(const dst, src, srcM, srcA:PQNNFloat; const N:longint);overload;
 procedure QNNFusedAddMul(const dst, src, srcA, srcM:PQNNFloat; const N:longint);overload;
@@ -112,7 +126,8 @@ procedure QNNFusedScaleBias(const dst, src:PQNNFloat; const aScale, aBias:QNNFlo
 procedure QNNFusedBiasScale(const dst, src:PQNNFloat; const aBias, aScale:QNNFloat; const N:longint);overload;
 procedure QNNFusedMulScale(const dst, src, srcM:PQNNFloat; const aScale:QNNFloat; const N:longint);overload;
 procedure QNNFusedBiasMulScale(const dst, src, srcM:PQNNFloat; const aBias, aScale:QNNFloat; const N:longint);overload;
-procedure QNNFusedScaleAdd(const dst, src, srcA:PQNNFloat; const aScale:QNNFloat; const N:longint); overload;
+procedure QNNFusedScaleAdd(const dst, src, srcAdd:PQNNFloat; const aScale:QNNFloat; const N:longint); overload;
+procedure QNNFusedBiasAdd(const dst, src, srcA:PQNNFloat; const aBias:QNNFloat; const N:longint); overload;
 function QNNDot(const a, b:PQNNFloat; const N:longint):QNNFloat;
 
 procedure QNNAccAdd(const dst, a, b: PQNNFloat; const N:integer);   overload;
@@ -140,17 +155,21 @@ procedure QNNIm2ColStridedBatched(const aChannels, aHeight, aWidth
                         ; const batch:blasint);
 
 procedure QNNConv2d( const dst, src, weights, bias:PQNNFloat;
-                     const in_ch, out_ch, H, W, kH, kW, stride, padding:blasint; const batch:blasint =1);
+                     const in_ch, out_ch, H, W, kH, kW, stride, padding:longint; const batch:longint =1);
 
 procedure QNNNorm(const N:longint; const dst, src:PQNNFloat; const weights:PQNNFloat = nil; const stride:longint = 1);      overload;
 
 procedure QNNRMSNorm(const N:longint; const dst, src:PQNNFloat; const weights:PQNNFloat = nil; const stride:longint = 1);   overload;
-procedure QNNRMSNorm(const dst, src, weight:PQNNFloat; const seqLen, hidden: integer); overload;
-procedure QNNQKRMSNorm(const Q, K, QWeights, KWeights:PQNNFloat; const seq, heads, headDim:longint);
+procedure QNNRMSNorm(const dst, src, weight:PQNNFloat; const rows, dim: integer); overload;
+procedure QNNTanh(const dst:PQNNFloat; const N:longint);
+
+procedure QNNQKRMSNorm(const Q, K, QWeights, KWeights:PQNNFloat; const seq, heads, headDim:longint); overload;
+procedure QNNQKRMSNorm(const dst, normWeights:PQNNFloat; const seq, heads, headDim:longint); overload;
+
 procedure QNNGroupNorm(const dst, src, gamma, beta : PQNNFloat; const batch, channels, H, W, num_groups:integer);
-procedure QNNBatchNorm(const dst, src,
-                      running_mean, running_var, gamma, beta : PQNNFloat;
-                      const batch, channels, H, W: integer);
+procedure QNNBatchNorm(const dst, src, running_mean, running_var, gamma, beta : PQNNFloat; const batch, channels, H, W: integer);
+
+function QNNMinMax(const N:integer; const src:PQNNFloat; out outMin, outMax: QNNFloat; const argMin: PInteger; const argMax:PInteger = nil; const stride:integer=1):QNNFloat;
 function QNNMax(const N:integer; const src:PQNNFloat; const arg:PInteger = nil; const stride:integer=1):QNNFloat;
 function QNNMin(const N:integer; const src:PQNNFloat; const arg:PInteger = nil; const stride:integer=1):QNNFloat;
 function QNNMaxAbs(const N:integer; const src:PQNNFloat; const stride:integer=1):QNNFloat;
@@ -159,8 +178,12 @@ function QNNArgMax(const N:integer; const src:PQNNFloat; const stride:integer=1)
 function QNNArgMin(const N:integer; const src:PQNNFloat; const stride:integer=1):integer;
 function QNNSum(const N:integer; const src:PQNNFloat; const stride:integer=1):QNNFloat;
 function QNNSumSqr(const N:integer; const src:PQNNFloat; const stride:integer=1):QNNFloat;
-function QNNSumSqrDiff(const N:integer; const src:PQNNFloat; const aMean:QNNFloat; const stride:integer=1):QNNFloat;overload;
-function QNNSumSqrDiff(const N:integer; const src1, src2:PQNNFloat; const stride:integer=1):QNNFloat;overload;
+function QNNSumSqrDiff(const N: integer; const src:PQNNFloat; const aMean:QNNFloat; const stride:integer=1):QNNFloat;overload;
+function QNNSumSqrDiff(const N: integer; const src1, src2:PQNNFloat; const stride:integer=1):QNNFloat;overload;
+function QNNMaxAbsDiff(const N: integer; const src1, src2: PQNNFloat; out outSrc1, outSrc2:QNNFloat; const stride: integer=1): QNNFloat; overload;
+function QNNMaxAbsDiff(const N: integer; const src1, src2: PQNNFloat; const stride: integer=1): QNNFloat; overload;
+function QNNSumAbsDiff(const N: integer; const src1, src2: PQNNFloat; const stride: integer=1): QNNFloat;  overload;
+function QNNSumAbsDiff(const N: integer; const src: PQNNFloat; const aMean:QNNFloat; const stride: integer=1): QNNFloat;  overload;
 function QNNMean(const N:integer; const src:PQNNFloat; const stride:integer=1):QNNFloat;
 function QNNVariance(const N:integer; const src:PQNNFloat; const aMean:QNNFloat; const stride:integer=1; const isPopulation:boolean=true):QNNFloat;
 procedure QNNSigmoid(const x: PQNNFloat; const N:integer); overload;
@@ -191,6 +214,7 @@ procedure QNNComputeRoPEText(const cosDst, sinDst: PQNNFloat; const txt_seq, axi
 procedure QNNApplyRoPE(const dst, freqs: PQNNFloat; const batch, seq, heads, head_dim: longint);        overload;
 procedure QNNApplyRoPE(const dst, cosIn, sinIn: PQNNFloat; const numHeads, headDim: longint); overload;
 procedure QNNApplyRoPE(const dst, cosIn, sinIn: PQNNFloat; const seqLen, numHeads, headDim: longint); overload;
+procedure QNNApplyRoPE(const q, k, cos_cache, sin_cache:PQNNFloat; const seq_len, num_q_heads, num_kv_heads, head_dim:longint); overload;
 
 procedure QNNApplyRoPE2D(const dst, cos_freq, sin_freq : PQNNFloat; const seq, heads, head_dim, dim: longint);
 //Positional Embedding
@@ -216,6 +240,16 @@ procedure FillQWord(var dst; const count:IntPtr; const val:UInt64);
 
 procedure printStat(const src:PQNNFloat; const N:longint);  overload;
 procedure printStat(const src:TMemoryBlock);                overload;
+procedure printCompare(const N:longint; const src1, src2:PQNNFloat; const isSumSqrDiff:boolean =false);
+procedure writeTensor(const buf:TMemoryBlock);
+function readTensor():TMemoryBlock;
+function readArray():TArray<integer>;
+procedure compareArray(const a, b:TArray<Integer>);             overload;
+procedure compareArray(const a, b: PInteger; const N:longint);  overload;
+procedure compareArray(const a, b: PSingle; const N:longint);  overload;
+
+procedure qgemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:blasint; N:blasint; K:blasint; alpha:single; A:PQNNFloat; lda:blasint; B:PQNNFloat; ldb:blasint; beta:single; C:PQNNFloat; ldc:blasint); WINAPI;
+
 
 implementation
 
@@ -254,7 +288,10 @@ begin
   exit(x*x)
 end;
 
-function fast_expf(const x:single):single;// inline;
+//{$macro on}
+//{$define fast_exp:=exp}
+
+function fast_exp(const x:single):single; inline;
 var
   n, r, p:single;
   v : record
@@ -262,8 +299,8 @@ var
       false :(i:longint);
       true  :(f:single)
   end;
-
 begin
+  //result := exp(x)
     if (x < -87.3) then  exit( 0.0);
     if (x > 88.7)  then exit( 1e38);
     n := floor(x * 1.4426950408889634 + 0.5);
@@ -273,6 +310,40 @@ begin
     v.f := p;
     inc(v.i, trunc(n) shl 23);
     result := v.f;
+end;
+
+function QNNMinMax(const N: integer; const src: PQNNFloat; out outMin,
+  outMax: QNNFloat; const argMin: PInteger; const argMax: PInteger;
+  const stride: integer): QNNFloat;
+var i,m:integer;
+begin
+  assert(assigned(src), 'ERROR QNNMax: [src] is empty!');
+  outMin := src[0];
+  outMax := src[0];
+  if assigned(argMax) then argMax^ := 0;
+  if assigned(argMin) then argMin^ := 0;
+  if stride=1 then begin
+    for i:=1 to N-1 do begin
+      if src[i]>outMax then begin
+        outMax := src[i];
+        if assigned(argMax) then argMax^ :=i
+      end;
+      if src[i]<outMin then begin
+        outMin := src[i];
+        if assigned(argMin) then argMin^ :=i
+      end;
+    end
+  end else
+    for i:=1 to N-1 do begin
+      if src[i*stride]<outMax then begin
+        outMax := src[i*stride];
+        if assigned(argMax) then argMax^ :=i*stride
+      end;
+      if src[i*stride]<outMin then begin
+        outMin := src[i*stride];
+        if assigned(argMin) then argMin^ :=i*stride
+      end
+    end
 end;
 
 function QNNMax(const N: integer; const src: PQNNFloat; const arg: PInteger;
@@ -436,16 +507,101 @@ begin
       result := result + sqr(src1[i*stride]-src2[i*stride]);
 end;
 
+function QNNMaxAbsDiff(const N: integer; const src1, src2: PQNNFloat; out outSrc1, outSrc2:QNNFloat; const stride: integer): QNNFloat;
+var i: integer;
+    ab2
+    , ab
+    :double;
+begin
+  // todo simdify mean
+  outSrc1 := 0;
+  outSrc2 := 0;
+
+  result := 0;
+  if stride=1 then
+    for i:=0 to N-1 do begin
+      ab2 := abs(src1[i]-src2[i]);
+      //if src1[i] <> 0 then
+      //  ab := abs(ab2/src1[i])
+      //else
+      //  ab:=ab2;
+      //assert((ab<0.01) or (ab2< 0.01), 'at pos '+ intToStr(i));
+      if ab2>result then begin
+        outSrc1 := src1[i];
+        outSrc2 := src2[i];
+        result := ab2;
+      end
+    end
+  else
+    for i:=0 to N-1 do
+      result := math.max(result, abs(src1[i*stride]-src2[i*stride]));
+end;
+
+function QNNMaxAbsDiff(const N: integer; const src1, src2: PQNNFloat;
+  const stride: integer): QNNFloat;
+var i: integer;
+    ab2
+    , ab
+    :double;
+begin
+  // todo simdify mean
+  assert(assigned(src1) and assigned(src2), 'ERROR : src1 and src2must be assigned');
+  result := 0;
+  if stride=1 then
+    for i:=0 to N-1 do begin
+      ab2 := abs(src1[i]-src2[i]);
+      //if src1[i] <> 0 then
+      //  ab := abs(ab2/src1[i])
+      //else
+      //  ab:=ab2;
+      //assert((ab<0.01) or (ab2< 0.01), 'at pos '+ intToStr(i));
+      if ab2>result then begin
+        result := ab2;
+      end
+    end
+  else
+    for i:=0 to N-1 do
+      result := math.max(result, abs(src1[i*stride]-src2[i*stride]));
+end;
+
+function QNNSumAbsDiff(const N: integer; const src1, src2: PQNNFloat; const stride: integer): QNNFloat;
+var i: integer;
+begin
+  // todo simdify mean
+  result := 0;
+  if stride=1 then
+    for i:=0 to N-1 do
+      result := result + abs(src1[i]-src2[i])
+  else
+    for i:=0 to N-1 do
+      result := result + abs(src1[i*stride]-src2[i*stride]);
+end;
+
+function QNNSumAbsDiff(const N: integer; const src: PQNNFloat;
+  const aMean: QNNFloat; const stride: integer): QNNFloat;
+var i: integer;
+begin
+  // todo simdify mean
+  result := 0;
+  if stride=1 then
+    for i:=0 to N-1 do
+      result := result + abs(src[i]-aMean)
+  else
+    for i:=0 to N-1 do
+      result := result + abs(src[i*stride]-aMean);
+end;
+
 function QNNMean(const N:integer; const src:PQNNFloat; const stride:integer):QNNFloat;
 begin
   // todo simdify mean
+  if n=0 then exit(0);
   result := QNNSum(N, src, stride);
   result := result / N
 end;
 
 function QNNVariance(const N:integer; const src:PQNNFloat; const aMean:QNNFloat; const stride:integer; const isPopulation:boolean):QNNFloat;
 begin
-  if (N=1) and not isPopulation then exit(0);
+  if ((N=1) and not isPopulation) or (N=0) then exit(0);
   result := QNNSumSqrDiff(N, src, aMean, stride);
   if isPopulation then
     result := result / N
@@ -464,7 +620,7 @@ procedure QNNAdd(const dst, a: PQNNFloat; const N: integer);
 var i:integer;
 begin
   // todo SIMDIFY ADD_inplace
-  for i:=0 to N-1 do dst[i] := a[i]+dst[i]
+  for i:=0 to N-1 do dst[i] := dst[i] + a[i]
 end;
 
 procedure QNNMul(const dst, a, b: PQNNFloat; const N: integer);
@@ -491,12 +647,29 @@ begin
       dst[i] := src[i]*aScale
 end;
 
+procedure QNNScale(const dst: PQNNFloat; const aScale: QNNFloat;
+  const N: longint);
+var i:integer;
+begin
+    // todo SIMDIFY QNNScale
+  for i:=0 to N-1 do
+      dst[i] := dst[i]*aScale
+end;
+
 procedure QNNBias(const dst, src: PQNNFloat; const aBias: QNNFloat; const N: longint);
 var i:integer;
 begin
     // todo SIMDIFY QNNBias
     for i:=0 to N-1 do
       dst[i] := src[i]+aBias;
+end;
+
+procedure QNNBias(const dst: PQNNFloat; const aBias: QNNFloat; const N: longint);
+var i:integer;
+begin
+    // todo SIMDIFY QNNBias
+    for i:=0 to N-1 do
+      dst[i] := dst[i]+aBias;
 end;
 
 procedure QNNFusedMulAdd(const dst, src, srcM, srcA: PQNNFloat; const N: longint);
@@ -535,7 +708,7 @@ end;
 procedure QNNFusedMulScale(const dst, src, srcM: PQNNFloat; const aScale: QNNFloat; const N: longint);
 var i:integer;
 begin
-    // todo SIMDIFY QNNFusedMulScale (Scalars)
+    // todo priority SIMDIFY QNNFusedMulScale (Scalars)
     for i:=0 to N-1 do
       dst[i] := src[i]*srcM[i]*aScale
 end;
@@ -548,14 +721,23 @@ begin
       dst[i] := (src[i] + aBias)*srcM[i]*aScale
 end;
 
-procedure QNNFusedScaleAdd(const dst, src, srcA: PQNNFloat; const aScale: QNNFloat; const N: longint);
+procedure QNNFusedScaleAdd(const dst, src, srcAdd: PQNNFloat; const aScale: QNNFloat; const N: longint);
 var i:longint;
 begin
-  if srcA=dst then
+  if srcAdd=dst then
     cblas_axpy(N, aScale, src, 1, dst, 1)
   else
     for i:=0 to N-1 do
-      dst[i] := aScale*src[i] + srcA[i]
+      dst[i] := aScale*src[i] + srcAdd[i]
+end;
+
+procedure QNNFusedBiasAdd(const dst, src, srcA: PQNNFloat;
+  const aBias: QNNFloat; const N: longint);
+var i:integer;
+begin
+    // todo SIMDIFY QNNFusedBiasAdd (Scalars)
+    for i:=0 to N-1 do
+      dst[i] := aBias + src[i] + srcA[i]
 end;
 
 function QNNDot(const a, b: PQNNFloat; const N: longint): QNNFloat;
@@ -567,7 +749,7 @@ end;
 procedure QNNGatedAdd(const dst, gate, proj:psingle; const seq, hidden:integer);
 var i:integer;
 begin
-  // todo gated add [SIMDIFY]
+  // todo gated add [priority SIMDIFY]
   for i:=0 to seq-1 do
     QNNAccMul(dst + i*hidden, gate, proj + i*hidden, hidden);
 end;
@@ -787,86 +969,273 @@ begin
       X[i]:= X[i]*alpha
   else
     for i:=0 to N-1 do
-      X[i*incX] := X[incX]* alpha
+      X[i*incX] := X[i*incX]* alpha
 end;
 
-procedure qaxpy(n:blasint; alpha:single; x:PQNNFloat; incx:blasint; y:PQNNFloat; incy:blasint); winapi ;
+{$if defined(CPUX64)}
+const
+  SIMD_REGS = 8;
+  {$ifdef FPC}
+  SIMD_SHFT  = BsfQWord(SIMD_REGS);
+  {$else}
+  {$if SIMD_REGS = 8}SIMD_SHFT = 3{$else} SIMD_SHFT = 2{$endif};
+  {$endif}
+  SIMD_OFF = SIMD_REGS * sizeof(single);
+  ymmd : array[0..7] of int32 = (0, 1, 2, 3, 4, 5, 6, 7);
+
+function sdot_avx2(const N:longint; const A,B:PSingle):single;assembler;{$ifdef FPC}nostackframe;{$endif}
+asm
+{$ifndef FPC}
+  .NOFRAME
+{$endif}
+   mov              r11d     ,    N
+   vpxor            ymm0    ,    ymm0   ,   ymm0
+   shr              r11d     ,    SIMD_SHFT
+   jz               @rem
+@while:
+   vmovups          ymm1    ,    yword [A]
+   vfmadd231ps      ymm0    ,    ymm1   , yword [B]
+   add              A       ,    SIMD_OFF
+   add              B       ,    SIMD_OFF
+   dec              r11d
+   jnz              @while
+
+@rem:
+   mov              r11d     ,    N
+   and              r11d     ,    SIMD_REGS -1
+   jz               @done
+   vmovd            xmm3    ,    r11d
+   vpxor            ymm1    ,    ymm1    , ymm1
+   vpxor            ymm2    ,    ymm2    , ymm2
+   vpbroadcastd     ymm3    ,    xmm3
+   vpcmpgtd         ymm3    ,    ymm3    , [rip+ymmd]
+   vmaskmovps       ymm1    ,    ymm3    , [A]
+   vmaskmovps       ymm2    ,    ymm3    , [B]
+   vfmadd231ps      ymm0    ,    ymm1    , ymm2
+
+@done:
+   vextractf128     xmm1    ,    ymm0   ,   $1
+   vzeroupper
+   vaddps           xmm0    ,    xmm0   ,   xmm1
+   vhaddps          xmm0    ,    xmm0   ,   xmm0
+   vhaddps          xmm0    ,    xmm0   ,   xmm0
+
+end;
+
+procedure saxpy_avx2(const N:longint; const a:single; const x,y:PSingle);assembler;{$ifdef FPC}nostackframe;{$endif}
+asm
+  //push         r11
+  //push         N
+  {$ifndef FPC}
+  .NOFRAME
+  {$endif}
+
+//  movss         xmm2   , a
+  vbroadcastss ymm1   , a
+  mov          r11d    , N
+  shr          r11d    , (SIMD_SHFT + 2)    // div by 16 (4*4) = turns * SIMD_REGS
+  jz           @rem1
+
+@while:
+  vmovups      ymm0   , yword [y]
+  vmovups      ymm2   , yword [y+SIMD_OFF]
+  vmovups      ymm3   , yword [y+SIMD_OFF*2]
+  vmovups      ymm4   , yword [y+SIMD_OFF*3]
+
+  vfmadd231ps  ymm0   , ymm1       , yword [x]                 //xmm0
+  vfmadd231ps  ymm2   , ymm1       , yword [x+SIMD_OFF]  //xmm2
+  vfmadd231ps  ymm3   , ymm1       , yword [x+SIMD_OFF*2]//xmm8
+  vfmadd231ps  ymm4   , ymm1       , yword [x+SIMD_OFF*3]//xmm3
+
+  vmovups      yword [y]             , ymm0
+  vmovups      yword [y+SIMD_OFF]    , ymm2
+  vmovups      yword [y+SIMD_OFF*2]  , ymm3
+  vmovups      yword [y+SIMD_OFF*3]  , ymm4
+
+  add          x      , 4 * SIMD_OFF   // turns * offset
+  add          y      , 4 * SIMD_OFF
+  dec          r11d
+  jnz          @while
+
+@rem1:
+  mov          r11d    , N
+  and          r11d    , (4*SIMD_REGS-1)       // mod 32  ( turns * SIMD_REGS)
+  shr          r11d    , SIMD_SHFT             // div SIMD_REGS
+  jz           @rem
+
+@while1:
+  vmovups      ymm0   , [y]
+
+  vfmadd231ps  ymm0   , ymm1       , [x]
+  vmovups      [y]    , ymm0
+  add          x      , SIMD_OFF
+  add          y      , SIMD_OFF
+  dec          r11d
+  jnz          @while1
+
+@rem:
+  mov          r11d    , N
+  and          r11d    , (SIMD_REGS -1)       // mod SIMD_REGS
+  jz           @done
+
+@while2:
+  vmovss       xmm0   , dword [y]
+  vfmadd231ss  xmm0   , xmm1, [x]
+  vmovss       dword [y]    , xmm0
+  add          x      , 4
+  add          y      , 4
+  dec          r11d
+  jnz          @while2
+
+@done:
+  //pop          r11
+  //vzeroupper
+end;
+{$endif}
+
+procedure qaxpy(n:blasint; alpha:single; x:PQNNFloat; y:PQNNFloat); overload;
+var
+  i:blasint;
+begin
+  // todo qaxpy Simdify
+    {$if defined(CPUX64)}
+    saxpy_avx2(N, alpha, x, y)
+    {$else}
+    for i:=0 to N-1 do
+      y[i]:= alpha*x[i] + y[i]
+    {$endif}
+end;
+
+procedure qaxpy(n:blasint; alpha:single; x:PQNNFloat; incx:blasint; y:PQNNFloat; incy:blasint); winapi ; overload;
 var
   i:blasint;
 begin
   // todo qaxpy Simdify
   if (incx=1) and (incy=1) then
+    {$if defined(CPUX64)}
+    saxpy_avx2(N, alpha, x, y)
+    {$else}
     for i:=0 to N-1 do
       y[i]:= alpha*x[i] + y[i]
+    {$endif}
   else
     for i:=0 to N-1 do
       y[i*incy]:= alpha*x[i*incx] + y[i*incy]
 end;
 
-function qdot(n:blasint; x:PQNNFloat; incx:blasint; y:PQNNFloat; incy:blasint):single; winapi ;
+function qdot(N:blasint; x:PQNNFloat; y:PQNNFloat):single; overload;
 var
   i:blasint;
 begin
-  result := 0;
   // todo qdot Simdify
-  if (incx=1) and (incy=1) then
+
+    {$if defined(CPUX64)}
+    result := sdot_avx2(N, x, y)
+    {$else}
+    result := 0;
     for i:=0 to N-1 do
       result := result + x[i]*y[i]
-  else
-    for i:=0 to N-1 do
-      result := result + x[i*incx]*y[i*incy]
+    {$endif}
 end;
 
-procedure qgemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:blasint; N:blasint; K:blasint; alpha:single; A:PQNNFloat; lda:blasint; B:PQNNFloat; ldb:blasint; beta:single; C:PSingle; ldc:blasint); WINAPI;
+function qdot(n:blasint; x:PQNNFloat; incx:blasint; y:PQNNFloat; incy:blasint):single; winapi;overload;
 var
-  mm ,nn ,kk : blasint;
-  a_part : QNNFloat;
-  AA, BB, CC : PQNNFloat;
+  i:blasint;
 begin
-  // todo qgemm Simdify
-  assert((order=CblasRowMajor) and not((TransA=CblasTrans) and (TransB=CblasTrans)),'ERROR : Operation is not supported using the provided arguments!');
-  if BETA=0 then
-    FillChar(C^, M*N*sizeOf(QNNFloat), 0)
-  else if BETA<>1 then
-    cblas_scal(M*N, BETA, C, 1);
+  // todo qdot Simdify
+  if (incx=1) and (incy=1) then begin
+    {$if defined(CPUX64)}
+    result := sdot_avx2(N, x, y)
+    {$else}
+    result := 0;
+    for i:=0 to N-1 do
+      result := result + x[i]*y[i]
+    {$endif}
+  end
+  else begin
+    result := 0;
+    for i:=0 to N-1 do
+      result := result + x[i*incx]*y[i*incy]
+  end;
+end;
 
+
+type prn_t = procedure(const str:pansichar{const m, n, k:longint; Alpha:single; lda, ldb:longint; Beta:single; ldc:longint});cdecl varargs;
+
+
+{$ifdef USE_CPP_GEMM}
+{$link sgemm2.o}
+procedure set_prn(const p:prn_t);winapi;external;
+procedure cpp_sgemm(TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; const M, N, K:blasint; const alpha:single; const A:PQNNFloat; const lda:blasint; const B:PQNNFloat; const ldb:blasint; const beta:single; C:PQNNFloat; const ldc:blasint; const ithread:longint = 0; const nthreads:longint = 0); winapi; external;
+procedure cblas_sgemm(layout: CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; const M, N, K:blasint; const alpha:single; const A:PQNNFloat; const lda:blasint; const B:PQNNFloat; const ldb:blasint; const beta:single; C:PQNNFloat; const ldc:blasint); winapi; external;
+
+procedure printf(const str:pansichar);cdecl varargs; external 'msvcrt.dll';
+
+//procedure printf(const str:pansichar; const args:array of const);winapi; external 'msvcrt.dll'; overload;
+
+//procedure prn(str:pansichar; const a:array of const{const m, n, k:longint; Alpha:single; lda, ldb:longint; Beta:single; ldc:longint});winapi;
+//begin
+//  printf(str,  @a[0] {m, n, k, Alpha, lda, ldb, Beta, ldc});
+//end;
+{$endif}
+
+
+
+procedure qgemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:blasint; N:blasint; K:blasint; alpha:single; A:PQNNFloat; lda:blasint; B:PQNNFloat; ldb:blasint; beta:single; C:PQNNFloat; ldc:blasint); WINAPI;
+
+{$ifdef FPC}
+procedure gemm_thread(const start, finish: IntPtr; const data:pointer);
+{$else}
+var gemm_thread:TGroupProcNested;
+begin
+  gemm_thread := procedure(const start, finish: IntPtr; const data:pointer)
+{$endif}
+var
+  //start, finish,
+    mm, nn ,kk : blasint;
+  a_part : single;
+  AA, BB, CC : PQNNFloat;
+  idx : IntPtr;
+begin
+  {$ifdef USE_CPP_GEMM}
+  cpp_sgemm(TransA, TransB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc, start, finish-start+1);
+  {$else}
+  //writeln('gemm m:',start,' to:', finish);
   if (transA=CblasNoTrans) and (transB=CblasNoTrans)then begin
-    for mm :=0 to M-1 do begin
-      CC := C + mm*ldc;
-      for kk := 0 to K-1 do begin
-        a_part := ALPHA*A[mm*lda + kk];
-        BB := B + kk*ldb;
-        qaxpy(N, a_part, BB, 1, CC, 1);
-        //for nn := 0 to N-1 do begin
-        //    CC[nn] := CC[nn] + a_part*BB[nn];
-        //end;
-      end
+    for idx :=start to finish do begin
+      CC := C + idx*ldc;
+      AA := A + idx*lda;
+      for kk:= 0 to K-1 do begin
+        qaxpy(N, alpha*AA[kk], B+kk*ldb, CC);
+        //for nn:=0 to N-1 do
+        //  CC[nn] := CC[nn] + a_part*B[kk*ldb + nn];
+      end;
     end;
     exit;
   end;
   if (transA=CblasNoTrans) and (transB=CblasTrans)then begin
-    for mm:=0 to M-1 do begin
-      CC := C + mm*ldc;
-      AA := A + mm*lda;
+    for idx:=start to finish do begin
+      CC := C + idx*ldc;
+      AA := A + idx*lda;
       for nn := 0 to N-1 do begin
           BB := B + nn*ldb;
-          a_part := qdot(N, AA, 1, BB, 1);
-          CC[nn] := CC[nn] + ALPHA*a_part;
+          a_part := qdot(K, AA, BB);
           //a_part := 0.0;
           //for kk:=0 to K-1 do begin
           //    a_part := a_part + AA[kk]*BB[kk];
           //end;
+          CC[nn] := CC[nn] + ALPHA*a_part;
       end;
     end;
     exit
   end;
   if (transA=CblasTrans) and (transB=CblasNoTrans)then begin
-    for mm :=0 to M-1 do begin
-      CC := C + mm*ldc;
+    for idx :=start to finish do begin
+      CC := C + idx*ldc;
       for kk:=0 to K-1 do begin
-        a_part := ALPHA*A[kk*lda + mm];
+        a_part := ALPHA*A[kk*lda + idx];
         BB := B + kk*ldb;
-        qaxpy(N, a_part, BB, 1, CC, 1);
+        qaxpy(N, a_part, BB, CC);
         //for nn:=0 to N-1 do begin
         //  CC[nn] := CC[nn] + a_part*BB[nn]
         //end;
@@ -874,6 +1243,31 @@ begin
     end;
     exit;
   end;
+  {$endif}
+end;
+var i: blasint;
+{$ifdef FPC}
+begin
+{$endif}
+  // todo qgemm Simdify
+  assert((order=CblasRowMajor) and not((TransA=CblasTrans) and (TransB=CblasTrans)),'ERROR : Operation is not supported using the provided arguments!');
+  {$ifdef USE_CPP_GEMM}
+  cblas_sgemm(order, transA, transB, M, N,K, alpha, A, lda, B, ldb, beta, C, ldc);
+  exit;
+  {$endif}
+
+  //start :=0 ;
+  //finish := M-1;
+    if BETA=0 then
+      FillChar(C^, (M*N*sizeOf(QNNFloat)), 0)
+    else if BETA<>1 then
+      cblas_scal(M*N, BETA, C, 1);
+  {$if defined(USE_MULTITHREADING)}
+    mp.&For(gemm_thread, 0, M-1);
+  {$else}
+  gemm_thread(0, M-1, nil);
+  //for i:=0 to M-1 do gemm_thread(i, nil)
+  {$endif}
 end;
 
 function qasum(n:blasint; x:PQNNFloat; incx:blasint):QNNFloat; winapi ;
@@ -905,9 +1299,9 @@ end;
 
 procedure QNNMatMulNN(const C, A, B: TMemoryBlock; const M, K, N: integer);
 begin
-  assert(A.count>=M*K, 'ERROR : QNNMatMul out of bound [A]');
-  assert(B.count>=K*N, 'ERROR : QNNMatMul out of bound [B]');
-  assert(C.count>=M*N, 'ERROR : QNNMatMul out of bound [C]');
+  assert((A.count>=M*K) or (assigned(A.DataPtr) and (A.count=0)), 'ERROR : QNNMatMul out of bound [A]');
+  assert((B.count>=K*N) or (assigned(B.dataPtr) and (B.count=0)), 'ERROR : QNNMatMul out of bound [B]');
+  assert((C.count>=M*N) or (assigned(C.dataPtr) and (C.count=0)), 'ERROR : QNNMatMul out of bound [C]');
     cblas_gemm(CBLASRowMajor, CBLASNoTrans, CBLASNoTrans
     , M, N, K, 1
     , A, K
@@ -918,9 +1312,9 @@ end;
 
 procedure QNNMatMulNT(const C, A, B: TMemoryBlock; const M, K, N: integer);
 begin
-  assert(A.count>=M*K, 'ERROR : QNNMatMul out of bound [A]');
-  assert(B.count>=N*K, 'ERROR : QNNMatMul out of bound [B]');
-  assert(C.count>=M*N, 'ERROR : QNNMatMul out of bound [C]');
+  assert((A.count>=M*K) or (assigned(A.DataPtr) and (A.count=0)), 'ERROR : QNNMatMul out of bound [A]');
+  assert((B.count>=N*K) or (assigned(B.dataPtr) and (B.count=0)), 'ERROR : QNNMatMul out of bound [B]');
+  assert((C.count>=M*N) or (assigned(C.dataPtr) and (C.count=0)), 'ERROR : QNNMatMul out of bound [C]');
     cblas_gemm(CBLASRowMajor, CblasNoTrans, CBLASTrans
     , M, N, K, 1
     , A, K
@@ -1096,7 +1490,7 @@ end;
 
 {$define USE_IM2Col}
 procedure QNNConv2d(const dst, src, weights, bias: PQNNFloat; const in_ch,
-  out_ch, H, W, kH, kW, stride, padding: blasint; const batch: blasint);
+  out_ch, H, W, kH, kW, stride, padding: longint; const batch: longint);
 var
   outW, outH, kSize, imColSize, filters, outImgSize
   , k, inVolume, b, strideA, strideB, strideC: integer;
@@ -1138,7 +1532,7 @@ var
     col: TMemoryBlock;
     col_ptr, in_b, out_b, out_tile, out_ch_ptr: PQNNFloat;
     tile_rows, tile_start, tile_end, tile_h, tile_pixels,
-      col_row, ic, khi, kwi, oh, ow, ih, iw, col_idx, oc, i: longint;
+      col_row, ic, khi, kwi, oh, ow, ih, iw, {col_idx, }oc, i, outSpatial: longint;
     b_val: single;
 {$endif}
 begin
@@ -1179,6 +1573,7 @@ begin
 {$elseif defined(USE_IM2COL)}
     outH := (H + 2 * padding - kH) div stride + 1;
     outW := (W + 2 * padding - kW) div stride + 1;
+    outSpatial := outH*outW;
     col_size := in_ch * kH * kW * outH * outW;
     max_col_size := 256 * 1024 * 1024;
     tile_rows := outH;
@@ -1191,50 +1586,59 @@ begin
         end;
     tile_col_size := in_ch * kH * kW * tile_rows * outW;
     col := TMemoryBlock.Create(tile_col_size);
-    col_ptr := col;
-    for b := 0 to batch -1 do
-        begin
-            in_b := src + b * in_ch * H * W;
-            out_b := dst+b * out_ch * outH * outW;
-            tile_start := 0;
-            while tile_start < outH do begin
-                tile_end := tile_start+tile_rows;
-                if tile_end > outH then
-                    tile_end := outH;
-                tile_h := tile_end-tile_start;
-                tile_pixels := tile_h * outW;
-                col_row := 0;
-                for ic := 0 to in_ch -1 do
-                    for khi := 0 to kH -1 do
-                        for kwi := 0 to kW -1 do
-                            begin
-                                for oh := tile_start to tile_end -1 do
-                                    for ow := 0 to outW -1 do
-                                        begin
-                                            ih := oh * stride-padding+khi;
-                                            iw := ow * stride-padding+kwi;
-                                            col_idx := col_row * tile_pixels+(oh-tile_start) * outW+ow;
-                                            if (ih >= 0) and (ih < H) and (iw >= 0) and (iw < W) then
-                                                col_ptr[col_idx] := in_b[ic * H * W+ih * W+iw]
-                                            else
-                                                col_ptr[col_idx] := 0.0
-                                        end;
-                                inc(col_row)
-                            end;
-                K := in_ch * kH * kW;
-                out_tile := out_b+tile_start * outW;
-                cblas_gemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, out_ch, tile_pixels, K, 1.0, weights, K, col_ptr, tile_pixels, 0.0, out_tile, outH * outW);
-                tile_start := tile_start + tile_rows
-            end;
-            if assigned(bias) then
-                for oc := 0 to out_ch -1 do
-                    begin
-                        b_val := bias[oc];
-                        out_ch_ptr := out_b+oc * outH * outW;
-                        for i := 0 to outH * outW -1 do
-                            out_ch_ptr[i] := out_ch_ptr[i] + b_val
-                    end
+    //col_ptr := col;
+    for b := 0 to batch -1 do  begin
+        in_b := src + b * in_ch * H * W;
+        out_b := dst+b * out_ch * outH * outW;
+        tile_start := 0;
+        while tile_start < outH do begin
+          tile_end := tile_start+tile_rows;
+          if tile_end > outH then
+              tile_end := outH;
+          tile_h := tile_end-tile_start;
+          tile_pixels := tile_h * outW;
+          col_row := 0;
+          for ic := 0 to in_ch -1 do
+            for khi := 0 to kH -1 do
+              for kwi := 0 to kW -1 do begin
+                for oh := tile_start to tile_end -1 do begin
+                  ih := oh * stride  - padding+khi;
+                  //col_idx := col_row * tile_pixels+(oh-tile_start) * outW;
+                  col_ptr := col + (col_row * tile_pixels+(oh-tile_start) * outW);
+                  if (longword(ih) < longword(H)) then
+                    if stride=1 then
+                      for ow := 0 to outW -1 do begin
+                        iw := ow -padding + kwi;
+                        if (longword(iw) < longword(W)) then
+                          col_ptr[ow] := in_b[ic * H * W+ih * W+iw]
+                        else
+                          col_ptr[ow] := 0.0
+                      end
+                    else
+                      for ow := 0 to outW -1 do begin
+                        iw := ow * stride  - padding+kwi;
+                        if (longword(iw) < longword(W)) then
+                          col_ptr[ow] := in_b[ic * H * W+ih * W+iw]
+                        //else
+                        //  col_ptr[ow] := 0.0
+                      end;
+                end;
+                inc(col_row)
+              end;
+          K := in_ch * kH * kW;
+          out_tile := out_b+tile_start * outW;
+          cblas_gemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, out_ch, tile_pixels, K, 1.0, weights, K, col, tile_pixels, 0.0, out_tile, outH * outW);
+          tile_start := tile_start + tile_rows
         end;
+        if assigned(bias) then
+          for oc := 0 to out_ch -1 do begin
+            b_val := bias[oc];
+            QNNBias(out_b + oc*outSpatial, b_val, outSpatial);
+            //out_ch_ptr := out_b + oc*outH*outW;
+            //for i := 0 to outSpatial -1 do
+            //    out_ch_ptr[i] := out_ch_ptr[i] + b_val
+          end
+    end;
     col.free;
     exit();
 {$endif}
@@ -1308,10 +1712,17 @@ end;
 
 procedure QNNRMSNorm(const N: longint; const dst, src: PQNNFloat; const weights: PQNNFloat; const stride: longint);
 var
-  invRMS: single;
+  invRMS, sum_sq, rms: single;
   i:longint;
 begin
-  invRMS := 1/sqrt(QNNSumSqr(N, src, stride)/N + EPSILON);
+  //sum_sq := 0.0;
+  //for i := 0 to N-1 do
+  //  sum_sq := sum_sq + src[i]*src[i];
+  //rms := sqrt(sum_sq / N + EPSILON);
+  //invRMS := 1.0 / rms;
+  //for i := 0 to N-1 do
+  //    dst[i] := src[i]*invRMS*weights[i];
+  invRMS := 1.0/sqrt(QNNSumSqr(N, src, stride)/N + EPSILON);
   if assigned(weights) then
     if stride =1 then
       QNNFusedMulScale(dst, src, weights, invRMS, N)
@@ -1327,30 +1738,26 @@ begin
 
 end;
 
-procedure QNNRMSNorm(const dst, src, weight: PQNNFloat; const seqLen, hidden: integer);
+procedure QNNRMSNorm(const dst, src, weight: PQNNFloat; const rows, dim: integer);
 var
-   s
+   r
    //, i
    : integer;
    //sq_sum, rms, rms_inv:QNNFloat;
    //x_row, out_row : PQNNFloat;
 begin
   // todo RMS_NORM Simdify
-  for s :=0 to seqLen-1 do begin
-      QNNRMSNorm(hidden, dst + s*hidden, src + s*hidden, weight, 1);
+  for r :=0 to rows-1 do
+      QNNRMSNorm(dim, dst + r*dim, src + r*dim, weight, 1);
 
-      //(* Compute RMS *)
-      //sq_sum := 0.0;
-      //for i := 0 to hidden-1 do
-      //    sq_sum := sq_sum + sqr(x_row[i]);
-      //
-      //rms := sqrt(sq_sum / hidden + EPSILON);
-      //rms_inv := 1.0 / rms;
-      //
-      //(* Normalize and scale *)
-      //for i := 0 to hidden-1 do
-      //    out_row[i] := x_row[i] * rms_inv * weight[i];
-  end
+end;
+
+procedure QNNTanh(const dst: PQNNFloat; const N: longint);
+var
+  i: Integer;
+begin
+  for i:=0 to N-1 do
+    dst[i] := tanh(dst[i])
 end;
 
 procedure QNNQKRMSNorm(const Q, K, QWeights, KWeights: PQNNFloat; const seq, heads, headDim: longint);
@@ -1392,8 +1799,18 @@ begin
 
 end;
 
-procedure QNNGroupNorm(const dst, src, gamma, beta : PQNNFloat;
-                     const batch, channels, H, W, num_groups:integer);
+procedure QNNQKRMSNorm(const dst, normWeights: PQNNFloat; const seq, heads, headDim: longint);
+var
+  s:longint;
+  head : PQNNFloat;
+begin
+  for s:= 0 to seq-1 do begin
+    head := dst + s*heads*headDim;
+    QNNRMSNorm(head, head, normWeights, heads, headDim);
+  end;
+end;
+
+procedure QNNGroupNorm(const dst, src, gamma, beta : PQNNFloat; const batch, channels, H, W, num_groups:integer);
 var
   channels_per_group, spatial, b, g
   , count, c_start, c_end, c, idx, i: integer;
@@ -1435,13 +1852,14 @@ begin
             variance := QNNVariance(spatial*channels_per_group, src1, mean);
 
             std_inv := 1.0 / sqrt(variance + EPSILON);
+
             for c:= 0 to channels_per_group-1 do
-              QNNFusedScaleBias(dst1+c*spatial, src1+c*spatial, gamma[c]*std_inv, -mean*gamma[c]*std_inv+beta[c], spatial);
+              QNNFusedScaleBias(dst1 + c*spatial, src1 + c*spatial, gamma[c+c_start]*std_inv, beta[c+c_start] - mean*gamma[c+c_start]*std_inv, spatial);
             //for c := c_start to c_end-1 do begin
-            //    for i := 0 to spatial-1 do begin
-            //        idx := b * channels * spatial + c * spatial + i;
-            //        dst[idx] := (src[idx] - mean)*gamma[c]*std_inv + beta[c];
-            //    end
+            //  for i := 0 to spatial-1 do begin
+            //    idx := b*channels*spatial + c * spatial + i;
+            //    dst[idx] := src[idx]*gamma[c]*std_inv - mean*gamma[c]*std_inv + beta[c];
+            //  end
             //end
         end
     end
@@ -1458,9 +1876,9 @@ begin
   // todo BatchNorm simdify
     spatial := H * W;
     for c := 0 to channels-1 do begin
-        mean := running_mean[c];
+        mean     := running_mean[c];
         variance := running_var[c];
-        std_inv := 1.0 / sqrt(variance + EPSILON);
+        std_inv  := 1.0 / sqrt(variance + EPSILON);
         if assigned(gamma) then g :=  gamma[c] else g := 1.0;
         if assigned(beta) then b_val := beta[c] else b_val := 0.0;
 
@@ -1485,7 +1903,7 @@ var i:integer;
 begin
   // todo sigmoid inplace simdify
   for i := 0 to N-1 do
-    x[i] := 1.0 / (1.0 + fast_expf(-x[i]));
+    x[i] := 1.0 / (1.0 + fast_exp(-x[i]));
 end;
 
 procedure QNNSigmoid(const dst, src: PQNNFloat; const N: integer);
@@ -1493,7 +1911,7 @@ var i:integer;
 begin
   // todo sigmoid simdify
   for i := 0 to N-1 do
-    dst[i] := 1.0 / (1.0 + fast_expf(-src[i]));
+    dst[i] := 1.0 / (1.0 + fast_exp(-src[i]));
 end;
 
 procedure QNNSilu(const x: PQNNFloat; const N: integer);
@@ -1504,7 +1922,7 @@ begin
   // todo silu inplace simdify
     for i := 0 to N-1 do begin
         val := x[i];
-        x[i] := val / (1.0 + fast_expf(-val));
+        x[i] := val / (1.0 + fast_exp(-val));
     end
 end;
 
@@ -1513,10 +1931,10 @@ var
   i:integer;
   val :QNNFloat;
 begin
-  // todo silu simdify
+  // todo silu priority simdify
     for i := 0 to N-1 do begin
         val := src[i];
-        dst[i] := val / (1.0 + fast_expf(-val));
+        dst[i] := val / (1.0 + fast_exp(-val));
     end
 end;
 
@@ -1526,10 +1944,10 @@ var
   val : QNNFloat;
 begin
 
-  // todo siluMul simdify
+  // todo siluMul priority simdify
   for i := 0 to N-1 do begin
     val := gate[i];
-    gate[i] := (val / (1.0 + fast_expf(-val))) * up[i];
+    gate[i] := (val / (1.0 + fast_exp(-val))) * up[i];
   end
 end;
 
@@ -1539,14 +1957,14 @@ var
   max_val, sum, inv_sum: QNNFloat;
 begin
   // todo softmax simdify
-  //max_val := x[0];
-  //for i := 1 to cols -1 do
-  //    if x[i] > max_val then
-  //        max_val := x[i];
-  max_val := QNNMax(N, x);
+  max_val := x[0];
+  for i := 1 to N -1 do
+      if x[i] > max_val then
+          max_val := x[i];
+  //max_val := QNNMax(N, x);
   sum := 0.0;
   for i := 0 to N-1 do begin
-      x[i] := fast_expf(x[i]-max_val);
+      x[i] := fast_exp(x[i]-max_val);
       sum := sum + x[i]
   end;
   inv_sum := 1.0 / sum;
@@ -1562,23 +1980,23 @@ var
 begin
   // todo softmax simdify
     for i := 0 to rows -1 do
-      //QNNSoftmax(x + i*cols, cols);
-      begin
-        row := x+ i*cols;
-        max_val := row[0];
-        for c := 1 to cols -1 do
-            if row[c] > max_val then
-                max_val := row[c];
-        sum := 0.0;
-        for c := 0 to cols -1 do
-            begin
-                row[c] := fast_expf(row[c]-max_val);
-                sum := sum + row[c]
-            end;
-        inv_sum := 1.0 / sum;
-        for c := 0 to cols -1 do
-            row[c] := row[c] * inv_sum
-      end
+      QNNSoftmax(x + i*cols, cols);
+      //begin
+      //  row := x+ i*cols;
+      //  max_val := row[0];
+      //  for c := 1 to cols -1 do
+      //      if row[c] > max_val then
+      //          max_val := row[c];
+      //  sum := 0.0;
+      //  for c := 0 to cols -1 do
+      //      begin
+      //          row[c] := fast_exp(row[c]-max_val);
+      //          sum := sum + row[c]
+      //      end;
+      //  inv_sum := 1.0 / sum;
+      //  for c := 0 to cols -1 do
+      //      row[c] := row[c] * inv_sum
+      //end
 end;
 
 (* ========================================================================
@@ -1685,7 +2103,7 @@ begin
                     score := scale*QNNDot(q_row, k_row, head_dim);
                     if score > max_score then
                         begin
-                            correction := fast_expf(max_score-score);
+                            correction := fast_exp(max_score-score);
                             sum_exp := sum_exp*correction + 1.0;
                             QNNFusedScaleAdd(o_row, o_row, v_row, correction, head_dim);
                             //for d := 0 to head_dim -1 do
@@ -1694,7 +2112,7 @@ begin
                         end
                     else
                         begin
-                            weight := fast_expf(score-max_score);
+                            weight := fast_exp(score-max_score);
                             sum_exp := sum_exp + weight;
                             cblas_axpy(head_dim, weight, v_row, 1, o_row, 1);
                             //for d := 0 to head_dim -1 do
@@ -1735,8 +2153,8 @@ begin
             sum_exps[i] := 0.0
         end;
 
-    fillchar(dst^, seq_q*head_dim*sizeof(QNNFloat), 0);
-    //QNNFill(dst, 0, seq_q*head_dim)
+    //fillchar(dst^, seq_q*head_dim*sizeof(QNNFloat), 0);
+    QNNFill(dst, 0, seq_q*head_dim);
     k_start := 0;
     while k_start < seq_k do begin
         if (k_start+k_tile_size < seq_k) then
@@ -1771,14 +2189,14 @@ begin
                 else
                     new_max := old_max;
                 if old_max > -1 then begin
-                    correction := fast_expf(old_max-new_max);
+                    correction := fast_exp(old_max-new_max);
                     sum_exps[i] := sum_exps[i] * correction;
                     cblas_scal(head_dim, correction, o_row, 1);
                     //for d := 0 to head_dim -1 do
                     //    o_row[d] := o_row[d] * correction
                 end;
                 for ki := 0 to k_len -1 do  begin
-                    weight := fast_expf(score_row[ki]-new_max);
+                    weight := fast_exp(score_row[ki]-new_max);
                     sum_exps[i] := sum_exps[i] + weight;
                     v_row := V_tile+ki * head_dim;
                     cblas_axpy(head_dim, weight, v_row, 1, o_row, 1);
@@ -1946,7 +2364,7 @@ var
   head : PQNNFloat;
   x0, x1 : QNNFloat;
 begin
-  halfDim := headDim div 2;
+  halfDim := headDim div 2;           // todo Priority SIMD
   for h:=0 to numHeads-1 do begin
     head := dst + h*headDim;
     for i:=0 to halfDim-1 do begin
@@ -1962,10 +2380,59 @@ procedure QNNApplyRoPE(const dst, cosIn, sinIn: PQNNFloat; const seqLen, numHead
 var
   halfDim, s:longint;
 begin
-  halfDim := headDim div 2;
+  halfDim := headDim div 2;      // todo Priority SIMD
   for s := 0 to seqLen-1 do
     QNNApplyRope(dst + s*numHeads*headDim, cosIn + s*halfDim, sinIn + s*halfDim, numHeads, headDim)
 end;
+
+procedure QNNApplyRoPE(const q, k, cos_cache, sin_cache: PQNNFloat; const seq_len, num_q_heads, num_kv_heads, head_dim: longint);
+var
+  half_dim, s, i, h : longint;
+  x0, x1, cos_val, sin_val : double;
+  q_head, k_head, cos_row, sin_row : PQNNFloat;
+begin
+  half_dim := head_dim div 2;
+
+  (* Apply RoPE to Q *)
+  for s := 0 to seq_len-1 do begin
+      cos_row := cos_cache + s * half_dim;
+      sin_row := sin_cache + s * half_dim;
+
+      for h := 0 to num_q_heads-1 do begin
+          q_head := q + s * num_q_heads * head_dim + h * head_dim;
+
+          for i := 0 to half_dim-1 do begin
+              x0 := q_head[i];
+              x1 := q_head[i + half_dim];
+              cos_val := cos_row[i];
+              sin_val := sin_row[i];
+              q_head[i]            := x0*cos_val - x1*sin_val;
+              q_head[i + half_dim] := x0*sin_val + x1*cos_val;
+          end;
+      end;
+  end;
+
+  (* Apply RoPE to K *)
+  for s := 0 to seq_len-1 do begin
+      cos_row := cos_cache + s * half_dim;
+      sin_row := sin_cache + s * half_dim;
+
+      for h := 0 to num_kv_heads-1 do begin
+          k_head := k + s*num_kv_heads*head_dim + h*head_dim;
+
+          for i := 0 to half_dim-1 do begin
+              x0 := k_head[i];
+              x1 := k_head[i + half_dim];
+              cos_val := cos_row[i];
+              sin_val := sin_row[i];
+
+              k_head[i]            := x0*cos_val - x1*sin_val;
+              k_head[i + half_dim] := x0*sin_val + x1*cos_val;
+          end;
+      end;
+  end;
+end;
+
 
 procedure QNNApplyRoPE2D(const dst, cos_freq, sin_freq: PQNNFloat; const seq, heads, head_dim, dim: longint);
 var s, d, h:longint;
@@ -1973,7 +2440,7 @@ var s, d, h:longint;
   cos_val,sin_val, x0, x1 : QNNFloat;
 begin
   //axis_dim;  (* head_dim = 128 = 4 * axis_dim (axis_dim = 32) *)
-  for s := 0 to seq-1 do begin
+  for s := 0 to seq-1 do begin         // todo priority SIMD
     cos_s := cos_freq + s*head_dim;  (* [128] *)
     sin_s := sin_freq + s*head_dim;
 
@@ -2020,7 +2487,7 @@ var
   inRow, outRow:PQNNFloat;
   Mean, variance, stdInv, norm:QNNFloat;
 begin
-  for i:=0 to seq-1 do begin
+  for i:=0 to seq-1 do begin      // todo priority SIMD
     inRow  := src + i*hidden;
     outRow := dst + i*hidden;
     mean     := QNNMean(hidden, inRow);
@@ -2212,8 +2679,8 @@ begin
                 begin
                   ih := ph * patch_size+pi;
                   iw := pw * patch_size+pj;
-                  in_idx := b * channels * H * W+c * H * W+ih * W+iw;
-                  out_c := c * patch_size * patch_size+pi * patch_size+pj;
+                  in_idx := b * channels * H * W + c * H * W + ih * W + iw;
+                  out_c := c * patch_size * patch_size + pi * patch_size + pj;
                   out_idx := b * out_ch * outH * outW+out_c * outH * outW+ph * outW+pw;
                   dst[out_idx] := src[in_idx]
                 end
@@ -2319,7 +2786,7 @@ var
 *)
 
 procedure printStat(const src:PQNNFloat; const N:longint);
-const DECIMALS =6;
+const DECIMALS =3;
 var mi, ma, ami, ama, mean, stddev:QNNFLoat;
   argma, argmi : longint;
 begin
@@ -2337,6 +2804,83 @@ begin
   printStat(src, src.count)
 end;
 
+procedure printCompare(const N:longint; const src1, src2:PQNNFloat; const isSumSqrDiff:boolean =false);
+var md,out1,out2: single;
+begin
+  assert(assigned(src1) and assigned(src2), 'ERROR : src1 and src2 must be assigned');
+  writeln('');
+  printStat(src1, N);
+  printStat(src2, N);
+  if isSumSqrDiff then begin
+    md := QNNSumSqrDiff(N, src1, src2);
+    writeln('SumSqrAbsDiff :', md:1:5);
+  end else begin
+    md := QNNMaxAbsDiff(N, src1, src2, out1, out2);
+    writeln('MaxAbsDiff :', md:1:5, ' max src1 :', out1:1:6, ' max src2:', out2:1:6);
+  end;
+end;
+
+procedure writeTensor(const buf:TMemoryBlock);
+var f: file; rt:integer;
+begin
+  assignFile(f, 'c:\development\flux2.c\tensor.1');
+  Rewrite(f, sizeof(single));
+  BlockWrite(f, PSingle(buf)^, buf.count(), rt);
+  closefile(f);
+  assert(rt = buf.Count(), 'Unmatch blocksize write');
+end;
+
+function readTensor(): TMemoryBlock;
+var f:File; rd:integer;
+begin
+  assignFile(f, 'c:\development\flux2.c\tensor');
+  reset(f, sizeof(single));
+  result := TMemoryBlock.Create(fileSize(f));
+  BlockRead(f, PSingle(result)^, result.count, rd);
+  CloseFile(f);
+  assert(rd = result.Count(), 'Unmatch blcoksize read');
+end;
+
+function readArray: TArray<integer>;
+var f:File; rd:integer;
+begin
+  assignFile(f, 'c:\development\flux2.c\tensor');
+  reset(f, sizeof(integer));
+  setLength(result, fileSize(f));
+  BlockRead(f, PInteger(result)^, length(result), rd);
+  CloseFile(f);
+  assert(rd = length(result), 'Unmatch blcoksize read');
+end;
+
+procedure compareArray(const a, b: TArray<Integer>);
+var i:longint;
+begin
+  assert(high(a)=high(b),'unmatched array length');
+  for i:=0 to high(a)-1 do
+    assert(a[i]=b[i],' Unmatched element at '+intToStr(i))
+end;
+
+procedure compareArray(const a, b: PInteger; const N:longint);
+var i:longint;
+begin
+  for i:=0 to N-1 do
+    assert(a[i]=b[i],' Unmatched element at '+intToStr(i))
+end;
+
+procedure compareArray(const a, b: PSingle; const N: longint);
+var i:longint;
+begin
+  for i:=0 to N-1 do
+    assert(a[i]=b[i],' Unmatched element at '+intToStr(i))
+end;
+
+
+
+//procedure __imp_prn(const str: pchar);
+//begin
+//  printf(str)
+//end;
+
 procedure printArray(const src:PQNNFloat; const N:longint);
 var i:longint;
 begin
@@ -2350,20 +2894,31 @@ begin
   writeln(']')
 end;
 
-{
+
 type
   PF = ^TF;
   TF = array[0..7] of QNNFloat;
 const
   batch = 1; heads = 64; seq = 64; dim = 64;
+
+
+  M  = 1;
+  N  = 511*13;
+  KK = 519*9;
+
 var
-  Q, K, V, O, O2 : TMemoryBlock;
+  A, B, O, O2 : TMemoryBlock;
   QPTR,KPTR,VPTR, OPTR, OPTR2 : PQNNFloat;
   i : longint;
-  t, t2:Int64;     }
+  t, t2:Int64;
+
+  d1, d2 : QNNFloat;
+  dptr : PQNNFloat;
 
 initialization
 
+
+  //SetPrecisionMode(TFPUPrecisionMode.pmDouble);
 (*
   setLength(im1, 3*WW*HH);
   setLength(im2, length(im1));
@@ -2404,13 +2959,9 @@ initialization
   cblas_gemm := qgemm;
   cblas_asum := qasum;
 
-  hBLASLib := LoadLibrary(blaslib);
-  {$ifdef MSWINDOWS}
-  if hBLASLib=0 then
-    hBLASLib:=LoadLibrary('lib'+blaslib);
-  {$endif}
+  hBLASLib :=0;
 
-  {$if defined(MACOS) or defined(darwin)}
+  {$if defined(MACOS) or defined(darwin) or defined(USE_STATIC_LINK)}
   case GetTypeData(TypeInfo(QNNFloat)).FloatType of
     ftSingle :
       begin
@@ -2430,6 +2981,11 @@ initialization
     //  end;
   end;
   {$else}
+  //hBLASLib := LoadLibrary(blaslib);
+  {$ifdef MSWINDOWS}
+  //if hBLASLib=0 then
+  //  hBLASLib:=LoadLibrary('lib'+blaslib);
+  {$endif}
   if (hBLASLib>0) then
     case GetTypeData(TypeInfo(QNNFloat)).FloatType of
       ftSingle :
@@ -2453,38 +3009,49 @@ initialization
   {$endif}
 
 
-  //Q := TMemoryBlock.Create(seq*heads*dim);
-  //K := TMemoryBlock.Create(seq*heads*dim);
-  //V := TMemoryBlock.Create(seq*heads*dim);
-  //O := TMemoryBlock.Create(seq*heads*dim);
-  //O2 := TMemoryBlock.Create(seq*heads*dim);
-  //
-  //QPTR := Q;
-  //KPTR := K;
-  //VPTR := V;
-  //OPTR := O;
-  //OPTR2 := O2;
-  //for i:=0 to Q.count-1 do begin
-  //  QPTR[i] := {i mod 10;        }random()*2-1.0;
-  //  KPTR[i] := {(i div 2) mod 10;}random()*2-1.0;
-  //  VPTR[i] := {(i div 3) mod 10;}random()*2-1.0;
-  //end;
-  //QueryPerformanceCounter(t);
-  //QNNAttention(O, Q, K, V, batch, heads, seq, seq, dim, 1/sqrt(dim));
-  //QueryPerformanceCounter(t2);
-  //PrintArray(O , 8{seq*heads*dim});
-  //writeln('SPDA ms:', t2-t);
-  //QueryPerformanceCounter(t);
-  //QNNFlashAttention(O2, Q, K, V, seq, seq, heads, dim, 1/sqrt(dim));
-  //QueryPerformanceCounter(t2);
-  //writeln('FATT ms:',t2-t);
-  //printStat(O, seq*heads*dim);
-  //printStat(O2, seq*heads*dim);
-  //writeln('SumSqrDiff : ',QNNSumSqrDiff(seq*heads*dim, O, O2):1:4);
-  //writeln;
-  //PrintArray(O2, 8{seq*heads*dim});
-  //
-  //readln;
+(*
+  randomize;
+  A := TMemoryBlock.create(M*KK);
+  dptr := A;
+  for i:=0 to A.Count-1 do
+    dptr[i] := 10*(random()*2 -1);
+  B := TMemoryBlock.create(KK*N);
+  dptr := B;
+  for i:=0 to B.Count-1 do
+    dptr[i] := 10*(random()*2 -1);
+
+  O := TMemoryBlock.create([M, N]);
+  dptr := O;
+  for i:=0 to O.Count-1 do
+    dptr[i] := 10*(random()*2 -1);
+
+  O2 := TMemoryBlock.create([M, N]);
+  QNNCopy(O2, O, O.count);
+
+  //set_prn(printf);
+
+  //cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, KK, 1.5, A, KK, B, N, 0, O, N) ;
+  //      qgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, KK, 1.5, A, KK, B, N, 0, O2, N) ;
+   //cpp_sgemm(               CblasNoTrans, CblasNoTrans, M, N, KK, 1.5, Q, KK, K, N, 0, O2, N, 0 , M) ;
+
+   for i:=0 to 10 do
+       cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, M, N, KK, 1, A, KK, B, KK, 1, O , N) ;
+   for i:=0 to 10 do
+       cblas_gemm(CblasRowMajor, CblasNoTrans, CblasTrans, M, N, KK, 1, A, KK, B, KK, 1, O2, N) ;
+  //cpp_sgemm(                CblasNoTrans, CblasTrans, M, N, KK, 1.5, Q, KK, K, KK, 0, O2, N, 0, M) ;
+
+  //cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, M, N, KK, 1.5, Q, M, K, N, 0, O, N) ;
+  //     qgemm(CblasRowMajor, CblasTrans, CblasNoTrans, M, N, KK, 1.5, Q, M, K, N, 0, O2, N) ;
+
+  //O .print();
+  //O2.print();           sgemm2
+
+  O.printCompare(O2, false);
+
+  readln;
+
+*)
+
 
 
 finalization
@@ -2497,7 +3064,7 @@ finalization
     cblas_asum := nil;
     cblas_scal := nil;
     cblas_sbgemm := nil
-  end
+  end;
 
 end.
 

@@ -1,4 +1,4 @@
-unit quicknn_common;
+﻿unit quicknn_common;
 
 {$ifdef FPC}
   {$PackRecords C}
@@ -10,15 +10,28 @@ unit quicknn_common;
     {$asmmode intel}
   {$endif}
 {$endif}
+{$TYPEINFO ON} // include typeinfo
 {$C+} // enable assertions
 {$H+}
 {$pointermath on}
+{$T+}
 {$Z4}  // enums ar aligned to 4 bytes to match C API
 
-{$define USE_CALLOC}
+{$define _USE_CALLOC}
 
 interface
-uses Classes, Types, typinfo, generics.Collections;
+uses Classes, Types, typinfo, generics.Collections
+  {$ifdef FPC}
+  , FPCanvas
+  , FPWriteBMP
+  , FPWriteJPEG
+  , FPWritePNG
+  , FPReadBMP
+  , FPReadJPEG
+  , FPReadPNG
+  , FPImage
+  {$endif}
+  ;
 
 //{$if not declared(FP16)}
 type
@@ -29,7 +42,7 @@ type
   PFP16 = ^FP16;
 //{$endif}
 
-{$if not declared(TThreadProcNested)}
+{$if not defined(USE_MULTITHREADING)}
 type
   {$ifdef FPC}
   TThreadProcNested = procedure(idx: IntPtr; ptr: Pointer) is nested;
@@ -49,6 +62,12 @@ type
   PINT4Array = ^TINT4Array;
   PINT4 = ^INT4;
 
+  TQNNDeviceType = (dvCPU, dvCUDA, dvVULKAN, dvOPENCL, dvROCM);
+
+  TQNNDevice = record
+    deviceType : TQNNDeviceType;
+    mem : Pointer;
+  end;
 
   TQNNDataType =( // matching oneDNN
         dtUndef = 0,
@@ -67,12 +86,18 @@ type
         dtE8m0 = 13,
         dtF4_e2m1 = 14,
         dtF4_e3m0 = 15,
-        dtS16,
+        dtS16 = 16,
         dtU16//,
         //dtData_type_max = $7fff
   );
 
+const
+  dtI4  = dtS4;
+  dtI8  = dtS8;
+  dtI16 = dtS16;
+  dtI32 = dtS32;
 
+type
   PPQNNFloat = ^PQNNFloat;
   PQNNFloat = PSingle;//^QNNFloat;
   QNNFloat = single;
@@ -88,6 +113,8 @@ type
       channels : longint;// RGB
       data : TArray<byte>;      (* Row-major, channel-interleaved *)
       constructor Create(const aWidth, aHeight:longint; const aChannels : longint =3; const aData:PQNNFloat =nil);
+      procedure saveToFile(const filename:string);
+      class function loadFromFile(const fileName : string; resizeWidth: longint =0; resizeHeight: longint=0):TQNNImage;static;
       procedure free();
   end;
 
@@ -98,14 +125,44 @@ const
 
 type
 
+  TTensorPrintStyle = (
+                    psValues,
+                    psGray5{5 ascii shades},
+                    psGray24{24 half char shades},
+                    psGray {256 half char shades},
+                    psColor8 {256 colors},
+                    psColor24 {~16M colors},
+                    psSIXELGray,
+                    psSIXEL,
+                    psSIXELDithered
+                  );
+
+  TQNNSchedule = (
+    QNN_SCHEDULE_DEFAULT   = 0,
+    QNN_SCHEDULE_LINEAR    = 1,
+    QNN_SCHEDULE_POWER     = 2,
+    QNN_SCHEDULE_SIGMOID   = 3,  (* Flux shifted sigmoid *)
+    QNN_SCHEDULE_FLOWMATCH = 4  (* Z-Image FlowMatch Euler *)
+  );
+
+  TGenerateParams = record
+    width, height, num_steps :longint;
+    seed : Int64;
+    guidance :single;
+    schedule : TQNNSchedule;
+    powerAlpha : single;
+  end;
 // todo link TMemoryBlock to IMemoryArena for allocations
+  TOnMemoryUpdate = procedure(const status:string; const old, New:IntPtr);
   { TMemoryBlock }
 
   TMemoryBlock = record
       DataType : TQNNDataType;
+      shape    : TArray<Int64>;
+      offset   : NativeInt;
       DataPtr  : pointer;
-{$ifdef USE_CALLOC}
       size     : NativeInt;
+{$ifdef USE_CALLOC}
       Data32   : PLongWord;
       Data16   : PSmallInt;
       Data8    : PByte;
@@ -116,7 +173,13 @@ type
       Data8    : TArray<Byte>;
       Data4    : TArray<INT4>;
 {$endif}
-      constructor Create(const aSize:NativeInt; const dType:TQNNDataType = QNN_DATATYPE; const src : pointer =nil);
+      device   : TQNNDevice;
+  const
+      ERRSTR_CAST_ARRAY = 'MemoryBlock with non zero offset cannot be casted to an Array';
+      ERRSTR_CAST_TYPE = 'ERROR : Data is not of ';
+  public
+      constructor Create(const aSize:NativeInt; const dType:TQNNDataType = QNN_DATATYPE; const src : pointer =nil);           overload;
+      constructor Create(const aShape : TArray<Int64>; const dType:TQNNDataType = QNN_DATATYPE; const aData : pointer =nil);  overload;
       procedure reSize(const aSize:NativeInt);
       procedure free();
       function count:NativeInt;
@@ -157,7 +220,11 @@ type
       class operator implicit(const val:TMemoryBlock):PShortint;
       class operator implicit(const val:TMemoryBlock):PINT4    ;
       class operator implicit(const val:TMemoryBlock):boolean ;
+      class operator add(const src:TMemoryBlock; const aOffset:NativeInt):TMemoryBlock;
+      procedure printCompare(const src:TMemoryBlock; const isSumSqrDiff:boolean =false);
 
+      function TypeName():string;
+      function print(const consolePixel: TTensorPrintStyle = psGray; tile: Integer = 1; minVal: double = 0; maxVal: double = 0): TArray<NativeInt>; overload;
       class operator Initialize({$ifdef FPC}var{$else}out{$endif} val:TMemoryBlock);
   end;
 
@@ -192,7 +259,7 @@ type
     destructor Destroy; override;
   end;
 
-  TVocabs = TDictionary<string, longint>;
+  TVocabs = TDictionary<rawbytestring, longint>;
 
   TCHMult = array[0..3] of longint;
 
@@ -285,7 +352,9 @@ function ifthen(const cond:boolean; const ifTrue, ifFalse:int64):int64;     over
 function ifthen(const cond:boolean; const ifTrue, ifFalse:single):single;   overload;inline;
 function ifthen(const cond:boolean; const ifTrue, ifFalse:double):double;   overload;inline;
 function ifthen(const cond:boolean; const ifTrue, ifFalse:string):string;   overload;inline;
-
+function LCase(const c:ansichar):ansichar;
+function UCase(const c:ansichar):ansichar;
+function product(const ar:TArray<int64>):int64;
 
 function readInt(var f:file):longint;
 function readSingles(var f:file; const count:longint):TMemoryBlock;
@@ -365,10 +434,43 @@ var
   step_image_vae : pointer;  (* Set to iris_vae_t* for step image decoding *)
   text_progress_callback : TTextProgressCallback;
   vae_progress_callback  : TVAEProgressCallback;
+  onMemoryUpdate : TOnMemoryUpdate;
 
+  function IndexOf(const needle:string; const haystack:TArray<string>):nativeInt;  overload;
 
 implementation
-uses quicknn_kernels;
+uses SysUtils, Math
+  {$ifdef MSWINDOWS}
+  , Windows
+  {$endif}
+  , quicknn_kernels, termesc, sixel;
+
+type
+  PSingle = System.PSingle; // fix delphi incompatible PSingle between System and Windows units
+
+function LCase(const c:ansichar):ansichar;
+begin
+  result := C;
+  if result in ['A'..'Z'] then inc(result, $20)
+
+end;
+
+function UCase(const c: ansichar): ansichar;
+begin
+  result := C;
+  if result in ['a'..'z'] then dec(result, $20)
+end;
+
+
+function product(const ar: TArray<int64>): int64;
+var
+  i: Integer;
+begin
+  //if not assigned(ar) then exit(0);
+  result := 1;
+  for i:=0 to high(ar) do
+    result := result * ar[i]
+end;
 
 function readInt(var f:file):longint;
 begin
@@ -379,6 +481,14 @@ function readSingles(var f:file; const count:longint):TMemoryBlock;
 begin
     result := TMemoryBlock.Create(count, dtF32);
     blockread(f, PSingle(result)^, count*sizeof(single))
+end;
+
+function IndexOf(const needle: string; const haystack: TArray<string>): nativeInt;
+var i:nativeint;
+begin
+  for i:=0 to high(haystack) do
+    if needle=haystack[i] then exit(i);
+  result := -1;
 end;
 
 { TQNNImage }
@@ -407,11 +517,82 @@ begin
           end;
 end;
 
+procedure TQNNImage.saveToFile(const filename: string);
+var
+  y, x, w, h : longint;
+  {$if defined(fpc)}
+  clr:TFPColor;
+  bmp : TFPMemoryImage;
+  {$else}
+  {$endif}
+  D : PByte;
+begin
+  w := width;
+  h := height;
+  {$ifdef fpc}
+  bmp := TFPMemoryImage.Create(width, height);
+
+  for y := 0 to height-1 do
+    for x :=0 to width-1 do begin
+        d := @data[(y*w + x)*3];
+        clr.red   := d[0] shl 8;
+        clr.Green := d[1] shl 8;
+        clr.Blue  := d[2] shl 8;
+        clr.Alpha:= $FF00;
+        bmp.Colors[x, y] := clr;
+    end;
+  bmp.SaveToFile(fileName);
+  bmp.free
+  {$else}
+  {$endif}
+end;
+
+class function TQNNImage.loadFromFile(const fileName: string;
+  resizeWidth: longint; resizeHeight: longint): TQNNImage;
+{$ifdef FPC}
+var img : TFPMemoryImage;
+    P:TFPColor;
+    x, y, imSize, _h, _w : SizeInt;
+    d:PByte;
+begin
+  result := default(TQNNImage);
+  img := TFPMemoryImage.Create(0, 0);
+  try
+      img.LoadFromFile(fileName);
+      if resizeWidth<=0 then resizeWidth    := img.Width;
+      if resizeHeight<=0 then resizeHeight  := img.Height;
+      _w := img.Width;
+      _h := img.Height;
+      imSize := resizeHeight*resizeWidth;
+      setLength(result.Data, 3*imSize);
+      for y := 0 to resizeHeight-1 do
+        for x := 0 to resizeWidth-1 do begin
+           p := img.Colors[ round(_w * x / resizeWidth),  round(_h * y / resizeHeight)];  // nearst neighor
+           d := @result.data[3*(y*resizeWidth + x)];
+           d[0]:= p.red   shr 8;
+           d[1]:= p.green shr 8;
+           d[2]:= p.blue  shr 8;
+        end;
+      result.width  := resizeWidth;
+      result.height := resizeHeight;
+      result.channels := 3;
+  finally
+    freeAndNil(img)
+  end;
+end;
+{$else}
+begin
+  result := default(TQNNImage);
+end;
+{$endif}
+
 procedure TQNNImage.free();
 begin
   setLength(Data, 0);
   self := default(TQNNImage)
 end;
+
+{ TMemoryBlock }
 
 constructor TMemoryBlock.create(const aSize:NativeInt; const dType:TQNNDataType; const src : pointer);
 begin
@@ -420,53 +601,61 @@ begin
   case DATATYPE_BITS[dType] of
     //1 : setlength(Data1, aSize);
     4  : begin
-      {$ifdef USE_CALLOC}
       size := aSize;
+      {$ifdef USE_CALLOC}
       Data4 := nil;
-      Data4 := malloc((aSize*DATATYPE_BITS[dtype]) div 8);
+      Data4 := malloc((aSize*DATATYPE_BITS[dtype]+4) div 8);
       {$else}
       setLength(Data4 , aSize);
       {$endif}
+      if assigned(onMemoryUpdate) then
+        onMemoryUpdate('new', 0, (aSize*DATATYPE_BITS[dtype]+4) div 8);
       assert(assigned(data4), 'ERROR : TMemoryBlock.Create, not enough memory!');
       if assigned(src) then
         move(src^, pointer(Data4) , (aSize*DATATYPE_BITS[dType]) div 8)
     end;
 
     8  : begin
-      {$ifdef USE_CALLOC}
       size := aSize;
+      {$ifdef USE_CALLOC}
       Data8 := nil;
       Data8 := malloc((aSize*DATATYPE_BITS[dtype]) div 8);
       {$else}
       setLength(Data8 , aSize);
       {$endif}
+      if assigned(onMemoryUpdate) then
+        onMemoryUpdate('new', 0, (aSize*DATATYPE_BITS[dtype]) div 8);
       assert(assigned(data8), 'ERROR : TMemoryBlock.Create, not enough memory!');
       if assigned(src) then
         move(src^, pointer(Data8) , (aSize*DATATYPE_BITS[dType]) div 8)
     end;
 
     16 : begin
-      {$ifdef USE_CALLOC}
       size := aSize;
+      {$ifdef USE_CALLOC}
       Data16 := nil;
       Data16 := malloc((aSize*DATATYPE_BITS[dtype]) div 8);
       {$else}
       setLength(Data16, aSize);
       {$endif}
+      if assigned(onMemoryUpdate) then
+        onMemoryUpdate('new', 0, (aSize*DATATYPE_BITS[dtype]) div 8);
       assert(assigned(data16), 'ERROR : TMemoryBlock.Create, not enough memory!');
       if assigned(src) then
         move(src^, pointer(Data16), (aSize*DATATYPE_BITS[dType]) div 8)
     end;
 
     32 : begin
-      {$ifdef USE_CALLOC}
       size := aSize;
+      {$ifdef USE_CALLOC}
       Data32 := nil;
       Data32 := malloc((aSize*DATATYPE_BITS[dtype]) div 8);
       //Data32 := calloc(aSize, sizeOf(longint));
       {$else}
       setLength(Data32, aSize);
       {$endif}
+      if assigned(onMemoryUpdate) then
+        onMemoryUpdate('new', 0, (aSize*DATATYPE_BITS[dtype]) div 8);
       assert(assigned(data32), 'ERROR : TMemoryBlock.Create, not enough memory!');
       if assigned(src) then
         move(src^, pointer(Data32), (aSize*DATATYPE_BITS[dType]) div 8)
@@ -476,47 +665,61 @@ begin
   end;
 end;
 
+constructor TMemoryBlock.Create(const aShape : TArray<Int64>; const dType:TQNNDataType; const aData:pointer);
+begin
+  self := create(product(aShape), dType, aData);
+  shape := aShape
+end;
+
 procedure TMemoryBlock.reSize(const aSize:NativeInt);
 begin
   case DATATYPE_BITS[DataType] of
     //1 : setlength(Data1, aSize);
     4  : begin
       {$ifdef USE_CALLOC}
-      size := aSize;
       Data4 := realloc(Data4, (aSize*DATATYPE_BITS[Datatype]) div 8);
       {$else}
       setLength(Data4 , aSize);
       {$endif}
+      if assigned(onMemoryUpdate) then
+        onMemoryUpdate('resize', (size*DATATYPE_BITS[DataType]+4) div 8, (aSize*DATATYPE_BITS[DataType]+4) div 8);
+      size := aSize;
       assert(assigned(data4), 'ERROR : TMemoryBlock.Create, not enough memory!');
     end;
 
     8  : begin
       {$ifdef USE_CALLOC}
-      size := aSize;
       Data8 := realloc(Data8, (aSize*DATATYPE_BITS[Datatype]) div 8);
       {$else}
       setLength(Data8 , aSize);
       {$endif}
+      if assigned(onMemoryUpdate) then
+        onMemoryUpdate('resize', size*DATATYPE_BITS[DataType] div 8, (aSize*DATATYPE_BITS[DataType]) div 8);
+      size := aSize;
       assert(assigned(data8), 'ERROR : TMemoryBlock.Create, not enough memory!');
     end;
 
     16 : begin
       {$ifdef USE_CALLOC}
-      size := aSize;
       Data16 := realloc(Data16, (aSize*DATATYPE_BITS[Datatype]) div 8);
       {$else}
       setLength(Data16, aSize);
       {$endif}
+      if assigned(onMemoryUpdate) then
+        onMemoryUpdate('resize', size*DATATYPE_BITS[DataType] div 8, (aSize*DATATYPE_BITS[DataType]) div 8);
+      size := aSize;
       assert(assigned(data16), 'ERROR : TMemoryBlock.Create, not enough memory!');
     end;
 
     32 : begin
       {$ifdef USE_CALLOC}
-      size := aSize;
       Data32 := realloc(Data32, (aSize*DATATYPE_BITS[Datatype]) div 8);
       {$else}
       setLength(Data32, aSize);
       {$endif}
+      if assigned(onMemoryUpdate) then
+        onMemoryUpdate('resize', size*DATATYPE_BITS[DataType] div 8, (aSize*DATATYPE_BITS[DataType]) div 8);
+      size := aSize;
       assert(assigned(data32), 'ERROR : TMemoryBlock.Create, not enough memory!');
     end;
   else
@@ -535,14 +738,23 @@ begin
     32:if assigned(Data32) and (size>0) then begin m := Data32; Data32 :=nil; quicknn_common.free(m) end;
   end;
   {$else}
-  case DATATYPE_BITS[DataType] of
-    4 :setLength(Data4 , 0);
-    8 :setLength(Data8 , 0);
-    16:setLength(Data16, 0);
-    32:setLength(Data32, 0);
-  end;
+//  case DATATYPE_BITS[DataType] of
+//    4 :setLength(Data4 , 0);
+//    8 :setLength(Data8 , 0);
+//    16:setLength(Data16, 0);
+//    32:setLength(Data32, 0);
+//  end;
+  if assigned(Data4)  then setLength(Data4 , 0);
+  if assigned(Data8)  then setLength(Data8 , 0);
+  if assigned(Data16) then setLength(Data16, 0);
+  if assigned(Data32) then setLength(Data32, 0);
  {$endif}
-  self := default(TMemoryBlock);
+ if assigned(onMemoryUpdate) then
+   if DATATYPE_BITS[DataType]=4 then
+     onMemoryUpdate('free', (Size*DATATYPE_BITS[DataType]+4) div 8, 0)
+   else
+     onMemoryUpdate('free', (Size*DATATYPE_BITS[DataType]) div 8, 0);
+ fillchar(self, sizeof(self), #0);
 end;
 
 function TMemoryBlock.count:NativeInt;
@@ -575,7 +787,12 @@ end;
 
 procedure TMemoryBlock.printStat;
 begin
-  quicknn_kernels.printStat(self);
+  case DataType of
+    dtF32:
+      quicknn_kernels.printStat(self);
+  else
+    assert(false, 'ERROR : Datatype '+ GetEnumName(TypeInfo(TQNNDataType), ord(DataType))+' not implemented!')
+  end;
 end;
 
 //class operator TMemoryBlock.implicit(const val:Pointer ):TMemoryBlock;
@@ -628,43 +845,50 @@ end;
 
 class operator TMemoryBlock.implicit(const val:TMemoryBlock):TArray<longint>  ;
 begin
-  assert(val.DataType=dts32, 'ERROR : Data is not of '+'INT32');
+  assert(val.DataType=dts32, ERRSTR_CAST_TYPE+'INT32');
+  assert(val.offset=0, ERRSTR_CAST_Array);
   result := TArray<longint>(val.Data32);
 end;
 
 class operator TMemoryBlock.implicit(const val:TMemoryBlock):TArray<single>  ;
 begin
-  assert(val.DataType=dtf32, 'ERROR : Data is not of '+'FP32');
+  assert(val.DataType=dtf32, ERRSTR_CAST_TYPE+'FP32');
+  assert(val.offset=0, ERRSTR_CAST_Array);
   result := TArray<single>(val.Data32);
 end;
 
 class operator TMemoryBlock.implicit(const val:TMemoryBlock):TArray<BF16>    ;
 begin
-  assert(val.DataType=dtBf16, 'ERROR : Data is not of '+'BF16');
+  assert(val.DataType=dtBf16, ERRSTR_CAST_TYPE+'BF16');
+  assert(val.offset=0, ERRSTR_CAST_Array);
   result := TArray<BF16>(val.Data16);
 end;
 
 class operator TMemoryBlock.implicit(const val:TMemoryBlock):TArray<FP16>    ;
 begin
-  assert(val.DataType=dtF16, 'ERROR : Data is not of '+'FP16');
+  assert(val.DataType=dtF16, ERRSTR_CAST_TYPE+'FP16');
+  assert(val.offset=0, ERRSTR_CAST_Array);
   result := TArray<FP16>(val.Data16);
 end;
 
 class operator TMemoryBlock.implicit(const val:TMemoryBlock):TArray<smallint>;
 begin
-  assert(val.DataType=dts16, 'ERROR : Data is not of '+'INT16');
+  assert(val.DataType=dts16, ERRSTR_CAST_TYPE+'INT16');
+  assert(val.offset=0, ERRSTR_CAST_Array);
   result := TArray<SmallInt>(val.Data16);
 end;
 
 class operator TMemoryBlock.implicit(const val:TMemoryBlock):TArray<shortint>;
 begin
-  assert(val.DataType=dtS8, 'ERROR : Data is not of '+'INT8');
+  assert(val.DataType=dtS8, ERRSTR_CAST_TYPE+'INT8');
+  assert(val.offset=0, ERRSTR_CAST_Array);
   result := TArray<shortint>(val.Data8);
 end;
 
 class operator TMemoryBlock.implicit(const val:TMemoryBlock): TArray<INT4>;
 begin
-  assert(val.DataType=dtS4, 'ERROR : Data is not of '+'INT4');
+  assert(val.DataType=dtS4, ERRSTR_CAST_TYPE+'INT4');
+  assert(val.offset=0, ERRSTR_CAST_Array);
   result := TArray<INT4>(val.Data4);
 end;
 
@@ -725,6 +949,7 @@ begin
     result := Pointer(val.Data32)
   else
     result := val.DataPtr;
+  inc(result, val.offset)
 end;
 
 class operator TMemoryBlock.implicit(const val:TMemoryBlock):PSingle  ;
@@ -734,6 +959,7 @@ begin
     result := Pointer(val.Data32)
   else
     result := val.DataPtr;
+  inc(result, val.offset)
 end;
 
 class operator TMemoryBlock.implicit(const val:TMemoryBlock):PBF16    ;
@@ -743,6 +969,7 @@ begin
     result := Pointer(val.Data16)
   else
     result := val.DataPtr;
+  inc(result, val.offset)
 end;
 
 class operator TMemoryBlock.implicit(const val:TMemoryBlock):PFP16    ;
@@ -752,6 +979,7 @@ begin
     result := Pointer(val.Data16)
   else
     result := val.DataPtr;
+  inc(result, val.offset)
 end;
 
 class operator TMemoryBlock.implicit(const val:TMemoryBlock):PSmallint;
@@ -761,6 +989,7 @@ begin
     result := Pointer(val.Data16)
   else
     result := val.DataPtr;
+  inc(result, val.offset)
 end;
 
 class operator TMemoryBlock.implicit(const val:TMemoryBlock):PShortint;
@@ -770,6 +999,7 @@ begin
     result := Pointer(val.Data8)
   else
     result := val.DataPtr;
+  inc(result, val.offset)
 end;
 
 class operator TMemoryBlock.implicit(const val:TMemoryBlock):PINT4    ;
@@ -779,6 +1009,314 @@ begin
     result := Pointer(val.Data4)
   else
     result := val.DataPtr;
+  inc(result, val.offset)  // todo Implicit to PInt4 : check validity of int4 pointer offseting
+end;
+
+class operator TMemoryBlock.add(const src:TMemoryBlock; const aOffset:nativeInt):TMemoryBlock  ;
+begin
+  result := src;
+  result.offset:=aOffset;
+end;
+
+procedure TMemoryBlock.printCompare(const src:TMemoryBlock; const isSumSqrDiff:boolean =false);
+var md,src1,src2: single;
+begin
+  assert(count = src.count, 'Tensor sizes do not match! '+IntToStr(count())+'<>'+IntToStr(src.Count()));
+  printStat;
+  src.printStat;
+  if isSumSqrDiff then begin
+    md := QNNSumSqrDiff(count, self, src);
+    writeln('SumSqrAbsDiff :', md:1:5);
+  end else begin
+    md := QNNMaxAbsDiff(count, self, src, src1, src2);
+    writeln('MaxAbsDiff :', md:1:5, ' max src1 :', src1:1:6, ' max src2:', src2:1:6);
+  end;
+end;
+
+function TMemoryBlock.TypeName:string;
+begin
+  result := GetEnumName(TypeInfo(TQNNDataType), ord(DataType));
+end;
+
+function toStr(const f:single):string; overload;
+begin
+  Str(f:1:4, result)
+end;
+
+function toStr(const f:double):string; overload;
+begin
+  Str(f:1:4, result)
+end;
+
+function toStr(const f:Integer):string; overload;
+begin
+  Str(f, result)
+end;
+
+function toStr(const f:Int64):string; overload;
+begin
+  Str(f, result)
+end;
+
+function toStr(const f:shortint):string; overload;
+begin
+  Str(f, result)
+end;
+
+function toStr(const f:SmallInt):string; overload;
+begin
+  Str(f, result)
+end;
+
+function TMemoryBlock.print(const consolePixel: TTensorPrintStyle; tile: Integer; minVal: double; maxVal: double): TArray<NativeInt>;
+const
+  csi = #$1B'[';
+  up = #$1B'[A';
+  dw = #$1B'[B';
+  fw = #$1B'[C';
+  bw = #$1B'[D';
+  sc = #$1B'[s';
+  rc = #$1B'[u';
+  er = #$1B'[0K';
+  cpos = #$1B'[6n';
+var
+  amin, amax: QNNFloat;
+  i, j, k, t, _w, _h, _c, _area, index, outArgMin, outArgMax, ow, oh, _size: Integer;
+  l: longword;
+  range, r, g, b, r2, g2, b2: double;
+  S: widestring;
+  pixels : RawByteString;
+  isHalfChar, isColor, isSIXEL : boolean;
+  _Data : PQNNFloat;
+const
+  __shade: array[0..4] of string = (' ', '░', '▒', '▓', '█');
+  // delphi will complain if no string type defined, MacOS will type rubbish if string type is defined!! :(
+  {$if defined(MSWINDOWS) or defined(POSIX)}
+  halfChar :widechar = #$2580;
+  {$else}
+  halfChar :ansistring= '▀';   // this will fail to compile on delphi - android
+  {$endif}
+begin
+  if not isAssigned() then exit;
+  _size:=count();
+  S := TypeName() + ' Tensor (';
+  for i := 0 to High(Shape) do
+    if i = 0 then
+      S := S + ToStr(Shape[i])
+    else
+    begin
+      S := S + ' X ';
+      S := S + ToStr(Shape[i]);
+    end;
+  S := S + ')';
+  if DataType <> dtF32 then begin writeln('WARNING : Tensor visualization is not impelemted for this type!'); exit(); end;
+  _Data := Self;
+  ow := length(S);
+  oh := 1;
+  Write(S, csi, length(S), 'D', dw);
+  //writeln(S);
+  ow := length(S);
+  oh := 1;
+  isHalfChar := not (consolePixel in [psValues, psGray5, psSIXELGray, psSIXEL, psSIXELDithered]);
+  isColor := consolePixel in [psColor8, psColor24, psSIXEL, psSIXELDithered];
+  isSIXEL := consolePixel in [psSIXEL, psSIXELGray, psSIXELDithered];
+  if consolePixel <> psValues then
+  begin
+    if minVal = maxVal then
+    begin
+      QNNMinMax(Count, PQNNFloat(Self), amin, amax, @outArgMin, @outArgMax);
+      minVal := aMin; maxVal := aMax;
+      S := '[min : ' + toStr(amin) + '@' + toStr(outArgMin) +
+        ', max : ' + toStr(amax) + '@' + toStr(outArgMax) + ']';
+      Write(S, csi, length(S), 'D', dw);
+      //writeln(S);
+      ow := Math.max(ow, length(S));
+      Inc(oh);
+    end;
+
+    if isNan(minVal) or isNan(maxVal) then
+    begin
+      result := [ow, oh];
+      exit();
+    end;
+    _w := Shape[high(Shape)];
+    if length(Shape) > 1 then
+    begin
+      _h := Shape[high(Shape)-1];
+      _area := _h * _w;
+    end
+    else
+    begin
+      _h := 1;
+      _area := _w;
+    end;
+    _c := (1 + 2 * Ord(isColor));
+    range := maxVal - minVal;
+    Result := [ow, oh];
+    if (range < EPSILON) or (tile < 1) then exit;
+    S := '';
+    pixels :='';
+    l := 0;
+    for i := 0 to _size div (_c * _area * tile) - 1 do
+    begin
+      for j := 0 to ceil(_h / (1 + Ord(isHalfChar))) - 1 do
+      begin
+        for t := 0 to tile - 1 do
+        begin
+          for k := 0 to _w - 1 do
+          begin
+            index := i * _c * tile * _area + t * _c * _h * _w + j *
+              (1 + Ord(isHalfChar)) * _w + k;
+            if index < _size then
+            begin
+              r := _Data[index];
+              case consolePixel of
+                psGray5: S := S + __shade[round(4 * (r - minVal) / range)];
+                psGray24:
+                begin
+                  Inc(index, _w);
+                  if index<_size then
+                    r2 := _Data[index]
+                  else
+                    r2:=minVal;
+                  r := 232 + 23 * (r - minVal) / range;
+                  r2 := 232 + 23 * (r2 - minVal) / range;
+                  S := S + #$1B'[38;5;' + ToStr(round(r)) +
+                    'm' + #$1B'[48;5;' + ToStr(round(r2)) + 'm' + halfChar;
+                end;
+                psGray:
+                begin
+                  Inc(index, _w);
+                  if index<_size then
+                    r2 := _Data[index]
+                  else
+                    r2:=minVal;
+                  r := $ff * (r - minVal) / range;
+                  r2 := $ff * (r2 - minVal) / range;
+                  S := S + #$1B'[38;2;' + ToStr(round(r)) + ';' +
+                    ToStr(round(r)) + ';' + ToStr(round(r)) +
+                    'm' + #$1B'[48;2;' + ToStr(round(r2)) + ';' +
+                    ToStr(round(r2)) + ';' + ToStr(round(r2)) + 'm' + halfChar;
+                end;
+                psColor8:
+                begin
+                  g  := _Data[index + _area]       ;
+                  b  := _Data[index + _area * 2]   ;
+                  // next line
+                  Inc(index, _w);
+                  if index<_size then begin
+                    r2 := _Data[index]            ;
+                    g2 := _Data[index + _area]    ;
+                    b2 := _Data[index + _area * 2]
+                  end else begin
+                    r2 := minVal;
+                    g2 := minVal;
+                    b2 := minVal
+                  end;
+
+                  r := 5 * (r - minVal) / range;
+                  g := 5 * (g - minVal) / range;
+                  b := 5 * (b - minVal) / range;
+
+                  r2 := 5 * (r2 - minVal) / range;
+                  g2 := 5 * (g2 - minVal) / range;
+                  b2 := 5 * (b2 - minVal) / range;
+
+                  S := S + #$1B'[38;5;' +
+                    ToStr(16 +
+                         round(b) +
+                    6 *  round(g) +
+                    36 * round(r)) +
+                    'm' + #$1B'[48;5;' +
+                    ToStr(16 +
+                         round(b2) +
+                     6 * round(g2) +
+                    36 * round(r2)) +
+                    'm' + halfChar;
+                end;
+                psColor24:
+                begin
+                  g := _Data[index + _area]    ;
+                  b := _Data[index + _area * 2];
+                  // nex line
+                  Inc(index, _w);
+                  if index<_size then begin
+                    r2 := _Data[index];
+                    g2 := _Data[index + _area];
+                    b2 := _Data[index + _area * 2];
+                  end else begin
+                    r2 := minVal;
+                    g2 := minVal;
+                    b2 := minVal
+                  end;
+
+                  r := $ff * (r - minVal) / range;
+                  g := $ff * (g - minVal) / range;
+                  b := $ff * (b - minVal) / range;
+
+                  r2 := $ff * (r2 - minVal) / range;
+                  g2 := $ff * (g2 - minVal) / range;
+                  b2 := $ff * (b2 - minVal) / range;
+
+                  S := S + #$1B'[38;2;' +
+                    ToStr(round(r)) + ';' +
+                    ToStr(round(g)) + ';' +
+                    ToStr(round(b)) +
+                    'm' + #$1B'[48;2;' +
+                    ToStr(round(r2)) + ';' +
+                    ToStr(round(g2)) + ';' +
+                    ToStr(round(b2)) +
+                    'm' + halfChar;
+                end;
+                psSIXEL, psSIXELDithered: begin
+                  g := _Data[index + _area]    ;
+                  b := _Data[index + _area * 2];
+
+                  r := $ff * (r - minVal) / range;
+                  g := $ff * (g - minVal) / range;
+                  b := $ff * (b - minVal) / range;
+                  pixels:= pixels + chr(round(r)) + chr(round(g)) + chr(round(b));
+                end;
+                psSIXELGray: begin
+                  r := $ff * (r - minVal) / range;
+                  pixels:= pixels + ansichar(round(r));
+                end;
+              end;
+            end;
+          end;
+          //if consolePixel<>psGray5 then
+          //  S := S + #$1B'[0m '
+        end;
+        if not isSIXEL then begin
+          Write(S, csi, _w * tile, 'D', dw);
+          S := '';
+        end;
+        //writeln(S);
+        ow := Math.max(ow, _w * tile);
+        Inc(oh);
+        Inc(l);
+      end;
+      if isSIXEL then begin
+        printSixel(@pixels[1], _w*tile, _h, consolePixel=psSIXELDithered, consolePixel=psSIXELGray);
+        pixels := ''
+      end
+    end;
+    if consolePixel <> psGray5 then
+      S := resetAllModes;//#$1B'[0m';
+    if not isSIXEL then
+      Write(S);
+    //writeln(S);
+    Result := [ow, oh];
+    exit;
+  end;
+
+  //writeln(toString());
+end;
+
+
+class operator TMemoryBlock.Initialize({$ifdef FPC}var{$else}out{$endif} val:TMemoryBlock);
+begin
+  fillchar(val, sizeof(TMemoryBlock), #0);
 end;
 
 
@@ -970,8 +1508,8 @@ const exponent_table : array[0..63] of longword = (
     $88000000, $88800000, $89000000, $89800000, $8A000000, $8A800000, $8B000000, $8B800000, $8C000000, $8C800000, $8D000000, $8D800000, $8E000000, $8E800000, $8F000000, $C7800000
   );
 const offset_table : array[0..63] of word = (
-    0, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024,
-    0, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024
+    0, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400,
+    0, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400, $400
   );
 var  bits : ConversionBits; i:NativeInt; value:word;
 begin
@@ -1070,13 +1608,6 @@ begin
   if cond then result:= ifTrue else result := iffalse
 end;
 
-{ TMemoryBlock }
-
-class operator TMemoryBlock.Initialize({$ifdef FPC}var{$else}out{$endif} val:TMemoryBlock);
-begin
-  val := default(TMemoryBlock);
-end;
-
 { TMemoryArena }
 
 constructor TMemoryArena.Create(const aPool: NativeUInt);
@@ -1120,9 +1651,24 @@ begin
 end;
 
 var arena : IMemoryArena;
+  {$ifdef MSWINDOWS}
+    hConsole : THandle;
+    cMode : longword;
+  {$endif}
 
 initialization
-   //arena := TMemoryArena.create($ff);
+  {$ifdef MSWINDOWS}
+  if IsConsole then
+  begin
+    hConsole := GetStdHandle(STD_OUTPUT_HANDLE);
+    GetConsoleMode(hConsole, cMode);
+    SetConsoleMode(hConsole, (cmode or ENABLE_VIRTUAL_TERMINAL_PROCESSING or
+      ENABLE_PROCESSED_OUTPUT){ and not ENABLE_WRAP_AT_EOL_OUTPUT});
+  end;
+  //write(#$1B'[?1049h'); // set Console Alternative Buffer
+  {$endif}
+
+  //arena := TMemoryArena.create($ff);
 
 end.
 

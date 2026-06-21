@@ -15,13 +15,15 @@ uses
   //, SortedMap, termesc
   //, nTensors
   {$ifdef USE_MULTITHREADING}
-  //, steroids
+  , steroids
   {$endif}
   ;
 
 type
   TPixelOrder = (poHWC, poCHW);
-
+{$ifndef USE_MULTITHREADING}
+  TThreadProcNested = reference to procedure (idx:IntPtr; data:pointer);
+{$endif}
 procedure printSixel(const buf:Pointer; const width, height:NativeInt; const Dither:boolean = false; const monoChrome:boolean = false; const pixelOrder:TPixelOrder = poHWC);
 
 implementation

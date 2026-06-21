@@ -33,6 +33,7 @@ function schedule_flux(const num_steps, image_seq_len: longint):TMemoryBlock;
 function schedule_zimage(const num_steps, image_seq_len:longint):TMemoryBlock;
 function init_noise(const batch, channels, h, w:longint; const seed: int64):TMemoryBlock;
 procedure rng_seed(seed:uint64);
+function selected_schedule(const params:TGenerateParams; const  image_seq_len:longint):TMemoryBlock;
 
 implementation
 
@@ -208,7 +209,7 @@ begin
      resultPtr[num_steps] := 0.0;
 end;
 
-const rng_state:array[0..3] of UInt64 = (
+var rng_state:array[0..3] of UInt64 = (
                                           UInt64($853c49e6748fea9b),
                                           UInt64($da3e39cb94b95bdb),
                                           UInt64($647c4677a2884327),
@@ -282,7 +283,7 @@ var
     resultPtr, maxNoisePtr :PQNNFloat;
 begin
     target_size := batch * channels * h * w;
-    result := TMemoryBlock.Create(target_size);
+    result := TMemoryBlock.Create([batch, channels, h, w]);
     resultPtr := result;
 
     if seed >= 0 then
@@ -317,6 +318,18 @@ begin
             resultPtr[dst_idx] := maxNoisePtr[src_idx];
           end;
     maxNoise.free;
+end;
+
+function selected_schedule(const params:TGenerateParams; const  image_seq_len:longint):TMemoryBlock;
+begin
+  case params.schedule of
+    QNN_SCHEDULE_LINEAR:    exit(schedule_linear(params.num_steps));
+    QNN_SCHEDULE_POWER:     exit(schedule_power(params.num_steps, params.powerAlpha));
+    QNN_SCHEDULE_FLOWMATCH: exit(schedule_zimage(params.num_steps, image_seq_len));
+    QNN_SCHEDULE_SIGMOID:   exit(schedule_flux(params.num_steps, image_seq_len));
+  else
+    exit(schedule_flux(params.num_steps, image_seq_len));
+  end;
 end;
 
 initialization

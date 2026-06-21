@@ -80,7 +80,7 @@ unit quickjson;
 {$endif}
 {$pointermath on}
 {$H+}
-{$C+} // assertions always ON
+{$C+} // assertions always ON on this unit, do not disable!
 interface
 
 uses
@@ -117,13 +117,14 @@ type
   type
     TJSONArray = TArray<TJSON>;
     TJSONType = (jtNone, jtNull, jtString, jtInteger, jtFloat, jtBoolean, jtArray, jtObject);
+    TJSONTypeSet = set of TJSONType;
     //TNestedStack = array[0..MAX_STACK] of TToken;
   private
     function GetElement(const key: variant): TJSON;
     procedure SetElement(const key: variant; const AValue: TJSON);
   public
     jsonType : TJSONType;
-    name : string;
+    name : rawbytestring;
     Value : variant;
     //innerText : PCHAR;
     //innerTextLen : int64;
@@ -133,14 +134,14 @@ type
     function isArray():boolean;
     function keyExist(const key: variant): boolean;
     function get(const key:variant; const aDefault:TJSON):TJSON;
-    function stringify():string;
+    function stringify():rawbytestring;
     procedure saveToFile(const filename: string);
 
     // remove will return true on success, false if no key found
     function remove(const key:string):boolean; overload;
     function remove(const index:int64):boolean; overload;
     property element[const key:variant]:TJSON read GetElement write SetElement ;default;
-    class function parse(jsonText:string):TJSON; overload; static;
+    class function parse(jsonText:rawbytestring):TJSON; overload; static;
     class function LoadFromFile(const filename:string):TJSON; overload; static;
 
     class operator implicit(const val: TArray<variant>):TJSON;
@@ -152,6 +153,7 @@ type
 
     class operator implicit(const val: TJSON):TArray<string>;
     class operator implicit(const val: TJSON):TArray<int64>;
+    class operator implicit(const val: TJSON):TArray<longint>;
     class operator implicit(const val: TJSON):TArray<double>;
     class operator implicit(const val: TJSON):TArray<single>;
 
@@ -172,7 +174,27 @@ type
 
   end;
 
+function _FileSize(var f:file):Int64;
+
+
 implementation
+{$if not defined(FPC) and defined(MSWINDOWS)}
+uses windows;
+{$endif}
+
+function _FileSize(var f:file):Int64; // a work around Delphi FileSize function returning incorrect file size on large files
+var fl :longword;
+begin
+{$if defined(FPC)}
+  result := FileSize(f);
+{$elseif defined(MSWINDOWS)}
+  result :=0;
+  fl := GetFileSize(TFileRec(f).handle, @result);
+  result := fl or (result shl 32)
+{$else}
+  result := FileSize(f); // fallback to default
+{$endif}
+end;
 
 // instead of using the internal <pos> function
 function indexOf(const needle:char; const heystack:string):int64;
@@ -193,7 +215,7 @@ begin
   i:=1;
   while i<=length(str) do begin
     if (i<length(str)) and (str[i]=aEsc) then begin
-      case LowerCase(str[i+1]) of
+      case LowerCase(str)[i+1] of
         ESCAPE:
           begin
             result[j]:=ESCAPE;
@@ -278,22 +300,27 @@ end;
 // TODO [splitBy]  mayberevisit parsing to use 2D array of string returned by <splitBy> instead of 1D,
 // where it should parse the depth and the string in one shot instead of using recursion
 
-function splitBy(str:string; out keys:TArray<string>;const seperator:char = COMMA; const openBrackets: string = OPEN_BRACKETS; const closeBrackets:string = CLOSE_BRACKETS; const aQuote:char = DBLQUOTE; const aEsc:char = ESCAPE):TArray<string>;
+function splitBy(str:string; out keys:TArray<string>; out FoundTypes: TJSON.TJSONTypeSet ;const seperator:char = COMMA; const openBrackets: string = OPEN_BRACKETS; const closeBrackets:string = CLOSE_BRACKETS; const aQuote:char = DBLQUOTE; const aEsc:char = ESCAPE):TArray<string>;
+const CAPACITY = 1024;
 var
-  openBracketIdx, closeBracketIdx : array [0..MAX_NESTING-1] of int64;  // make space for a quickstack
-  start, i, j, k, escPos:int64;
+  openBracketIdx{, closeBracketIdx} : array [0..MAX_NESTING-1] of int64;  // make space for a quickstack
+  start, i, j, ik, c, k{, escPos}:int64;
+  fl:double;
+  bl : boolean;
   nestLevel : int64; // stack level
   inQuote, quotePresented, tokenPresented, secondWhiteSpaces, colonPresented : boolean;
   key : string;
 begin
   keys := nil;
+  foundTypes := [];
   inQuote := false;
   quotePresented := false;
   tokenPresented := false;
   secondWhiteSpaces := false;
   colonPresented := false;
   result := nil;
-  escPos := -1;
+  c := 0;  k:=0;
+  //escPos := -1;
   nestLevel := -1;
   start:=1;
   i:=1;
@@ -352,7 +379,10 @@ begin
     if j>0 then begin
        assert(nestLevel<MAX_NESTING, 'ERROR : Maximum brackets nesting is reached:'+sLineBreak+copy(str, i, MAX_ERR_MSG)+ELPS);
        assert(not (quotePresented or secondWhiteSpaces), 'ERROR : unexpected open bracket at :'+sLineBreak+copy(str, i, 32)+ELPS) ;
-
+       case str[i] of
+         ARR_OPEN : include(FoundTypes, jtArray);
+         OBJ_OPEN : include(FoundTypes, jtObject);
+       end;
        quotePresented:=false;
        secondWhiteSpaces:=false;
        inc(nestLevel);
@@ -378,7 +408,16 @@ begin
       secondWhiteSpaces:=false;
       if (nestLevel=-1) then begin
         colonPresented:=false;
-        insert(trim(copy(str, start, i-start)), result, length(result));
+        key := trim(copy(str, start, i-start));
+        if TryStrToInt64(key, ik) then include(FoundTypes, jtInteger) else
+        if TryStrToFloat(key, fl) then include(FoundTypes, jtFloat) else
+        if tryStrToBool(key, bl) then include(FoundTypes, jtBoolean) else
+        if quotePresented then include(FoundTypes, jtString);
+        //if c>high(result) then
+        //  setLength(result, length(result)+CAPACITY);
+        //result[c] := key;
+        inc(c);
+        insert(key, result, length(result));
         start := i+1;
       end;
       inc(i);
@@ -393,6 +432,10 @@ begin
         assert(not colonPresented, 'ERROR : Unexpected colon ":" at :'+sLineBreak+copy(str, i, MAX_ERR_MSG)+ELPS);
         key := trim(copy(str, start, i-start));
         assert((length(key)>1) and (key[1]=aQuote) and (key[length(key)]=aQuote), 'ERROR : Invalid key at :'+sLineBreak+copy(str, start, MAX_ERR_MSG)+ELPS);
+        //if k> high(keys) then
+        //  SetLength(keys, length(keys)+CAPACITY);
+        //keys[k] := key;
+        inc(k);
         insert(key, keys, length(keys));
         start := i+1;
         colonPresented := true;
@@ -404,6 +447,8 @@ begin
     tokenPresented:= true;
     inc(i)
   end;
+  //setLength(result, c); // shrink to fit;
+  //setLength(keys, k); // shrink to fit;
 
   //check last round
   if (not inQuote) and (nestLevel=-1) then begin
@@ -427,7 +472,7 @@ begin
   result := default(TJSON);
   assert(assigned(childObjs), 'ERROR : empty object!');
   case tvardata(key).vtype of
-    varString:
+    varString, varUString:
       begin
         assert(jsonType in [jtNone, jtObject],'ERROR : JSON is not of object type');
         if jsonType=jtNone then begin
@@ -437,12 +482,12 @@ begin
           obj := childObjs;
         end;
         for i:=0 to high(Obj) do // todo implement a hashmap instead of scan search
-          if sameStr(Obj[i].name, key) then begin
+          if ansisameStr(Obj[i].name, key) then begin
             result := Obj[i];
             break
           end;
       end;
-    varInt64, varInteger, varSmallInt, varShortInt:
+    varInt64, varInteger, varSmallInt, varShortInt, varByte, varWord, varLongWord, varUInt64:
       begin
         assert(jsonType in [jtNone, jtObject, jtArray],'ERROR : JSON is not of objects type');
         //assert(int64(key)<length(chldObjs),'ERROR : out of index!');
@@ -467,7 +512,7 @@ procedure TJSON.SetElement(const key: variant; const AValue: TJSON);
 var i:int64;
 begin
   case tvardata(key).vtype of
-    varString:
+    varString, varUString:
       begin
         assert(jsonType in [jtNone, jtObject],'ERROR : target JSON is not of object type!');
         jsonType:=jtObject;
@@ -475,12 +520,12 @@ begin
           if sameStr(childObjs[i].name, key) then begin
             //AValue.name := key;
             childObjs[i] := AValue;
-            childObjs[i].name := key;
+            childObjs[i].name := ansistring(key);
             exit
           end;
         //AValue.name := key;
         insert(AValue, childObjs, length(childObjs));
-        childObjs[high(childObjs)].name := key
+        childObjs[high(childObjs)].name := ansistring(key)
 
       end;
     varInt64:
@@ -512,7 +557,7 @@ var i:int64;
 begin
   result := false;
   case tvardata(key).vtype of
-    varString:
+    varString, varUString:
       begin
         assert(jsonType in [jtNone, jtObject],'ERROR : JSON is not of object type');
         for i:=0 to high(childObjs) do // todo implement a hashmap instead of scan search
@@ -539,7 +584,7 @@ begin
   found := false;
   assert(assigned(childObjs), 'ERROR : empty object!');
   case tvardata(key).vtype of
-    varString:
+    varString, varUString:
       begin
         assert(jsonType in [jtNone, jtObject],'ERROR : JSON is not of object type');
         if jsonType=jtNone then begin
@@ -556,7 +601,7 @@ begin
           end;
 
       end;
-    varInt64, varInteger, varSmallInt, varShortInt:
+    varInt64, varInteger, varSmallInt, varShortInt, varByte, varWord, varLongWord, varUInt64:
       begin
         assert(jsonType in [jtNone, jtObject, jtArray],'ERROR : JSON is not of objects type');
         //assert(int64(key)<length(chldObjs),'ERROR : out of index!');
@@ -579,7 +624,7 @@ begin
   else result := aDefault
 end;
 
-function TJSON.stringify(): string;
+function TJSON.stringify(): rawbytestring;
 var
   i:int64;
   fr:double;
@@ -680,7 +725,7 @@ begin
     delete(childObjs, index, 1)
 end;
 
-class function TJSON.parse(jsonText: string): TJSON;
+class function TJSON.parse(jsonText: rawbytestring): TJSON;
 const ERR = 'ERROR : Invalid JSON format!';
 var
   vals : TArray<string>;
@@ -690,6 +735,7 @@ var
   fVal:double;
   bVal:boolean;
   elementPtr : ^TJSON;
+  foundTypes:TJSONTypeSet;
 begin
 
   jsonText:= trim(jsonText);
@@ -703,10 +749,31 @@ begin
         // todo [parse] maybe we should return an array of
         // <TJSONStrView = record str: PCHAR {string start}; Len:NativeInt end;>
         // instead of copyinging (implicitly allocating) a whole sub string to an array element
-        vals := splitBy(copy(jsonText,2, length(jsonText)-2), keys);
+        vals := splitBy(copy(jsonText, 2, length(jsonText)-2), keys, foundTypes);
         if assigned(vals) then
           assert(assigned(keys), 'ERROR : no key specified:'+sLineBreak+copy(jsonText, 1, MAX_ERR_MSG)+ELPS);
         assert(length(keys)=length(vals), 'ERROR : Unable to parse :'+sLineBreak+copy(jsonText, 1, MAX_ERR_MSG)+ELPS);
+        if foundTypes=[jtString] then begin   // values are only strings no sub objects or arrays found
+          setLength(result.childObjs, length(vals));
+          for i:=0 to high(vals) do
+            begin
+              result.childObjs[i].jsonType := jtString;
+              result.childObjs[i].name     := c_unquote(keys[i]);
+              result.childObjs[i].Value    := c_unquote(vals[i]);
+            end;
+          exit
+        end;
+        if foundTypes=[jtInteger] then begin  // values are only integers no sub objects or arrays found
+          setLength(result.childObjs, length(vals));
+          for i:=0 to high(vals) do
+            begin
+              result.childObjs[i].jsonType := jtString;
+              result.childObjs[i].name     := c_unquote(keys[i]);
+              if TryStrToInt64(vals[i], iVal) then
+                result.childObjs[i].Value := iVal;
+            end;
+          exit
+        end;
         for i:=0 to high(vals) do begin
           // todo [parse] implement a hashmap insead of appending to an array
           setLength(result.childObjs, length(result.ChildObjs)+1);
@@ -745,9 +812,48 @@ begin
         assert(jsonText[length(jsonText)]=ARR_CLOSE, ERR+ ' incorrect character at the end of the string, must be a square bracket.');
         result.jsonType:=jtArray;
         //t:=GetTickCount64;
-        vals := splitBy(copy(jsonText,2, length(jsonText)-2), keys);
-        //t := GetTickCount64-t;
+        vals := splitBy(copy(jsonText,2, length(jsonText)-2), keys, foundTypes);
         assert(not assigned(keys), 'ERROR : incorrect JSON format, key''s are not allowed in arrayes! '+sLineBreak+copy(jsonText, 1, MAX_ERR_MSG)+ELPS);
+        if foundTypes=[jtString] then begin  // only strings were found
+          setLength(result.childObjs, length(vals));
+          for i:=0 to high(vals) do
+            begin
+              result.childObjs[i].jsonType := jtString;
+              result.childObjs[i].Value := c_unquote(vals[i]);
+            end;
+          exit;
+        end;
+        if foundTypes=[jtInteger] then begin  // only integers were found
+          setLength(result.childObjs, length(vals));
+          for i:=0 to high(vals) do
+            begin
+              result.childObjs[i].jsonType := jtInteger;
+              if TryStrToInt64(vals[i], iVal) then
+                result.childObjs[i].Value := iVal;
+            end;
+          exit;
+        end;
+        if foundTypes=[jtFloat] then begin  // only floats were found
+          setLength(result.childObjs, length(vals));
+          for i:=0 to high(vals) do
+            begin
+              result.childObjs[i].jsonType := jtFloat;
+              if TryStrToFloat(vals[i], fVal) then
+                result.childObjs[i].Value := fVal;
+            end;
+          exit;
+        end;
+        if foundTypes=[jtBoolean] then begin  // only booleans were found
+          setLength(result.childObjs, length(vals));
+          for i:=0 to high(vals) do
+            begin
+              result.childObjs[i].jsonType := jtBoolean;
+              if TryStrToBool(vals[i], bVal) then
+                result.childObjs[i].Value := bVal;
+            end;
+          exit;
+        end;
+        //t := GetTickCount64-t;
         for i:=0 to high(vals) do begin
           setLength(result.childObjs, length(result.ChildObjs)+1);
           elementPtr := @result.childObjs[high(result.childObjs)];
@@ -782,14 +888,14 @@ end;
 
 class function TJSON.LoadFromFile(const filename: string): TJSON;
 var f:file;
-  s,l:string;
+  s,l:rawbytestring;
 begin
   s := '';
   assert(FileExists(filename),'ERROR : File not found:'+sLineBreak+filename);
   try
     assignfile(f, filename);
     reset(f, 1);
-    setLength(s, fileSize(f));
+    setLength(s, _FileSize(f));
     blockread(f, s[1], length(s));
   finally
     closeFile(f)
@@ -818,6 +924,15 @@ begin
 end;
 
 class operator TJSON.implicit(const val: TJSON):TArray<int64>;
+var i: int64;
+begin
+  assert(val.jsonType=jtArray,'ERROR : JSON is not of array type!');
+  setlength(result, val.count);
+  for i:=0 to high(result) do
+    result[i]:=val.childObjs[i].value
+end;
+
+class operator TJSON.implicit(const val: TJSON):TArray<longint>;
 var i: int64;
 begin
   assert(val.jsonType=jtArray,'ERROR : JSON is not of array type!');
@@ -868,17 +983,17 @@ class operator TJSON.implicit(const val: variant): TJSON;
 begin
   result := default(TJSON);
   case TVarData(val).vtype of
-    varShortInt, varSmallInt, varInteger, varInt64 :
+    varShortInt, varSmallInt, varInteger, varInt64, varByte, varWord, varLongWord, varUInt64 :
       begin
         result.jsonType:=jtInteger;
         result.Value := int64(Val);
       end;
-    varSingle, varDouble:
+    varSingle, varDouble, varCurrency:
       begin
         result.jsonType:=jtFloat;
         result.Value:=double(val);
       end;
-    varString:
+    varString, varUString:
       begin
         result.jsonType:=jtString;
         result.Value:=string(val);

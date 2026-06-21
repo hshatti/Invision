@@ -197,29 +197,27 @@ type
   public
     name : ansistring;
     ndim : longint ;
-    shape : array {[0..7]} of int64;
+    shape : TArray<int64>;//array {[0..7]} of int64;
     data_offset : int64;
     data_size : int64;
     function is_bf16():boolean;
-{$ifdef USE_CALLOC}
-    function asSingle:TMemoryBlock;
-{$else}
-    function asSingle:TArray<single>;
-{$endif}
+    function asSingle(const use_mmap:boolean =false):TMemoryBlock;
     function asSinglePtr():PSingle;
     function asMappedPtr():pointer;
-    function asBF16:TArray<BF16>;
+    function asBF16(const use_mmap:boolean =false):TMemoryBlock;
     function asBF16Ptr:PBF16;
-    function asFP16:TArray<FP16>;
+    function asFP16(const use_mmap:boolean =false):TMemoryBlock;
     function count(): int64;
     procedure print();
     case dtype : TSafeTensorType of
-      stf32 :
-        (DataF32: PSIngle);
       stF16 :
         (DataF16: PFP16);
       stBF16 :
         (DataBF16: PBF16);
+      stf32 :
+        (DataF32: PSIngle);
+      stI4 :
+        (DataI4: PINT4);
       stI8 :
         (DataI8: PShortInt);
       stI16 :
@@ -239,7 +237,7 @@ type
   TSafeTensorFile = record
     path : ansistring;
     data : pointer;              (* mmapped file data *)
-    file_size, header_size, data_size, offset : size_t;
+    file_size, header_size, data_size, offset : IntPtr;
     header_json : ansistring;
     tensors : array of TSafeTensor;
     sf_file : file;
@@ -280,11 +278,11 @@ var mapped_handle:THandle;
     msg:array[0..255] of char;
 begin
   //try
-  //  file_size := FileSize(f);  // just checking if fileopened
+  //  file_size := _FileSize(f);  // just checking if fileopened
   //finally
   //end;
   assert(ff.mode<>fmClosed, 'ERROR : File is not opened!');
-  if size>0 then sz := size else sz := FileSize(f);
+  if size>0 then sz := size else sz := _FileSize(f);
 
   mapped_handle := CreateFileMapping(ff.Handle, nil, PAGE_READONLY , sz shr 32, sz and $FFFFFFFF, nil);
   err := GetLastError;
@@ -311,7 +309,7 @@ var
   sz : uint64;
 begin
   assert(ff.mode<>fmClosed, 'ERROR : File is not opened!');
-  if size>0 then sz := size else sz := FileSize(f);
+  if size>0 then sz := size else sz := _FileSize(f);
   result := mmap(nil, size, PROT_READ, MAP_PRIVATE, ff.handle, offset);
   assert(result<>MAP_FAILD, 'ERROR : Unable to map file to memory!');
 end;
@@ -365,22 +363,24 @@ begin
   result := dtype = stBF16;
 end;
 {$ifdef USE_CALLOC}
-function TSafeTensor.asSingle:TMemoryBlock;
+function TSafeTensor.asSingle(const use_mmap: boolean): TMemoryBlock;
 {$else}
 function TSafeTensor.asSingle: TArray<single>;
 {$endif}
 begin
   assert(dtype in [stBF16, stF16, stF32], 'ERROR : unsupported tensor type!');
-{$ifdef USE_CALLOC}
-  result := TMemoryBlock.Create(count);
-{$else}
-  result := nil;
-  setlength(result, count);
-{$endif}
+  if use_mmap and (dType=stf32) then begin
+    result := DataF32;
+    result.shape := shape;
+    result.size:=count();
+    exit;
+  end else
+    result := TMemoryBlock.Create(shape{count});
+
   case dtype of
     stF32:
       begin
-        move(data^, PSingle(result)[0], sizeof(single)*count)
+        move(Data, PSingle(result)[0], sizeof(single)*count)
       end;
 
     stF16:
@@ -405,11 +405,16 @@ begin
   result := data
 end;
 
-function TSafeTensor.asBF16: TArray<BF16>;
+function TSafeTensor.asBF16(const use_mmap: boolean): TMemoryBlock;
 begin
   assert(dtype = stBF16, 'ERROR : Tensor type is not BF16!');
-  setLength(result, count);
-  move(data^, result[0], sizeof(BF16)*length(result))
+  if use_mmap then begin
+    result := DataBF16;
+    result.shape := shape;
+    result.size := count();
+  end else
+    result := TMemoryBlock.Create(shape, dtBF16, DataBF16);
+  //move(data^, result[0], sizeof(BF16)*length(result))
 end;
 
 function TSafeTensor.asBF16Ptr: PBF16;
@@ -418,21 +423,15 @@ begin
   result := data
 end;
 
-function TSafeTensor.asFP16: TArray<FP16>;
+function TSafeTensor.asFP16(const use_mmap: boolean): TMemoryBlock;
 begin
   assert(dtype = stF16, 'ERROR : Tensor type is not F16!');
-  setLength(result, count);
-  move(data^, result[0], sizeof(FP16)*length(result))
-end;
-
-function product(const ar:array of int64):int64;
-var
-  i: Integer;
-begin
-  //if not assigned(ar) then exit(0);
-  result := 1;
-  for i:=0 to high(ar) do
-    result := result * ar[i]
+  if use_mmap then begin
+    result := DataF16;
+    result.shape := shape;
+    result.size := count();
+  end else
+    result := TMemoryBlock.Create(shape, dtF16, DataF16);
 end;
 
 function TSafeTensor.count(): int64;
@@ -456,6 +455,7 @@ begin
   result := length(tensors)
 end;
 
+{$I-}
 constructor TSafeTensorFile.open(const apath: string);
 var
   i, o:int64;
@@ -466,8 +466,10 @@ begin
   assert(FileExists(apath),'ERROR : File not found : '+apath);
   path := apath;
   assignfile(sf_file, path);
+  FileMode := fmOpenRead;
   reset(sf_file, 1);
-  file_size := FileSize(sf_file);
+  assert(IOResult=0, 'ERROR : Fail to open file ['+aPath+']');
+  file_size := _FileSize(sf_file);
   assert(file_size>7, 'ERROR : Invalide file size!');
   BlockRead(sf_file, header_size, sizeOf(header_size));
   assert(header_size<file_size, 'ERROR : Invalid SafeTensor header!');
@@ -502,10 +504,11 @@ begin
   end;
 
 end;
-
+{$i+}
 procedure TSafeTensorFile.close();
 begin
   //if TFileRec(sf_file).Mode<>fmClosed then begin
+  if assigned(data) then
     mumapFile(data, file_size);
     //closeFile(sf_file);
   //end;
@@ -535,8 +538,13 @@ begin
       assert(false, 'ERROR : tensor DataType '+safetensor.dtype.toString()+' is not implemented.')
     end;
   end
-  else
+  else begin
     result := TMemoryBlock.Create(safeTensor.count(), safeTensor.dtype.toDataType(), PByte(data) + safeTensor.data_offset);
+  end;
+  if assigned(safetensor.shape) then
+    result.shape := safetensor.shape
+  else
+    result.shape := [safeTensor.count()];
 end;
 
 function TSafeTensorFile.getData(const tensorName: string; const useMMap: boolean): TMemoryBlock;
@@ -576,17 +584,18 @@ begin
           case d.dtype of
             stBF16:
               begin
-                result := TMemoryBlock.Create(d.count, dtF32);
+                result := TMemoryBlock.Create(d.shape, dtF32);
                 BF16ToSingle(d.count(), d.data, result);
               end;
             stF16:
               begin
-                result := TMemoryBlock.Create(d.count, dtF32);
+                result := TMemoryBlock.Create(d.shape, dtF32);
                 FP16ToSingle(d.count(), d.data, result);
               end;
             stF32: begin
               result.DataType := dtF32;
-              result.DataPtr := d.data
+              result.DataPtr := d.data;
+              result.shape := d.shape;
             end
           else
             assert(false, 'ERROR [getTnsorData] : Unimplemented data type conversion : '+ name);
@@ -597,17 +606,17 @@ begin
           case d.dtype of
             stBF16:
               begin
-                result := TMemoryBlock.Create(d.count, dtF32);
+                result := TMemoryBlock.Create(d.shape, dtF32);
                 BF16ToSingle(d.count(), d.data, result);
               end;
             stF16:
               begin
-                result := TMemoryBlock.Create(d.count, dtF32);
+                result := TMemoryBlock.Create(d.shape, dtF32);
                 FP16ToSingle(d.count(), d.data, result);
               end;
             stF32:
               begin
-                result := TMemoryBlock.Create(d.count, dtF32);
+                result := TMemoryBlock.Create(d.shape, dtF32);
                 move(d.data^, psingle(result)^, d.count*sizeOf(Single));
               end;
           else
@@ -618,8 +627,8 @@ begin
         exit
       end;
     end;
-  result := nil;
-  if isConsole then writeln(ErrOutput, 'ERROR : Tensor [', name, '] not found');
+  result := Default(TMemoryBlock);
+  //if isConsole then writeln(ErrOutput, 'WARNING : Tensor [', name, '] not found');
 end;
 
 // result will be BF16
@@ -636,21 +645,23 @@ begin
           assert(d.dtype = stBF16, 'ERROR [getTnsorDataB16] : Cannot convert data type in mmap mode : '+name);
           result := default(TMemoryBlock);
           result.DataType:=dtBf16;
-          result.DataPtr := d.data
+          result.DataPtr := d.data;
+          result.shape := d.shape;
         end else begin
           sz := d.count() * sizeOf(BF16);
-          result := TMemoryBlock.create(d.count(), dtBF16);
+          result := TMemoryBlock.create(d.shape, dtBF16);
           assert(assigned(result.Data16), 'ERROR [getTnsorDataB16] : not enough memory to allocate for : '+name);
           if d.dtype=stBf16 then
             move(d.data^, PBF16(result)^, sz)
-          else
+          else begin
             SingleToBF16(d.count(), d.data, result)
+          end;
         end;
         exit
       end;
     end;
-  result := nil;
-  if isConsole then writeln(ErrOutput, 'ERROR : Tensor [', name, '] not found');
+  result :=  Default(TMemoryBlock);
+  //if isConsole then writeln(ErrOutput, 'WARNING : Tensor [', name, '] not found');
 end;
 
 //function TSafeTensorFilesHelper.getTensorDataMemBlock(const name: string): TMemoryBlock;
@@ -666,7 +677,7 @@ end;
 //      end;
 //    end;
 //  result := nil;
-//  writeln(StdErr, 'ERROR : Tensor [', name, '] not found');
+//  writeln(StdErr, 'WARNING : Tensor [', name, '] not found');
 //end;
 
 function TSafeTensorFilesHelper.getTensor(const name: string): PSafeTensor;
@@ -678,7 +689,7 @@ begin
       if assigned(result) then exit(result);
     end;
   result := nil;
-  if isConsole then writeln(ErrOutput, 'ERROR : Tensor [', name, '] not found');
+  //if isConsole then writeln(ErrOutput, 'WARNING : Tensor [', name, '] not found');
 end;
 
 //procedure hello(const a:integer);begin writeln('hello', a); end;

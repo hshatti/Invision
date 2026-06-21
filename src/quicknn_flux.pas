@@ -22,42 +22,73 @@ unit quicknn_flux;
 interface
 
 uses
-  SysUtils, math, quicknn_common, quicknn_transformers, safetensor, quickjson;
+  SysUtils, math, quicknn_common, quicknn_transformers, quicknn_qwen3, quicknn_vae,safetensor, quickjson
+  {$ifdef FPC}
+  {$else}
+  , windows
+  {$endif}
+  ;
 
 type
-  TQNNSchedule = (
-    QNN_SCHEDULE_DEFAULT   = 0,
-    QNN_SCHEDULE_LINEAR    = 1,
-    QNN_SCHEDULE_POWER     = 2,
-    QNN_SCHEDULE_SIGMOID   = 3,  (* Flux shifted sigmoid *)
-    QNN_SCHEDULE_FLOWMATCH = 4  (* Z-Image FlowMatch Euler *)
-  );
 
-  TQNNFlux = type TQNNCtx;
+  //TQNNFlux = type TQNNCtx;
 
-  TGenerateParams = record
-    width, height, num_steps :longint;
-    seed : Int64;
-    guidance :single;
-    schedule : TQNNSchedule;
-    powerAlpha : single
-  end;
+  { TQNNFlux }
 
-  { TQNNFluxHelper }
+  TQNNFlux = record
+    //tokenizer : TQNNTokenizer;
+    qwen3Encoder : TQWEN3Encoder;
+    vae : TVAE;
+    transformer : TTransformerFlux;
 
-  TQNNFluxHelper = record helper for TQNNFlux
-    constructor load(const aModel_dir:string);
+    (* Configuration *)
+    max_width          : longint ;
+    max_height         : longint ;
+    default_steps      : longint ;
+    default_guidance   : QNNFloat ;
+    is_distilled       : boolean ;  (* 1 = distilled (4-step), 0 = base (50-step CFG) *)
+    text_dim           : longint ;  (* Text embedding dimension (7680 for 4B, varies for 9B) *)
+    is_non_commercial  : boolean ;  (* 1 if model has non-commercial license (9B) *)
+    num_heads          : longint ;  (* Transformer attention heads (24 for 4B, 32 for 9B) *)
+
+    (* Z-Image specific config (from transformer/config.json) *)
+    is_zimage          : boolean ;   (* 1 = Z-Image S3-DiT, 0 = Flux MMDiT *)
+    zi_dim             : longint   ; (* Hidden dim (3840) *)
+    zi_n_layers        : longint   ; (* Main transformer layers (30) *)
+    zi_n_refiner       : longint   ; (* Noise/context refiner layers (2) *)
+    zi_cap_feat_dim    : longint   ; (* Caption feature dim (2560) *)
+    zi_in_channels     : longint   ; (* VAE latent channels (16) *)
+    zi_patch_size      : longint   ; (* Spatial patch size (2) *)
+    zi_rope_theta      : QNNFloat  ; (* RoPE theta (256.0) *)
+    zi_axes_dims       : array[0..2] of longint   ;   (* RoPE axis dims [32, 48, 48] *)
+    zi_latent_channels : longint   ;(* Patchified latent channels (64 = 16*2*2) *)
+
+    (* VAE config (read from vae/config.json) *)
+    vae_z_channels     : longint   ;    (* Latent channels before patchify (32 Flux, 16 Z-Image) *)
+    vae_scaling        : QNNFloat ;     (* Scaling factor (0.3611 for Z-Image, 0 = use batch norm) *)
+    vae_shift          : QNNFloat ;       (* Shift factor (0.1159 for Z-Image, 0 = use batch norm) *)
+
+    (* Model info *)
+    model_name, model_version, model_dir : string  ;  (* For reloading text encoder if released *)
+
+    (* Memory mode *)
+    use_mmap           : boolean   ;  (* Use mmap for text encoder (lower memory, slower) *)
+
+    constructor load(const aModel_dir:string; const OnStatus: TPhaseCallback = nil);
+    procedure loadVAE();
     function generateLatent(const text_emb: TMemoryBlock; const text_seq, height, width, num_steps: longint; const seed:int64; const progress_callback:TStepCallback):TMemoryBlock;
-    function generate(const prompt: string; params: TGenerateParams): TQNNImage;
-    function encodeText(const prompt:string; var out_seq_len:longint):TMemoryBlock;
+    function generate(const prompt: rawbytestring; params: TGenerateParams): TQNNImage;
+    function encodeText(const prompt: rawbytestring; var out_seq_len: longint): TMemoryBlock;
+    procedure free();
   end;
 
 implementation
-uses quicknn_sample, quicknn_qwen3, quicknn_kernels;
+uses quicknn_sample, quicknn_kernels;
 
-{ TQNNFluxHelper }
+{ TQNNFlux }
 
-constructor TQNNFluxHelper.load(const aModel_dir: string);
+constructor TQNNFlux.load(const aModel_dir: string;
+  const OnStatus: TPhaseCallback);
 var
   json : TJSON;
   modelArc : string;
@@ -65,6 +96,7 @@ var
   sf : TSafeTensorFile;
 begin
   self := default(TQNNFlux);
+  phase_callback := onStatus;
   max_width     := QNN_VAE_MAX_DIM;
   max_height    := QNN_VAE_MAX_DIM;
   model_version := '1.0';
@@ -74,6 +106,7 @@ begin
    * Distilled model has "is_distilled": true, base model does not.
    * Z-Image has "_class_name": "ZImagePipeline". *)
   modelArc := format('%s/model_index.json', [model_dir]);
+  if assigned(phase_callback) then phase_callback('Loading ['+modelArc+']', false);
   if fileExists(modelArc) then begin
     json      := TJSON.LoadFromFile(modelArc);
     modelArc := json['_class_name'];
@@ -83,19 +116,19 @@ begin
   end else begin // assuming default FLUX.2-klein-4b
     is_distilled := true;
   end;
+  if assigned(phase_callback) then phase_callback('Loading ['+modelArc+']', true);
 
-  json := TJSON.LoadFromFile(format('%s/transformer/config.json', [model_dir]));
+  modelArc := format('%s/transformer/config.json', [model_dir]);
+  if assigned(phase_callback) then phase_callback('Loading ['+modelArc+']', false);
+  json := TJSON.LoadFromFile(modelArc);
   num_heads := json.get('num_attention_heads', 24);    // default 4B
   text_dim  := json.get('joint_attention_dim', 7680);  // default 4B: 3 * 2560
   hidden_size  := num_heads * 128;
 
   vae_scaling := 0;
   vae_shift   := 0;
+  if assigned(phase_callback) then phase_callback('Loading ['+modelArc+']', true);
 
-  json := TJSON.LoadFromFile(format('%s/vae/config.json', [model_dir]));
-  vae_z_channels := json.get('latent_channels', QNN_VAE_Z_CHANNELS);
-  vae_scaling    := json.get('scaling_factor', 0.0);
-  vae_shift      := json.get('shift_factor', 0.0);
   is_non_commercial :=  hidden_size>3072; // shouldn't it the opposite? mans it's commercial if above 3072 ?
   if is_non_commercial then
      model_name     := '9B'
@@ -110,20 +143,39 @@ begin
     default_guidance := 4.0;
     model_name := 'FLUX.2-klein-base-'+model_name;
   end;
-  if assigned(phase_callback) then phase_callback('Loading VAE', false);
-  sf := TSafetensorFile.open(format('%s/vae/diffusion_pytorch_model.safetensors',[aModel_dir]));
-  vae.load([sf], vae_z_channels, vae_scaling, vae_shift);
-  sf.close();
-  if assigned(phase_callback) then phase_callback('Loading VAE', true);
+
   // transformer files will load later while inferencing
   if not fileExists(format('%s/transformer/config.json', [model_dir])) then
      assert(fileExists(format('%s/transformer/diffusion_pytorch_model.safetensors', [model_dir])), 'ERROR : Transformer model not found (missing config.json and safetensors)');
   rng_seed(getTickCount64());
 
-  use_mmap := true;
+
 end;
 
-function TQNNFluxHelper.generateLatent(const text_emb: TMemoryBlock;
+procedure TQNNFlux.loadVAE();
+var
+  modelArc: String;
+  json: TJSON;
+  sf: TSafeTensorFile;
+begin
+  modelArc := format('%s/vae/config.json', [model_dir]);
+  if assigned(phase_callback) then phase_callback('Loading ['+modelArc+']', false);
+  json := TJSON.LoadFromFile(modelarc);
+  vae_z_channels := json.get('latent_channels', QNN_VAE_Z_CHANNELS);
+  vae_scaling    := json.get('scaling_factor', 0.0);
+  vae_shift      := json.get('shift_factor', 0.0);
+  if assigned(phase_callback) then phase_callback('Loading ['+modelArc+']', true);
+
+  modelArc:= format('%s/vae/diffusion_pytorch_model.safetensors',[model_dir]);
+  if assigned(phase_callback) then phase_callback('Loading ['+modelArc+']', false);
+  sf := TSafetensorFile.open(modelArc);
+  vae.useMMap:=use_mmap;
+  vae.load([sf], vae_z_channels, vae_scaling, vae_shift);
+  sf.close();
+  if assigned(phase_callback) then phase_callback('Loading ['+modelArc+']', true);
+end;
+
+function TQNNFlux.generateLatent(const text_emb: TMemoryBlock;
   const text_seq, height, width, num_steps: longint; const seed: int64;
   const progress_callback: TStepCallback): TMemoryBlock;
 var
@@ -152,22 +204,11 @@ begin
 
 end;
 
-function selected_schedule(const params:TGenerateParams; const  image_seq_len:longint):TMemoryBlock;
-begin
-  case params.schedule of
-    QNN_SCHEDULE_LINEAR:    exit(schedule_linear(params.num_steps));
-    QNN_SCHEDULE_POWER:     exit(schedule_power(params.num_steps, params.powerAlpha));
-    QNN_SCHEDULE_FLOWMATCH: exit(schedule_zimage(params.num_steps, image_seq_len));
-  else
-    exit(schedule_flux(params.num_steps, image_seq_len));
-  end;
-end;
+//type TSingleArray= array of single;
+//    TFloatArray = array[0..MaxLongint div 32] of single;
+//    PFloatArray = ^TFloatArray;
 
-type TSingleArray= array of single;
-    TFloatArray = array[0..MaxLongint div 4] of single;
-    PFloatArray = ^TFloatArray;
-
-function TQNNFluxHelper.generate(const prompt: string; params: TGenerateParams): TQNNImage;
+function TQNNFlux.generate(const prompt: rawbytestring; params: TGenerateParams): TQNNImage;
 var
   text_emb, text_emb_uncond : TMemoryBlock;
   latent_h, latent_w, text_seq, image_seq_len, text_seq_uncond : longint;
@@ -182,19 +223,18 @@ begin
   assert((params.width<=QNN_VAE_MAX_DIM) and (params.height<=QNN_VAE_MAX_DIM), 'ERROR : Image maximum dimensions exceeded (1792x1792)!') ;
   text_emb := encodeText(prompt, text_seq);
 
-
   if not is_distilled then
      text_emb_uncond := encodeText('', text_seq_uncond);
   qwen3Encoder.free;
-
 
   latent_h := params.height div 16;
   latent_w := params.width div 16;
   image_seq_len := latent_h*latent_w;
 
-  //if params.seed <= 0 then
-     //params.seed := GetTickCount64();
-  params.seed := 666;
+  if params.seed <= 0 then
+     params.seed := GetTickCount64();
+  if params.schedule=QNN_SCHEDULE_DEFAULT then params.schedule:=QNN_SCHEDULE_SIGMOID;
+
   z :=  init_noise(1, QNN_LATENT_CHANNELS, latent_h, latent_w, params.seed);
   schedule := selected_schedule(params, image_seq_len);
 
@@ -205,21 +245,20 @@ begin
      if assigned(phase_callback) then
         phase_callback('Loading FLUX.2 transformer', true);
   end;
-
   if is_distilled then
-      latent := TTransformerFlux(transformer).sampleEuler(z, 1, QNN_LATENT_CHANNELS, latent_h, latent_w, text_emb, text_seq, schedule, params.num_steps, nil)
+      latent := TTransformerFlux(transformer).sampleEuler(z, 1, QNN_LATENT_CHANNELS, latent_h, latent_w, text_emb, text_seq, schedule, params.num_steps, nil {step callback})
   else
-      latent := TTransformerFlux(transformer).sampleEuler(z, 1, QNN_LATENT_CHANNELS, latent_h, latent_w, text_emb, text_seq, text_emb_uncond, text_seq_uncond, params.guidance, schedule, params.num_steps, nil);
+      latent := TTransformerFlux(transformer).sampleEuler(z, 1, QNN_LATENT_CHANNELS, latent_h, latent_w, text_emb, text_seq, text_emb_uncond, text_seq_uncond, params.guidance, schedule, params.num_steps, nil {step callback});
 
-
-//latent.printStat();
-  transformer.free;
   z.free;
   schedule.free;
   text_emb.free;
   text_emb_uncond.free;
+  transformer.free;
 
+  loadVAE();
   result := vae.decode(latent, 1, latent_h, latent_w);
+  vae.free;
 
   latent.free;
   // todo continue fro here with sampeling
@@ -228,7 +267,7 @@ begin
 
 end;
 
-function TQNNFluxHelper.encodeText(const prompt: string; var out_seq_len: longint): TMemoryBlock;
+function TQNNFlux.encodeText(const prompt: rawbytestring; var out_seq_len: longint): TMemoryBlock;
 var num_real_tokens:longint;
 begin
   if model_dir<>'' then begin
@@ -245,7 +284,14 @@ begin
   else
     out_seq_len := QWEN3_MAX_SEQ_LEN;
   if assigned(phase_callback) then phase_callback('encoding text', true);
+end;
 
+
+procedure TQNNFlux.free();
+begin
+  qwen3Encoder.free;
+  transformer.free;
+  vae.free;
 end;
 
 type

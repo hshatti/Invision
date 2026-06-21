@@ -1,4 +1,4 @@
-unit quicknn_qwen3;
+﻿unit quicknn_qwen3;
 
 {$ifdef FPC}
   {$PackRecords C}
@@ -42,8 +42,8 @@ const
 
 type
   TQNNBPEMerge = record
-      left  : string;
-      right : string;
+      left  : rawbytestring;
+      right : rawbytestring;
       rank  : longint;  (* Lower rank = higher priority (merge first) *)
   end;
 
@@ -51,7 +51,7 @@ type
   PQNNTokenizer = ^TQNNTokenizer;
   TQNNTokenizer = record
       (* Vocabulary: id -> token string *)
-      vocabs    : TArray<string>;
+      vocabs    : TArray<rawbytestring>;
 
       (* Hash table: token string -> id *)
       vocabsDic : TVocabs;
@@ -62,13 +62,13 @@ type
       (* Merge rank lookup: "left right" -> rank *)
       merge_ranks :TVocabs;
       constructor load(const jsonFilename:string);
-      function getToken(const id:longint):string;
-      function getId(const token:string):longint;
-      function getMergeRank(const left, right:string) : longint;
-      function BPEEncodeWord(const str:string):TArray<string>;
-      function tokenize(const str:string; max_len:longint=0):TArray<longint>;
-      function tokenizeChat(const prompt:string; const skipThinkTags:boolean=false; max_len:longint=0):TArray<longint>;
-      function deTokenize(const tokens: TArray<longint>): string;
+      function getToken(const id:longint):rawbytestring;
+      function getId(const token:rawbytestring):longint;
+      function getMergeRank(const left, right:rawbytestring) : longint;
+      function BPEEncodeWord(const str:rawbytestring):TArray<rawbytestring>;
+      function tokenize(const str:rawbytestring; max_len:longint=0):TArray<longint>;
+      function tokenizeChat(const prompt:rawbytestring; const skipThinkTags:boolean=false; max_len:longint=0):TArray<longint>;
+      function deTokenize(const tokens: TArray<longint>): rawbytestring;
       procedure free;
 
       class operator initialize({$ifdef fpc}var{$else}out{$endif} val : TQNNTokenizer);
@@ -195,7 +195,7 @@ type
       tokenizer : TQNNTokenizer;
       model : TQWEN3Model;
       procedure load(const modelDir:string; const useMMAP:boolean);
-      function encodeText(const prompt: string; var out_seq_len:longint):TMemoryBlock;
+      function encodeText(const prompt: rawbytestring; var out_seq_len:longint):TMemoryBlock;
       procedure free;
   end;
 
@@ -216,7 +216,7 @@ var
   byteToUnicode : array [0..255] of longint;
   UnicodeToByte : array [0..511] of longint;
 
-const
+var
   byteEncoderInitializd : boolean = false;
 
 procedure QNNHeadRSMNorm(const dst, src, weight: PQNNFloat; const seqLen, numHeads, headDim:longint);
@@ -266,7 +266,7 @@ begin
     byteEncoderInitializd := true
 end;
 
-function encodeByteToUTF8(const b: byte; var str: string):longint;
+function encodeByteToUTF8(const b: byte; var str: rawbytestring):longint;
 var
     cp: longint;
 begin
@@ -274,13 +274,13 @@ begin
     cp := byteToUnicode[b];
     if cp < 128 then begin
       setLength(str, length(str)+1);
-      str[length(str)] := char(cp);
+      str[length(str)] := ansichar(cp);
       exit(1)
     end
     else if cp < 2048 then begin
       setLength(str, length(str)+2);
-      str[length(str)-1] := char(($C0 or (cp shr 6)));
-      str[length(str)  ] := char(($80 or (cp and $3F)));
+      str[length(str)-1] := ansichar(($C0 or (cp shr 6)));
+      str[length(str)  ] := ansichar(($80 or (cp and $3F)));
       exit(2)
     end;
     //
@@ -299,7 +299,7 @@ begin
 
   if assigned(attentionMask) then begin
     FillDWord(attentionMask[0], length(tokens), 1);
-    FillDWord(attentionMask[length(tokens)], length(result)-length(tokens), 1);
+    FillDWord(attentionMask[length(tokens)], length(result)-length(tokens), 0);
   end;
 
   //for i:=0 to high(result) do begin
@@ -320,7 +320,7 @@ end;
 constructor TQNNTokenizer.load(const jsonFilename: string);
 var json, vocab, merge, addedTokens : TJSON;
     i, id: longint;
-    content : string;
+    content : rawbytestring;
 begin
   if not assigned(vocabsDic) then
       vocabsDic := TVocabs.Create;
@@ -336,7 +336,7 @@ begin
   merge := json['model']['merges'];
   addedTokens := json['added_tokens'];
   setLength(vocabs, vocab.count()+addedTokens.count);// make space for added tokens
-  setLength(merges, merge.count());// make space for added tokens
+  setLength(merges, merge.count());// make space for added merges
   for i:=0 to vocab.count-1 do begin
       id := vocab[i].value;
       vocabs[id] := vocab[i].name;
@@ -344,8 +344,8 @@ begin
   end;
 
   for i:=0 to high(merges) do begin
-    merges[i].left  := merge[i][0].value;
-    merges[i].right := merge[i][1].value;
+    merges[i].left  := ansistring(merge[i][0].value);
+    merges[i].right := ansistring(merge[i][1].value);
     merges[i].rank := i;
     if (merges[i].left<>'') and (merges[i].right<>'') then begin
         merge_ranks.TryAdd(merges[i].left + ' ' + merges[i].right, i);
@@ -354,41 +354,41 @@ begin
 
   for i:=0 to addedTokens.count-1 do begin
     id := addedTokens[i]['id'].Value;
-    content := addedTokens[i]['content'];
+    content := ansistring(addedTokens[i]['content']);
     if (content='') or (id<0) or (id>=length(vocabs)) then continue; // skip IDs that has no allocated position
     vocabs[id] := content;
     vocabsDic.TryAdd(vocabs[id], id);
   end;
 end;
 
-function TQNNTokenizer.getToken(const id: longint): string;
+function TQNNTokenizer.getToken(const id: longint): rawbytestring;
 begin
   result := '';
   if assigned(vocabs) and (id>=0) and (id<length(vocabs)) then
     result := vocabs[id]
 end;
 
-function TQNNTokenizer.getId(const token: string): longint;
+function TQNNTokenizer.getId(const token: rawbytestring): longint;
 begin
   if not assigned(vocabsDic) or (token='') then exit(-1);
   if not vocabsDic.TryGetValue(token, result) then
       result := -1;
 end;
 
-function TQNNTokenizer.getMergeRank(const left, right: string): longint;
+function TQNNTokenizer.getMergeRank(const left, right: rawbytestring): longint;
 begin
   assert(assigned(merge_ranks), 'ERROR : tokenizer is empty, load tokenizer file 1st!');
   if not merge_ranks.TryGetValue(left+' '+right, result) then result := -1;
 end;
 
-function TQNNTokenizer.BPEEncodeWord(const str: string): TArray<string>;
-  procedure appendToken(const a:string);
+function TQNNTokenizer.BPEEncodeWord(const str: rawbytestring): TArray<rawbytestring>;
+  procedure appendToken(const a:rawbytestring);
   begin
     insert(a, result, length(result));
   end;
 
 var i, m, n, id, len, best_idx, best_rank, rank : longint;
-  s: string;
+  s: rawbytestring;
   changed: boolean;
 
 begin
@@ -430,12 +430,12 @@ begin
 
 end;
 
-function pretokenize(const text: string):TArray<string>;
+function pretokenize(const text: rawbytestring):TArray<rawbytestring>;
 var
     count, len: longint;
     p, start: PAnsiChar;
     lower: ansiChar;
-    chunk: string;
+    chunk: rawbytestring;
 begin
     result := nil;
     chunk := '';
@@ -445,11 +445,11 @@ begin
         begin
             start := p;
             if (p[0] = '''') and (p[1]<>NUL) then begin
-                lower := LowerCase(p[1]);
+                lower := LCase(p[1]);
                 if lower in ['s', 't', 'm', 'd'] then
                     p := p + 2
                 else
-                    if (lower in ['r', 'v', 'l']) and (p[2]<>NUL) and (LowerCase(p[2]) in ['e', 'l']) then
+                    if (lower in ['r', 'v', 'l']) and (p[2]<>NUL) and (LCase(p[2]) in ['e', 'l']) then
                         p := p + 3
                 else
                     inc(p)
@@ -512,7 +512,7 @@ begin
         end
 end;
 
-function textToUTF8(const str:string):string;
+function textToUTF8(const str:rawbytestring):rawbytestring;
 var i, len : longint;
 begin
   initByteEncoder();
@@ -522,27 +522,30 @@ begin
   end;
 end;
 
-function TQNNTokenizer.tokenize(const str: string; max_len: longint): TArray<longint>;
+function TQNNTokenizer.tokenize(const str: rawbytestring; max_len: longint): TArray<longint>;
 var
-    chunks: TArray<string>;
+    chunks: TArray<rawbytestring>;
     total, c: longint;
-    byte_text: string;
-    bpe_tokens: TArray<string>;
+    byte_text: rawbytestring;
+    bpe_tokens: TArray<rawbytestring>;
     i: longint;
     id: longint;
+    found : boolean;
 begin
     if (max_len <= 0) then
         max_len := QWEN3_MAX_SEQ_LEN;
     chunks := pretokenize(str);
     total := 0;
     c := 0;
+    result := nil;
     while (c < length(chunks)) and (total < max_len) do begin
         byte_text := textToUTF8(chunks[c]);
         if byte_text <> '' then begin
           bpe_tokens := BPEEncodeWord(byte_text);
           i := 0;
           while (i < length(bpe_tokens)) and (total < max_len) do begin
-            if vocabsDic.TryGetValue(bpe_tokens[i], id) then begin
+            found := vocabsDic.TryGetValue(bpe_tokens[i], id);
+            if found and (id>0) then begin
               setLength(result, length(result)+1);
               result[total] := id;
               inc(total)
@@ -560,7 +563,7 @@ end;
  * template that triggers direct generation. For Z-Image the think tags
  * are skipped (controlled by skipThinkTags). *)
 
-function TQNNTokenizer.tokenizeChat(const prompt: string; const skipThinkTags: boolean; max_len: longint): TArray<longint>;
+function TQNNTokenizer.tokenizeChat(const prompt: rawbytestring; const skipThinkTags: boolean; max_len: longint): TArray<longint>;
 var
     tokens :TArray<longint>;
     total, i:longint;
@@ -646,7 +649,7 @@ begin
 
 end;
 
-function TQNNTokenizer.deTokenize(const tokens: TArray<longint>): string;
+function TQNNTokenizer.deTokenize(const tokens: TArray<longint>): rawbytestring;
 var i, j, id, total_len:longint;
 begin
   assert(assigned(vocabsDic),'ERROR : no vocabs loaded, use <load> function to load vocab 1st.');
@@ -681,13 +684,15 @@ begin
   end;
   if assigned(merges) then setLength(merges, 0);
   if assigned(vocabs) then setLength(vocabs, 0);
-  if assigned(merge_ranks) then
+  if assigned(merge_ranks) then begin
     merge_ranks.free;
+    merge_ranks := nil
+  end;
 end;
 
 class operator TQNNTokenizer.initialize({$ifdef fpc}var{$else}out{$endif} val : TQNNTokenizer);
 begin
-  val := default(TQNNTokenizer)
+  fillchar(val, sizeof(TQNNTokenizer), #0)
 end;
 
 { TQWEN3Attention }
@@ -706,6 +711,7 @@ begin
   QNNlinearNoBias(model.k_buf, model.norm_buf, layer.attn.k_proj_weight, seq_len, model.hidden_size, kv_dim);
   QNNLinearNoBias(model.v_buf, model.norm_buf, layer.attn.v_proj_weight, seq_len, model.hidden_size, kv_dim);
 
+
   (* Q/K RMS normalization (per-head) *)
   QNNHeadRSMNorm(model.q_buf, model.q_buf, layer.attn.q_norm_weight, seq_len, model.num_heads, model.head_dim);
   QNNHeadRSMNorm(model.k_buf, model.k_buf, layer.attn.k_norm_weight, seq_len, model.num_kv_heads, model.head_dim);
@@ -713,8 +719,8 @@ begin
   (* Apply RoPE *)
   QNNApplyRoPE(model.q_buf, model.rope_cos, model.rope_sin, seq_len, model.num_heads   , model.head_dim);
   QNNApplyRoPE(model.k_buf, model.rope_cos, model.rope_sin, seq_len, model.num_kv_heads, model.head_dim);
-  heads_per_kv := model.num_heads div model.num_kv_heads;
 
+  heads_per_kv := model.num_heads div model.num_kv_heads;
 
   for h := 0 to model.num_heads-1 do begin
     kv_h := h div heads_per_kv;  (* Which KV head to use *)
@@ -734,14 +740,13 @@ begin
                         0.0, scores, seq_len);
 
     (* Apply causal mask and attention mask, then softmax *)
-    for i := 0 to seq_len do begin
-      for j :=0 to seq_len-1 do begin
-        //if j > i then
-        //    scores[i*seq_len + j] := -1e9;
-        if (j>i) or (assigned(attention_mask) and (attention_mask[j] = 0))  then
-          scores[i*seq_len + j] := -1e9;
-      end;
-      QNNSoftmax(scores + i * seq_len, seq_len);
+    for i := 0 to seq_len-1 do begin          // todo [QWEN3Attention.Forward] optimize for GPU?
+        for j := 0 to seq_len-1 do begin
+            if (j > i) or assigned(attention_mask) and (attention_mask[j] = 0) then begin
+                scores[i*seq_len + j] := -1e9;
+            end;
+        end;
+        QNNSoftmax(scores + i * seq_len, seq_len);
     end;
     (* V can be accessed directly with strided lda (avoids copy)
      * V[s,d] = v_buf[s * kv_dim + kv_h * head_dim + d] *)
@@ -759,8 +764,9 @@ begin
                  0.0, out_strided, q_dim);
   end;
 
-  QNNLinearNoBias(model.hidden_state, model.attn_out, layer.attn.o_proj_weight,
-               seq_len, q_dim, model.hidden_size);
+  //model.attn_out.printCompare(readTensor);
+  QNNLinearNoBias(model.hidden_state, model.attn_out, layer.attn.o_proj_weight, seq_len, q_dim, model.hidden_size);
+
 end;
 
 { TQWEN3MLP }
@@ -811,6 +817,7 @@ begin
 
   (* Residual connection *)
   QNNAdd(model.hidden_state, model.residual, model.mlp_out, seq_len*model.hidden_size);
+
   //for i := 0 to seq_len * hidden_size-1 do
   //    model.hidden_state[i] = model.residual[i] + model.mlp_out[i];
 end;
@@ -884,8 +891,8 @@ begin
   half_dim := head_dim div 2;
   max_seq := QWEN3_MAX_SEQ_LEN;
 
-  rope_cos     := TMemoryBlock.Create(max_seq*half_dim);
-  rope_sin     := TMemoryBlock.Create(max_seq*half_dim);
+  rope_cos     := TMemoryBlock.Create([max_seq, half_dim]);
+  rope_sin     := TMemoryBlock.Create([max_seq, half_dim]);
   QNNComputeRoPE(rope_cos, rope_sin, max_seq, head_dim, rope_theta);
   reInitialize();
 
@@ -976,24 +983,24 @@ var i, seq_len:longint;
 begin
   extraction_mode:=0;
   seq_len := QWEN3_MAX_SEQ_LEN;
-  hidden_state  := TMemoryBlock.Create(seq_len * hidden_size);
-  residual      := TMemoryBlock.Create(seq_len * hidden_size);
-  q_buf         := TMemoryBlock.Create(seq_len * num_heads * head_dim);
-  k_buf         := TMemoryBlock.Create(seq_len * num_kv_heads * head_dim);
-  v_buf         := TMemoryBlock.Create(seq_len * num_kv_heads * head_dim);
-  attn_scores   := TMemoryBlock.Create(num_heads * seq_len * seq_len);
-  attn_out      := TMemoryBlock.Create(seq_len * num_heads * head_dim);
-  mlp_gate      := TMemoryBlock.Create(seq_len * intermediate_size);
-  mlp_up        := TMemoryBlock.Create(seq_len * intermediate_size);
-  mlp_out       := TMemoryBlock.Create(seq_len * hidden_size);
-  norm_buf      := TMemoryBlock.Create(seq_len * hidden_size);
+  hidden_state  := TMemoryBlock.Create([seq_len , hidden_size]);
+  residual      := TMemoryBlock.Create([seq_len , hidden_size]);
+  q_buf         := TMemoryBlock.Create([seq_len , num_heads , head_dim]);
+  k_buf         := TMemoryBlock.Create([seq_len , num_kv_heads , head_dim]);
+  v_buf         := TMemoryBlock.Create([seq_len , num_kv_heads , head_dim]);
+  attn_scores   := TMemoryBlock.Create([num_heads , seq_len , seq_len]);
+  attn_out      := TMemoryBlock.Create([seq_len , num_heads , head_dim]);
+  mlp_gate      := TMemoryBlock.Create([seq_len , intermediate_size]);
+  mlp_up        := TMemoryBlock.Create([seq_len , intermediate_size]);
+  mlp_out       := TMemoryBlock.Create([seq_len , hidden_size]);
+  norm_buf      := TMemoryBlock.Create([seq_len , hidden_size]);
 
-  attn_q_head   := TMemoryBlock.Create(seq_len * head_dim);
-  attn_v_head   := TMemoryBlock.Create(seq_len * head_dim);
-  attn_out_head := TMemoryBlock.Create(seq_len * head_dim);
+  attn_q_head   := TMemoryBlock.Create([seq_len , head_dim]);
+  attn_v_head   := TMemoryBlock.Create([seq_len , head_dim]);
+  attn_out_head := TMemoryBlock.Create([seq_len , head_dim]);
 
   for i := 0 to high(layer_outputs) do
-      layer_outputs[i] := TMemoryBlock .Create(seq_len*hidden_size);
+      layer_outputs[i] := TMemoryBlock .Create([seq_len,hidden_size]);
 
 end;
 
@@ -1024,17 +1031,18 @@ begin
 
   for i:=0 to high(layers) do
     layers[i].free();
-
+  layers := nil;
   for i := 0 to high(layer_outputs) do
       layer_outputs[i].free();
-
   for i:=0 to high(sf_files) do
     sf_files[i].close();
+  sf_files := nil;
   self := default(TQWEN3Model)
 end;
 
 procedure TQWEN3Model.setExtractionMode(const mode: boolean);
 begin
+  extraction_mode := ord(mode);
   if mode then
     text_dim := hidden_size
   else
@@ -1069,29 +1077,29 @@ begin
             else
                 QNNFill(PQNNFloat(hidden_state) + s*hidden_size, 0, hidden_size)
         end;
+
     for layer_idx := 0 to last_layer do
         begin
             if use_mmap then
               layers[layer_idx].load(layer_idx, use_mmap);
             layers[layer_idx].forward(seq_len, attention_mask);
             if use_mmap then
-                layers[layer_idx].free;
+              layers[layer_idx].free;
             if zimage then begin
                 if layer_idx = last_layer then
                     QNNCopy(layer_outputs[0], hidden_state, seq_len * hidden_size)
-            end else
-                begin
-                    if layer_idx = QWEN3_OUTPUT_LAYER_1 then
-                        QNNCopy(layer_outputs[0], hidden_state, seq_len * hidden_size)
-                    else if layer_idx = QWEN3_OUTPUT_LAYER_2 then
-                        QNNCopy(layer_outputs[1], hidden_state, seq_len * hidden_size)
-                    else if layer_idx = QWEN3_OUTPUT_LAYER_3 then
-                        QNNCopy(layer_outputs[2], hidden_state, seq_len * hidden_size)
-                end;
+            end else begin
+                if layer_idx = QWEN3_OUTPUT_LAYER_1 then
+                    QNNCopy(layer_outputs[0], hidden_state, seq_len * hidden_size)
+                else if layer_idx = QWEN3_OUTPUT_LAYER_2 then
+                    QNNCopy(layer_outputs[1], hidden_state, seq_len * hidden_size)
+                else if layer_idx = QWEN3_OUTPUT_LAYER_3 then
+                    QNNCopy(layer_outputs[2], hidden_state, seq_len * hidden_size)
+            end;
             if assigned(text_progress_callback) then
-                text_progress_callback(layer_idx, length(layers))
+                text_progress_callback(layer_idx, last_layer+1)
         end;
-    result := TMemoryBlock.Create(seq_len * text_dim);
+    result := TMemoryBlock.Create([seq_len , text_dim]);
 
     if zimage then
         QNNCopy(result, layer_outputs[0], seq_len * hidden_size)
@@ -1112,13 +1120,12 @@ begin
   model.load(modelDir+'/text_encoder', useMMAP);
 end;
 
-function TQWEN3Encoder.encodeText(const prompt: string; var out_seq_len: longint
-  ): TMemoryBlock;
+function TQWEN3Encoder.encodeText(const prompt: rawbytestring; var out_seq_len: longint): TMemoryBlock;
 var
     skip_think_tags:boolean;
-    num_tokens: longint;
     tokens, attention_mask, padded_tokens: TArray<longint>;
 begin
+    attention_mask:=nil;;
     if not assigned(tokenizer.vocabsDic) or not assigned(model.layers) then
       exit(default(TMemoryBlock));
     skip_think_tags := model.extraction_mode = 1;

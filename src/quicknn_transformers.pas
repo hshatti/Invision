@@ -21,7 +21,7 @@ unit quicknn_transformers;
 {$define USE_MULTITHREADING}
 
 interface
-uses SysUtils, safetensor, quicknn_common, quicknn_kernels, quicknn_vae, quicknn_qwen3, quickjson
+uses SysUtils, math, safetensor, quicknn_common, quicknn_kernels, quicknn_vae, quicknn_qwen3, quickjson
   {$ifdef USE_MULTITHREADING}
   , steroids
   {$endif}
@@ -278,7 +278,6 @@ type
     procedure reInitialize(const totalSeq:longint);
     procedure free();
     procedure freeMMapCache();
-    class function loadShards(const modelDir: string): TSafeTensorFiles; static;
     procedure getCachedRefRoPE(const patch_h, patch_w, offset:longint; var cosOut : TSingles; var sinOut:TSingles);
     procedure getCachedImgRoPE(const patch_h, patch_w:longint; var cosOut : TSingles; var sinOut:TSingles);
     procedure getCachedTxtRoPE(const txt_seq:longint; var cosOut : TSingles; var sinOut:TSingles);
@@ -287,24 +286,24 @@ type
     procedure jointAttentionForward(
               const img_out, txt_out,
                     img_Q  , img_K, img_V,
-                    txt_Q  , txt_K, txt_V : PQNNFloat;
+                    txt_Q  , txt_K, txt_V : TMemoryBlock;
               const img_seq, txt_seq{, heads, head_dim}: longint);
-    procedure ffnSwigluForward(const dst, x:PQNNFloat;
+    procedure ffnSwigluForward(const dst, x:TMemoryBlock;
               const gate_weight, up_weight, down_weight:TSingles;
               const gate_weight_bf16, up_weight_bf16, down_weight_bf16:TBF16s;
               const seq, hidden, mlpHidden: longint);
 
     procedure doubleBlockForward(
-              const img_hidden, txt_hidden :PQNNFloat; const blockIdx:longint; const img_mod, txt_mod,
+              const img_hidden, txt_hidden :TMemoryBlock; const blockIdx:longint; const img_mod, txt_mod,
                     img_rope_cos, img_rope_sin,
-                    txt_rope_cos, txt_rope_sin: PQNNFloat;
+                    txt_rope_cos, txt_rope_sin: TMemoryBlock;
               const img_seq, txt_seq : longint);
 
-    procedure singleBlockForward(const hidden:PQNNFloat;
+    procedure singleBlockForward(const hidden:TMemoryBlock;
                                  const blockIdx:longint;
                                  const t_emb, adaln_weight,
                                  img_rope_cos, img_rope_sin,
-                                 txt_rope_cos, txt_rope_sin:PQNNFloat;
+                                 txt_rope_cos, txt_rope_sin:TMemoryBlock;
                                  const seq, img_offset:longint);
 
     // for text to image
@@ -315,66 +314,182 @@ type
     function forward(const img_latent: PQNNFloat; const img_h, img_w: longint; const refs: TArray<TImageRef>; const txt_emb: PQNNFloat; const txt_seq: longint; const timestep: single):TMemoryBlock; overload;
 
     function sampleEuler(const z: TMemoryBlock; const batch, channels, h, w: longint;
-      const text_emb: PQNNFloat; const text_seq: longint;
-      const schedule: PQNNFloat; const num_steps: longint; const progress_callback:TStepCallback): TMemoryBlock; overload;
-
-    function sampleEuler(const z: PQNNFloat; const batch, channels, h, w: longint; const text_emb_cond: PQNNFloat;
-             const text_seq_cond: longint;
-             const text_emb_uncond: PQNNFloat; const text_seq_uncond: longint;
-             const guidance_scale: QNNFloat;
-             const schedule: PQNNFloat; const num_steps: longint;
-             const progress_callback: TStepCallback):TMemoryBlock; overload;
+      const text_emb: TMemoryBlock; const text_seq: longint;
+      const schedule: PQNNFloat; const num_steps: longint;
+      const progress_callback:TStepCallback): TMemoryBlock; overload;
 
     function sampleEuler(const z: TMemoryBlock;
-      const batch, channels, h, w: longint; const ref_latent: PQNNFloat;
-      const ref_h, ref_w, t_offset: longint; const text_emb_cond: PQNNFloat;
-      const text_seq_cond: longint; const text_emb_uncond: PQNNFloat;
-      const text_seq_uncond: longint; const guidance_scale: QNNFloat;
-      const schedule: PQNNFloat; const num_steps: longint;
+      const batch, channels, h, w: longint;
+      const text_emb_cond: TMemoryBlock ; const text_seq_cond  : longint;
+      const text_emb_uncond: TMemoryBlock; const text_seq_uncond: longint;
+      const guidance_scale: QNNFloat;   const schedule: PQNNFloat;
+      const num_steps: longint;
+      const progress_callback: TStepCallback):TMemoryBlock; overload;
+
+    function sampleEuler(const z: TMemoryBlock;
+      const batch, channels, h, w: longint;
+      const ref_latent: TMemoryBlock; const ref_h, ref_w, t_offset: longint;
+      const text_emb_cond: TMemoryBlock; const text_seq_cond: longint;
+      const text_emb_uncond: TMemoryBlock; const text_seq_uncond: longint;
+      const guidance_scale: QNNFloat; const schedule: PQNNFloat;
+      const num_steps: longint;
       const progress_callback: TStepCallback): TMemoryBlock; overload;
   end;
 
-  TQNNCtx = record
-    tokenixer : TQNNTokenizer;
-    qwen3Encoder : TQWEN3Encoder;
-    vae : TVAE;
-    transformer : TTransformerFlux;
+  const
+      ZI_SEQ_MULTI_OF  = 32   ;  (* Pad sequences to multiples of 32 *)
+      ZI_NORM_EPS      = 1e-5;  (* RMSNorm epsilon *)
+      ZI_BF16_SDPA_SEQ = 1024 ;  (* Prefer bf16 SDPA at large sequence lengths *)
+      ZI_MAX_SHARDS    = 32   ;
 
-    (* Configuration *)
-    max_width          : longint ;
-    max_height         : longint ;
-    default_steps      : longint ;
-    default_guidance   : QNNFloat ;
-    is_distilled       : boolean ;  (* 1 = distilled (4-step), 0 = base (50-step CFG) *)
-    text_dim           : longint ;      (* Text embedding dimension (7680 for 4B, varies for 9B) *)
-    is_non_commercial  : boolean ; (* 1 if model has non-commercial license (9B) *)
-    num_heads          : longint ;     (* Transformer attention heads (24 for 4B, 32 for 9B) *)
+type
+  PBlockZI = ^TBlockZI;
 
-    (* Z-Image specific config (from transformer/config.json) *)
-    is_zimage          : boolean ;     (* 1 = Z-Image S3-DiT, 0 = Flux MMDiT *)
-    zi_dim             : longint   ;            (* Hidden dim (3840) *)
-    zi_n_layers        : longint   ;       (* Main transformer layers (30) *)
-    zi_n_refiner       : longint   ;      (* Noise/context refiner layers (2) *)
-    zi_cap_feat_dim    : longint   ;   (* Caption feature dim (2560) *)
-    zi_in_channels     : longint   ;    (* VAE latent channels (16) *)
-    zi_patch_size      : longint   ;     (* Spatial patch size (2) *)
-    zi_rope_theta      : QNNFloat ;   (* RoPE theta (256.0) *)
-    zi_axes_dims       : array[0..2] of longint   ;   (* RoPE axis dims [32, 48, 48] *)
-    zi_latent_channels : longint   ;(* Patchified latent channels (64 = 16*2*2) *)
+  { TBlockZi }
 
-    (* VAE config (read from vae/config.json) *)
-    vae_z_channels     : longint   ;    (* Latent channels before patchify (32 Flux, 16 Z-Image) *)
-    vae_scaling        : QNNFloat ;     (* Scaling factor (0.3611 for Z-Image, 0 = use batch norm) *)
-    vae_shift          : QNNFloat ;       (* Shift factor (0.1159 for Z-Image, 0 = use batch norm) *)
+  TBlockZI =  record
+      (* Attention *)
+      attn_q_weight : TSingles;       (* [dim, dim] *)
+      attn_k_weight : TSingles;       (* [dim, dim] *)
+      attn_v_weight : TSingles;       (* [dim, dim] *)
+      attn_out_weight : TSingles;     (* [dim, dim] *)
+      attn_norm_q : TSingles;         (* [n_heads, head_dim] for QK norm *)
+      attn_norm_k : TSingles;         (* [n_heads, head_dim] *)
+      attn_norm1 : TSingles;          (* [dim] RMSNorm before attention *)
+      attn_norm2 : TSingles;          (* [dim] RMSNorm after attention *)
 
-    (* Model info *)
-    model_name, model_version, model_dir : string  ;  (* For reloading text encoder if released *)
+      (* FFN (SwiGLU) *)
+      ffn_w1 : TSingles;              (* [ffn_dim, dim] gate projection *)
+      ffn_w2 : TSingles;              (* [dim, ffn_dim] down projection *)
+      ffn_w3 : TSingles;              (* [ffn_dim, dim] up projection *)
+      ffn_norm1 : TSingles;           (* [dim] RMSNorm before FFN *)
+      ffn_norm2 : TSingles;           (* [dim] RMSNorm after FFN *)
 
-    (* Memory mode *)
-    use_mmap           : boolean   ;  (* Use mmap for text encoder (lower memory, slower) *)
+      (* AdaLN modulation (NULL for context_refiner blocks) *)
+      adaln_weight : TSingles;        (* [4*dim, adaln_dim] *)
+      adaln_bias : TSingles;          (* [4*dim] *)
+      procedure load(const files:TSafeTensorFiles; const prefix:string; const has_modulation:boolean; const useMMap:boolean = true);
+      procedure free();
   end;
 
+  (* Final layer weights *)
+  PFinalZI = ^TFinalZI;
+  TFinalZI = record
+      adaln_weight : TSingles;        (* [dim, adaln_dim] *)
+      adaln_bias   : TSingles;        (* [dim] *)
+      norm_weight  : TSingles;        (* NULL (no affine) or [dim] *)
+      linear_weight : TSingles;       (* [out_ch, dim] *)
+      linear_bias   : TSingles;       (* [out_ch] *)
+  end;
+
+  (* Z-Image transformer context *)
+
+  { TTransformerZi }
+
+  TTransformerZI = record
+      (* Architecture config *)
+      dim : longint;                    (* 3840 *)
+      n_heads : longint;                (* 30 *)
+      head_dim : longint;               (* 128 *)
+      n_layers : longint;               (* 30 *)
+      n_refiner : longint;              (* 2 *)
+      ffn_dim : longint;                (* 8*dim/3 = 10240 *)
+      in_channels : longint;            (* 16 *)
+      patch_size : longint;             (* 2 *)
+      adaln_dim : longint;              (* min(dim, 256) = 256 *)
+      rope_theta : single;           (* 256.0 *)
+      axes_dims : array[0..2] of longint;           (* [32, 48, 48] *)
+      axes_lens : array[0..2] of longint;           (* [1024, 512, 512] *)
+
+      (* Embedders *)
+      t_emb_mlp0_weight    : TSingles;   (* [mid_size, 256] *)
+      t_emb_mlp0_bias      : TSingles;   (* [mid_size] *)
+      t_emb_mlp2_weight    : TSingles;   (* [adaln_dim, mid_size] *)
+      t_emb_mlp2_bias      : TSingles;   (* [adaln_dim] *)
+      t_emb_mid_size       : longint;         (* intermediate timestep MLP size *)
+
+      cap_emb_norm         : TSingles;    (* [cap_feat_dim] RMSNorm weight *)
+      cap_emb_linear_w     : TSingles;    (* [dim, cap_feat_dim] *)
+      cap_emb_linear_b     : TSingles;    (* [dim] *)
+      cap_feat_dim         : longint;     (* 2560 *)
+
+       x_emb_weight        : TSingles;    (* [dim, patch_feat] where patch_feat = ps*ps*in_ch *)
+       x_emb_bias          : TSingles;    (* [dim] *)
+
+      x_pad_token          : TSingles;    (* [dim] *)
+      cap_pad_token        : TSingles;    (* [dim] *)
+
+      (* Transformer blocks *)
+      noise_refiner   : TArray<TBlockZi>;  (* [n_refiner] *)
+      context_refiner : TArray<TBlockZi>;(* [n_refiner] *)
+      layers : TArray<TBlockZi>;         (* [n_layers] *)
+
+      (* Final layer *)
+      final_layer : TFinalZi;
+
+      (* CPU mmap mode: keep shard files open and use direct f32 pointers. *)
+      mmap_f32_weights : boolean;
+      sf_files : TSafeTensorFiles;
+      num_sf_files : longint;
+
+      (* Precomputed RoPE frequencies (complex pairs) *)
+      rope_cos  : array[0..2] of TSingles; (* [axes_lens[i], axes_dims[i]/2] *)
+      rope_sin  : array[0..2] of TSingles; (* [axes_lens[i], axes_dims[i]/2] *)
+
+      (* Working memory *)
+      work_x      : TSingles;   (* Main token buffer *)
+      work_tmp    : TSingles;   (* Temporary buffer *)
+      work_qkv    : TSingles;   (* Q, K, V buffers *)
+      work_attn   : TSingles;   (* Attention scores *)
+      work_ffn    : TSingles;   (* FFN intermediate *)
+      work_alloc  : NativeInt; (* Total allocated *)
+      max_seq : longint;                (* Max sequence length allocated for *)
+      procedure attentionForward(const dst, src : PQNNFloat;
+                          const block : TBlockZi; const pos_ids : Plongint;
+                          const mask : PLongint; const seq : longint);
+      procedure ffnForward(const dst, src:PQNNFloat; const block:TBlockZi; const seq:longint);
+      procedure blockForward(const dst : PQNNFloat; const block : TBlockZi;
+                              const pos_ids:PLongint; const mask:PLongint;
+                              const t_emb:PQNNFloat; const seq:longint);
+      procedure preComputeRope();
+      procedure finalComputeScale(const scale:PQNNFloat; const t_emb:PQNNFloat);
+      procedure finalForward(const dst : PQNNFloat; const src:PQNNFloat; const t_emb:PQNNFloat; const seq: longint);
+      function forward(const latent : TMemoryBlock; const latent_h, latent_w:longint; const timestep : QNNFloat; const cap_feats: PQNNFloat; const cap_seq_len:longint):TMemoryBlock;
+      procedure applyRope(const dst:PQNNFloat; const pos_ids:PLongint; const seq, n_heads:longint);
+      procedure timeStepEmbed(const dst:TMemoryBlock; const t:QNNFloat);
+      function sampleEuler(const z:PQNNFloat; const batch{, channels}, h, w, patch_size:longint; const cap_feats:PQNNFloat;const cap_seq:longint; const schedule:PQNNFloat; const num_steps:longint; const progress_callback:TStepCallback = nil):TMemoryBlock;
+      procedure load(const modelDir: string; const adim, an_heads, an_layers, an_refiner, acap_feat_dim, ain_channels, apatch_size: longint; const arope_theta: QNNFloat; const aAxes_dims: Plongint; const useMMAP:boolean = true);
+      procedure free();
+  end;
+
+procedure patchifyZi(const dst : PQNNFloat; const src:PQNNFloat; const in_ch, Height, Width, ps:longint);
+procedure UnPatchifyZi(const dst:PQNNFloat; const src: PQNNFloat; const in_ch, Height, Width, ps:longint);
+function loadShards(const modelDir: string):TSafeTensorFiles;
+
 implementation
+
+function loadShards(const modelDir: string):TSafeTensorFiles;
+var json, wm:TJSON; i:integer;
+  fn : string; files:TArray<string>;
+begin
+  files := nil;
+  result := nil;
+  fn := modelDir+'/transformer/diffusion_pytorch_model.safetensors.index.json';
+  if FileExists(fn) then begin
+    json := TJSON.LoadFromFile(fn);
+    if json.keyExist('weight_map') then begin
+      wm:= json['weight_map'];
+      for i:=0 to wm.count-1 do
+        if indexOf(wm.childObjs[i].Value, files)<0 then begin
+          insert(string(wm.childObjs[i].Value), files, length(files));
+          setLength(result, length(result)+1);
+          result[high(result)] := TSafeTensorFile.open(modelDir+'/transformer/'+wm.childObjs[i].Value);
+        end;
+    end;
+  end else
+    result := [TSafeTensorFile.open(modelDir+'/transformer/diffusion_pytorch_model.safetensors')];
+end;
+
 
 { TDoubleBlock }
 
@@ -594,10 +709,10 @@ begin
     result.mlp_hidden        := result.hidden_size *  3;
 
 
-  result.num_double_layers := ifthen(layerCount > 0, layerCount, 5);
-  result.num_single_layers := ifthen(singleCount > 0, singleCount, 20);
-  result.text_dim          := ifthen(jointAttDim > 0, jointAttDim, 7680);
-  result.latent_channels   := ifthen(inChannels > 0, inChannels, 128);
+  result.num_double_layers := quicknn_common.ifthen(layerCount > 0, layerCount, 5);
+  result.num_single_layers := quicknn_common.ifthen(singleCount > 0, singleCount, 20);
+  result.text_dim          := quicknn_common.ifthen(jointAttDim > 0, jointAttDim, 7680);
+  result.latent_channels   := quicknn_common.ifthen(inChannels > 0, inChannels, 128);
 
   if ropeTheta > 0 then
     result.rope_theta        := ropeTheta
@@ -659,7 +774,7 @@ begin
   final_proj_weight := sf_files.getTensorDataMemBlock('proj_out.weight', use_mmap);
   if use_bf16 then
       final_proj_weight_bf16 := sf_files.getTensorDataMemBlockBF16('proj_out.weight', use_mmap);
-  rope_freqs := TSingles.Create(max_seq_len * head_dim);
+  rope_freqs := TSingles.Create([max_seq_len , head_dim]);
   if rope_freqs.isAssigned() then
       QNNComputeRoPE(rope_freqs, max_seq_len, head_dim, rope_theta);
 
@@ -674,9 +789,12 @@ begin
   result := assigned(sf_files)
 end;
 
+//{$define USE_FLASHATTENTION}
+
 procedure TTransformerFlux.reInitialize(const totalSeq: longint);
 var fused_dim, hidden, mlp:longint; attn_scores_need:size_t;
 begin
+  {$ifndef USE_FLASHATTENTION}
   attn_scores_need := num_heads*totalSeq*totalSeq;
 
   if attn_scores_need > attn_scores_alloc then begin
@@ -686,6 +804,7 @@ begin
         attn_scores := TMemoryBlock.Create(attn_scores_need);
       attn_scores_alloc := attn_scores_need;
   end;
+  {$endif}
 
   if totalSeq<=work_seq_alloc then exit;
 
@@ -718,33 +837,33 @@ begin
 
 
 
-  img_hidden := TMemoryBlock.Create(totalSeq * hidden);
-  txt_hidden := TMemoryBlock.Create(totalSeq * hidden);
+  img_hidden := TMemoryBlock.Create([totalSeq, hidden]);
+  txt_hidden := TMemoryBlock.Create([totalSeq, hidden]);
   (* work2 needs to hold fused QKV+MLP output: seq * (hidden*3 + mlp*2) + mod_params (hidden*3)
   * fused_dim = hidden*3 + mlp*2 = 3072*3 + 9216*2 = 27648 *)
   fused_dim := hidden * 3 + mlp * 2;
 
   work_size           := totalSeq*fused_dim + hidden*3 ;
 
-  work1               := TMemoryBlock.Create(totalSeq * hidden);
+  work1               := TMemoryBlock.Create([totalSeq, hidden]);
   work2               := TMemoryBlock.Create(work_size);
-  attn_q_t            := TMemoryBlock.Create(totalSeq * hidden);
-  attn_k_t            := TMemoryBlock.Create(totalSeq * hidden);
-  attn_v_t            := TMemoryBlock.Create(totalSeq * hidden);
-  attn_out_t          := TMemoryBlock.Create(totalSeq * hidden);
-  attn_cat_k          := TMemoryBlock.Create(totalSeq * hidden);
-  attn_cat_v          := TMemoryBlock.Create(totalSeq * hidden);
-  single_q            := TMemoryBlock.Create(totalSeq * hidden);
-  single_k            := TMemoryBlock.Create(totalSeq * hidden);
-  single_v            := TMemoryBlock.Create(totalSeq * hidden);
-  single_mlp_gate     := TMemoryBlock.Create(totalSeq * mlp);
-  single_mlp_up       := TMemoryBlock.Create(totalSeq * mlp);
-  single_attn_out     := TMemoryBlock.Create(totalSeq * hidden );
-  single_concat       := TMemoryBlock.Create(totalSeq * (hidden + mlp));
-  ffn_gate            := TMemoryBlock.Create(totalSeq * mlp   );
-  ffn_up              := TMemoryBlock.Create(totalSeq * mlp   );
-  double_img_attn_out := TMemoryBlock.Create(totalSeq * hidden);
-  double_txt_attn_out := TMemoryBlock.Create(totalSeq * hidden);
+  attn_q_t            := TMemoryBlock.Create([totalSeq, hidden]);
+  attn_k_t            := TMemoryBlock.Create([totalSeq, hidden]);
+  attn_v_t            := TMemoryBlock.Create([totalSeq, hidden]);
+  attn_out_t          := TMemoryBlock.Create([totalSeq, hidden]);
+  attn_cat_k          := TMemoryBlock.Create([totalSeq, hidden]);
+  attn_cat_v          := TMemoryBlock.Create([totalSeq, hidden]);
+  single_q            := TMemoryBlock.Create([totalSeq, hidden]);
+  single_k            := TMemoryBlock.Create([totalSeq, hidden]);
+  single_v            := TMemoryBlock.Create([totalSeq, hidden]);
+  single_mlp_gate     := TMemoryBlock.Create([totalSeq, mlp]);
+  single_mlp_up       := TMemoryBlock.Create([totalSeq, mlp]);
+  single_attn_out     := TMemoryBlock.Create([totalSeq, hidden] );
+  single_concat       := TMemoryBlock.Create([totalSeq, (hidden + mlp)]);
+  ffn_gate            := TMemoryBlock.Create([totalSeq, mlp   ]);
+  ffn_up              := TMemoryBlock.Create([totalSeq, mlp   ]);
+  double_img_attn_out := TMemoryBlock.Create([totalSeq, hidden]);
+  double_txt_attn_out := TMemoryBlock.Create([totalSeq, hidden]);
   work_seq_alloc := totalSeq;
 
 
@@ -810,6 +929,7 @@ begin
     cached_combined_rope_sin.free;
     for i:=0 to high(sf_files) do
       sf_files[i].close();
+    sf_files := nil;
     self := default(TTransformerFlux)
 end;
 
@@ -822,23 +942,6 @@ begin
     setLength(double_blocks, 0);
     setLength(single_blocks, 0);
   end;
-end;
-
-class function TTransformerFlux.loadShards(const modelDir: string):TSafeTensorFiles;
-var json, wm:TJSON; i:integer;
-  fn : string;
-begin
-  fn := modelDir+'/transformer/diffusion_pytorch_model.safetensors.index.json';
-  if FileExists(fn) then begin
-    json := TJSON.LoadFromFile(fn);
-    if json.keyExist('weight_map') then begin
-      setLength(result, json['weight_map'].count);
-      wm:= json['weight_map'];
-      for i:=0 to high(result) do
-        result[i] := TSafeTensorFile.open('/transformer/'+wm.childObjs[i].Value);
-    end;
-  end else
-    result := [TSafeTensorFile.open(modelDir+'/transformer/diffusion_pytorch_model.safetensors')];
 end;
 
 procedure TTransformerFlux.getCachedRefRoPE(const patch_h, patch_w,
@@ -858,8 +961,8 @@ begin
     if cached_ref_rope_cos.isAssigned() then cached_ref_rope_cos.free();
     if cached_ref_rope_sin.isAssigned() then cached_ref_rope_sin.free();
     size := seq * axisDim * 4 ;
-    cached_ref_rope_cos := TMemoryBlock.Create(size, dtF32);
-    cached_ref_rope_sin := TMemoryBlock.Create(size, dtF32);
+    cached_ref_rope_cos := TMemoryBlock.Create([seq, axisDim * 4], dtF32);
+    cached_ref_rope_sin := TMemoryBlock.Create([seq, axisDim * 4], dtF32);
     cached_ref_h := patch_h;
     cached_ref_w := patch_w;
     cached_ref_t_offset := offset;
@@ -890,8 +993,8 @@ begin
     if cached_img_rope_cos.isAssigned() then cached_img_rope_cos.free;
     if cached_img_rope_sin.isAssigned() then cached_img_rope_sin.free;
 
-    cached_img_rope_cos := TMemoryBlock.Create(size, dtF32);
-    cached_img_rope_sin := TMemoryBlock.Create(size, dtF32);
+    cached_img_rope_cos := TMemoryBlock.Create([seq, axisDim, 4], dtF32);
+    cached_img_rope_sin := TMemoryBlock.Create([seq, axisDim, 4], dtF32);
     cached_img_h := patch_h;
     cached_img_w := patch_w;
     QNNComputeRoPE2D(cached_img_rope_cos, cached_img_rope_sin, patch_h, patch_w, axisDim, rope_theta);
@@ -916,8 +1019,8 @@ begin
       end;
     if cached_txt_rope_cos.isAssigned() then cached_txt_rope_cos.free();
     if cached_txt_rope_sin.isAssigned() then cached_txt_rope_sin.free();
-    cached_txt_rope_cos := TMemoryBlock.Create(size, dtF32);
-    cached_txt_rope_sin := TMemoryBlock.Create(size, dtF32);
+    cached_txt_rope_cos := TMemoryBlock.Create([txt_seq, headDim], dtF32);
+    cached_txt_rope_sin := TMemoryBlock.Create([txt_seq, headDim], dtF32);
     cached_txt_seq := txt_seq;
     QNNComputeRoPEText(cached_txt_rope_cos, cached_txt_rope_sin, txt_seq, axis_dim, rope_theta);
     cosOut := cached_txt_rope_cos;
@@ -947,8 +1050,8 @@ begin
     if cached_combined_rope_cos.isAssigned() then cached_combined_rope_cos.free();
     if cached_combined_rope_sin.isAssigned() then cached_combined_rope_sin.free();
     combined_size := combined_seq * axisDim * 4;
-    cached_combined_rope_cos := TMemoryBlock.Create(combined_size, dtF32);
-    cached_combined_rope_sin := TMemoryBlock.Create(combined_size, dtF32);
+    cached_combined_rope_cos := TMemoryBlock.Create([combined_seq, axisDim, 4], dtF32);
+    cached_combined_rope_sin := TMemoryBlock.Create([combined_seq, axisDim, 4], dtF32);
     cached_combined_img_h := img_h;
     cached_combined_img_w := img_w;
     cached_combined_ref_h := ref_h;
@@ -970,6 +1073,9 @@ begin
     cosOut := cached_combined_rope_cos;
     sinOut := cached_combined_rope_sin
 end;
+
+
+
 
 procedure TTransformerFlux.multiHeadForward(const dst, Q, K, V: PQNNFloat; const seq{, heads, head_dim}: longint);
 var
@@ -1020,22 +1126,25 @@ begin
 
   headDim := head_dim;
   hidden := num_heads * head_dim;  //but we use self.hidden_size
-  scores := attn_scores;
   scale := 1/sqrt(head_dim);
 
-{$ifdef USE_MULTITHREADING}
-  mp.&for(worker, 0, num_heads-1) ;
+{$if defined(USE_FLASHATTENTION)}
+  QNNFlashAttention(dst, Q, K, V, seq, seq, num_heads, head_dim, 1/sqrt(head_dim));
 {$else}
+  scores := attn_scores;
+  {$ifdef _USE_MULTITHREADING}
+  mp.&for(worker, 0, num_heads-1) ;
+  {$else}
   worker(0, num_heads-1, nil);
+  {$endif}
 {$endif}
-
-  //QNNFlashAttention(dst, Q, K, V, seq, seq, num_heads, head_dim, 1/sqrt(head_dim));
 
 
 end;
 
 procedure TTransformerFlux.jointAttentionForward(const img_out, txt_out, img_Q,
-  img_K, img_V, txt_Q, txt_K, txt_V: PQNNFloat; const img_seq, txt_seq: longint);
+  img_K, img_V, txt_Q, txt_K, txt_V: TMemoryBlock; const img_seq,
+  txt_seq: longint);
 var
   totalSeq, hidden, headDim:longint;
   scale : QNNFloat;
@@ -1054,12 +1163,12 @@ begin
     kh, vh : PQNNFloat;
   begin
     for i:= start to finish do begin
-            imgQh  := img_Q   + i*headDim;
-            txtQh  := txt_Q   + i*headDim;
+            imgQh  := PQNNFloat(img_Q)   + i*headDim;
+            txtQh  :=PQNNFloat( txt_Q)   + i*headDim;
             kh     := cat_k   + i*headDim;
             vh     := cat_v   + i*headDim;
-            imgOh := img_out + i*headDim;
-            txtOh := txt_out + i*headDim;
+            imgOh := PQNNFloat(img_out) + i*headDim;
+            txtOh := PQNNFloat(txt_out) + i*headDim;
             imgSh := scores  + i*totalSeq*totalSeq;
             txtSh := imgSh  + img_seq*totalSeq; // txt_sh is an offset from img_sh
 
@@ -1104,7 +1213,6 @@ begin
   totalSeq := img_seq + txt_seq;
   headDim := head_dim;
   hidden   := num_heads*head_dim;
-  scores := attn_scores;
   scale  := 1/sqrt(head_dim);
 
   (* Use pre-allocated buffers for K/V concatenation *)
@@ -1118,24 +1226,27 @@ begin
   QNNCopy(cat_K + txt_seq*hidden, img_K, img_seq*hidden);
   QNNCopy(cat_V + txt_seq*hidden, img_V, img_seq*hidden);
 
-{$ifdef USE_MULTITHREADING}
-  mp.&for(worker, 0, num_heads-1);
+{$if defined(USE_FLASHATTENTION)}
+  QNNFlashAttention(img_out, img_q, cat_k, cat_v, img_seq, totalSeq, num_heads, head_dim, scale);
+  QNNFlashAttention(txt_out, txt_q, cat_k, cat_v, txt_seq, totalSeq, num_heads, head_dim, scale);
 {$else}
+  scores := attn_scores;
+  {$ifdef _USE_MULTITHREADING}
+  mp.&for(worker, 0, num_heads-1);
+  {$else}
   worker(0, num_heads-1, nil)
+  {$endif}
 {$endif}
-
-  //QNNFlashAttention(img_out, img_q, cat_k, cat_v, img_seq, totalSeq, num_heads, head_dim, scale);
-  //QNNFlashAttention(txt_out, txt_q, cat_k, cat_v, txt_seq, totalSeq, num_heads, head_dim, scale);
 
 end;
 
-procedure TTransformerFlux.ffnSwigluForward(const dst, x: PQNNFloat;
+procedure TTransformerFlux.ffnSwigluForward(const dst, x: TMemoryBlock;
   const gate_weight, up_weight, down_weight: TSingles; const gate_weight_bf16,
   up_weight_bf16, down_weight_bf16: TBF16s; const seq, hidden,
   mlpHidden: longint);
 begin
   assert(boolean(gate_weight) or boolean(gate_weight_bf16),
-    'ERROR ffnForward no gate_weight or gate_weight_bf16 assigned!');
+    'ERROR ffnSwigluForward no gate_weight or gate_weight_bf16 assigned!');
 
   //if boolean(gate_weight_bf16) then
   //  QNNLinearNoBias_BF16(ffn_gate, x, gate_weight_bf16, seq, hidden, mlpHidden)
@@ -1174,8 +1285,8 @@ end;
   the attention and FFN residual paths. *)
 
 procedure TTransformerFlux.doubleBlockForward(const img_hidden,
-  txt_hidden: PQNNFloat; const blockIdx: longint; const img_mod, txt_mod,
-  img_rope_cos, img_rope_sin, txt_rope_cos, txt_rope_sin: PQNNFloat;
+  txt_hidden: TMemoryBlock; const blockIdx: longint; const img_mod, txt_mod,
+  img_rope_cos, img_rope_sin, txt_rope_cos, txt_rope_sin: TMemoryBlock;
   const img_seq, txt_seq: longint);
 
 const AXISDIM = 32;
@@ -1190,18 +1301,18 @@ begin
 
   (* Extract pre-computed modulation parameters *)
   img_shift1 := img_mod;
-  img_scale1 := img_mod + hidden_size;
-  img_gate1  := img_mod + hidden_size*2;
-  img_shift2 := img_mod + hidden_size*3;
-  img_scale2 := img_mod + hidden_size*4;
-  img_gate2  := img_mod + hidden_size*5;
+  img_scale1 := PQnnFloat(img_mod) + hidden_size;
+  img_gate1  := PQnnFloat(img_mod) + hidden_size*2;
+  img_shift2 := PQnnFloat(img_mod) + hidden_size*3;
+  img_scale2 := PQnnFloat(img_mod) + hidden_size*4;
+  img_gate2  := PQnnFloat(img_mod) + hidden_size*5;
 
-  txt_shift1 := txt_mod;
-  txt_scale1 := txt_mod + hidden_size;
-  txt_gate1  := txt_mod + hidden_size*2;
-  txt_shift2 := txt_mod + hidden_size*3;
-  txt_scale2 := txt_mod + hidden_size*4;
-  txt_gate2  := txt_mod + hidden_size*5;
+  txt_shift1 := PQNNFloat(txt_mod);
+  txt_scale1 := PQNNFloat(txt_mod) + hidden_size;
+  txt_gate1  := PQNNFloat(txt_mod) + hidden_size*2;
+  txt_shift2 := PQNNFloat(txt_mod) + hidden_size*3;
+  txt_scale2 := PQNNFloat(txt_mod) + hidden_size*4;
+  txt_gate2  := PQNNFloat(txt_mod) + hidden_size*5;
 
   img_norm := work1;
   txt_norm := img_norm + img_seq*hidden_size;
@@ -1217,6 +1328,7 @@ begin
   block := @double_blocks[blockIdx];
 
   QNNAdaLN(img_norm, img_hidden, img_shift1, img_scale1, img_seq, hidden_size);
+
   QNNLINEAR_BF16_OR_F32(img_q, img_norm, block.img_q_weight, block.img_q_weight_bf16, img_seq, hidden_size, hidden_size);
   QNNLINEAR_BF16_OR_F32(img_k, img_norm, block.img_k_weight, block.img_k_weight_bf16, img_seq, hidden_size, hidden_size);
   QNNLINEAR_BF16_OR_F32(img_v, img_norm, block.img_v_weight, block.img_v_weight_bf16, img_seq, hidden_size, hidden_size);
@@ -1238,6 +1350,7 @@ begin
 
   QNNApplyRoPE2D(txt_q, txt_rope_cos, txt_rope_sin, txt_seq, num_heads, head_dim, AXISDIM);
   QNNApplyRoPE2D(txt_k, txt_rope_cos, txt_rope_sin, txt_seq, num_heads, head_dim, AXISDIM);
+
 
 //printStat(txt_q, txt_seq * hidden_size);
 //printStat(txt_k, txt_seq * hidden_size);
@@ -1285,9 +1398,9 @@ end;
    MLP output is concatenated with the attention output before the output
    projection -- this parallel attention+MLP design saves a serial step.*)
 
-procedure TTransformerFlux.singleBlockForward(const hidden: PQNNFloat;
+procedure TTransformerFlux.singleBlockForward(const hidden: TMemoryBlock;
   const blockIdx: longint; const t_emb, adaln_weight, img_rope_cos,
-  img_rope_sin, txt_rope_cos, txt_rope_sin: PQNNFloat; const seq,
+  img_rope_sin, txt_rope_cos, txt_rope_sin: TMemoryBlock; const seq,
   img_offset: longint);
 
 const AXIS_DIM = 32;
@@ -1368,15 +1481,15 @@ begin
     reInitialize(total_seq);
 
     t_emb := TMemoryBlock.Create(hidden_size);
-    QNNTimestepEmbedding(t_sincos, timestep * 1000.0, time_embed.sincos_dim, 10000.0);
+    QNNTimestepEmbedding(@t_sincos[0], timestep * 1000.0, time_embed.sincos_dim, 10000.0);
 
-    time_embed.forward(t_emb, t_sincos,  hidden_size, t_emb_silu);
+    time_embed.forward(t_emb, @t_sincos[0],  hidden_size, t_emb_silu);
 
     getCachedImgRoPE(img_h, img_w, img_rope_cos, img_rope_sin);
 
     getCachedTxtRoPE(txt_seq, txt_rope_cos, txt_rope_sin);
 
-    img_transposed := TMemoryBlock.Create(img_seq * latent_channels);
+    img_transposed := TMemoryBlock.Create([img_seq, latent_channels]);
     //for pos := 0 to img_seq -1 do
     //    for c := 0 to latent_channels -1 do
     //        img_transposed[pos*latent_channels + c] := img_latent[c*img_seq + pos];
@@ -1405,6 +1518,7 @@ begin
           double_blocks[i].load(sf_files, i, hidden_size, mlp_hidden, use_bf16);
       // todo TTransformerFlux.forward : {} nest to a param means it's redundant, it is a record member var, remove/refactor
       doubleBlockForward(img_hidden, txt_hidden{}, i, double_mod_img{}, double_mod_txt{}, img_rope_cos, img_rope_sin, txt_rope_cos, txt_rope_sin, img_seq, txt_seq);
+
       if use_mmap then
         double_blocks[i].free;
 //img_hidden.printStat;
@@ -1412,8 +1526,8 @@ begin
       if assigned(substep_callback) then
           substep_callback(SUBSTEP_DOUBLE_BLOCK, i, num_double_layers);
     end;
-    concat_hidden := TMemoryBlock.Create(total_seq * hidden_size);
-    QNNCopy(concat_hidden                      , txt_hidden, txt_seq*hidden_size);
+    concat_hidden := TMemoryBlock.Create([total_seq, hidden_size]);
+    QNNCopy(concat_hidden                                 , txt_hidden, txt_seq*hidden_size);
     QNNCopy(PQNNFloat(concat_hidden) + txt_seq*hidden_size, img_hidden, img_seq*hidden_size);
     for i := 0 to num_single_layers -1 {high(single_blocks)} do
         begin
@@ -1424,8 +1538,10 @@ begin
                 single_blocks[i].free;
             //    free_single_block_weights(@single_blocks[i]);
             if assigned(substep_callback) then
-                substep_callback(SUBSTEP_SINGLE_BLOCK, i, num_single_layers)
+                substep_callback(SUBSTEP_SINGLE_BLOCK, i, num_single_layers) ;
         end;
+
+
     QNNCopy(img_hidden, PQNNFloat(concat_hidden) + txt_seq*hidden_size, img_seq*hidden_size);
     concat_hidden.free;
     QNNSilu(t_emb_silu, t_emb, hidden_size);
@@ -1440,9 +1556,9 @@ begin
     final_shift := final_mod+hidden_size;
     final_norm := work1;
     QNNAdaLN(final_norm, img_hidden, final_shift, final_scale, img_seq, hidden_size, -6);
-    output_nlc := TMemoryBlock.create(img_seq * latent_channels);
+    output_nlc := TMemoryBlock.create([img_seq, latent_channels]);
     QNNLINEAR_BF16_OR_F32(output_nlc, final_norm, final_proj_weight, final_proj_weight_bf16, img_seq, hidden_size, latent_channels);
-    result := TMemoryBlock.Create(img_seq * latent_channels);
+    result := TMemoryBlock.Create([img_seq, latent_channels]);
     //for pos := 0 to img_seq -1 do
     //    for c := 0 to latent_channels -1 do
     //        result[c * img_seq+pos] := output_nlc[pos * latent_channels+c];
@@ -1455,7 +1571,6 @@ begin
     //iris_timing_transformer_total := iris_timing_transformer_total + (double_time+single_time+final_time);
     if assigned(substep_callback) then
         substep_callback(SUBSTEP_FINAL_LAYER, 0, 1);
-
 end;
 
 function TTransformerFlux.forward(const img_latent: PQNNFloat; const img_h,
@@ -1479,12 +1594,12 @@ begin
     total_seq := combined_img_seq + txt_seq;
     reInitialize(total_seq);
     t_emb := TMemoryBlock.Create(hidden_size);
-    QNNTimestepEmbedding(t_sincos, timestep * 1000.0, time_embed.sincos_dim, 10000.0);
-    time_embed.forward(t_emb, t_sincos, hidden_size, t_emb_silu);
+    QNNTimestepEmbedding(@t_sincos[0], timestep * 1000.0, time_embed.sincos_dim, 10000.0);
+    time_embed.forward(t_emb, @t_sincos[0], hidden_size, t_emb_silu);
     getCachedCombinedRoPE(img_h, img_w, ref_h, ref_w, t_offset, combined_rope_cos,  combined_rope_sin);
 
     getCachedTxtRoPE(txt_seq, txt_rope_cos, txt_rope_sin);
-    combined_transposed := TMemoryBlock.Create(combined_img_seq * latent_channels);
+    combined_transposed := TMemoryBlock.Create([combined_img_seq, latent_channels]);
     combined_transposed_ptr := combined_transposed;
     for pos := 0 to img_seq -1 do
         for c := 0 to latent_channels -1 do
@@ -1493,7 +1608,7 @@ begin
         for c := 0 to latent_channels -1 do
             combined_transposed_ptr[(img_seq+pos) * latent_channels+c] := ref_latent[c * ref_seq+pos];
 
-    combined_hidden := TMemoryBlock.Create(combined_img_seq*hidden_size);
+    combined_hidden := TMemoryBlock.Create([combined_img_seq, hidden_size]);
     QNNLINEAR_BF16_OR_F32(combined_hidden, combined_transposed, img_in_weight, img_in_weight_bf16, combined_img_seq, latent_channels, hidden_size);
 
     QNNLINEAR_BF16_OR_F32(txt_hidden, txt_emb, txt_in_weight, txt_in_weight_bf16, txt_seq, text_dim, hidden_size);
@@ -1517,7 +1632,7 @@ begin
             if assigned(substep_callback) then
                 substep_callback(SUBSTEP_DOUBLE_BLOCK, i, num_double_layers)
         end;
-    concat_hidden := TMemoryBlock.Create(total_seq * hidden_size);
+    concat_hidden := TMemoryBlock.Create([total_seq, hidden_size]);
     QNNCopy(concat_hidden, txt_hidden, txt_seq * hidden_size);
     QNNCopy(PQNNFloat(concat_hidden)+txt_seq * hidden_size, combined_hidden, combined_img_seq*hidden_size);
     for i := 0 to num_single_layers -1 do
@@ -1528,7 +1643,7 @@ begin
             if assigned(substep_callback) then
                 substep_callback(SUBSTEP_SINGLE_BLOCK, i, num_single_layers)
         end;
-    img_hidden :=  TMemoryBlock.Create(img_seq * hidden_size);
+    img_hidden :=  TMemoryBlock.Create([img_seq, hidden_size]);
     QNNCopy(img_hidden, PQNNFloat(concat_hidden)+txt_seq * hidden_size, img_seq * hidden_size);
     QNNSilu(t_emb_silu, t_emb, hidden_size);
     //for i := 0 to hidden_size -1 do
@@ -1543,9 +1658,9 @@ begin
     final_norm := work1;
     QNNAdaLN(final_norm, img_hidden, final_shift, final_scale, img_seq, hidden_size, -6);
 
-    output_nlc := TMemoryBlock.create(img_seq * latent_channels);
+    output_nlc := TMemoryBlock.create([img_seq, latent_channels]);
     QNNLINEAR_BF16_OR_F32(output_nlc, final_norm, final_proj_weight, final_proj_weight_bf16, img_seq, hidden_size, latent_channels);
-    result := TMemoryBlock.create(img_seq * latent_channels);
+    result := TMemoryBlock.create([img_seq, latent_channels]);
     output_nlc_ptr := output_nlc;
     result_ptr := result;
     for pos := 0 to img_seq -1 do
@@ -1581,10 +1696,10 @@ begin
     reInitialize(total_seq);
     t_emb := TMemoryBlock.Create(hidden_size);
 
-    QNNTimestepEmbedding(t_sincos, timestep * 1000.0, time_embed.sincos_dim, 10000.0);
-    time_embed.forward(t_emb, t_sincos,  hidden_size, t_emb_silu);
-    combined_rope_cos := TMemoryblock.Create(combined_img_seq * axis_dim * 4);
-    combined_rope_sin := TMemoryblock.Create(combined_img_seq * axis_dim * 4);
+    QNNTimestepEmbedding(@t_sincos[0], timestep * 1000.0, time_embed.sincos_dim, 10000.0);
+    time_embed.forward(t_emb, @t_sincos[0],  hidden_size, t_emb_silu);
+    combined_rope_cos := TMemoryblock.Create([combined_img_seq, axis_dim, 4]);
+    combined_rope_sin := TMemoryblock.Create([combined_img_seq, axis_dim, 4]);
     QNNComputeRoPE2D(combined_rope_cos, combined_rope_sin, img_h, img_w, axis_dim, rope_theta);
     rope_offset := img_seq * axis_dim * 4;
     for r := 0 to high(refs) do
@@ -1595,7 +1710,7 @@ begin
         end;
 
     getCachedTxtRoPE(txt_seq, txt_rope_cos, txt_rope_sin);
-    combined_transposed := TMemoryBlock.Create(combined_img_seq * latent_channels);
+    combined_transposed := TMemoryBlock.Create([combined_img_seq, latent_channels]);
     for pos := 0 to img_seq -1 do
         for c := 0 to latent_channels -1 do
             combined_transposed[pos * latent_channels+c] := img_latent[c * img_seq+pos];
@@ -1608,7 +1723,7 @@ begin
                     combined_transposed[(trans_offset + pos)*latent_channels + c] := refs[r].latent[c*ref_seq + pos];
             trans_offset := trans_offset + ref_seq
         end;
-    combined_hidden := TMemoryBlock.Create(combined_img_seq * hidden_size);
+    combined_hidden := TMemoryBlock.Create([combined_img_seq, hidden_size]);
     QNNLINEAR_BF16_OR_F32(combined_hidden, combined_transposed, img_in_weight, img_in_weight_bf16, combined_img_seq, latent_channels, hidden_size);
     QNNLINEAR_BF16_OR_F32(txt_hidden, txt_emb, txt_in_weight, txt_in_weight_bf16, txt_seq, text_dim, hidden_size);
     double_mod_size := hidden_size * 6;
@@ -1628,7 +1743,7 @@ begin
             if assigned(substep_callback) then
                 substep_callback(SUBSTEP_DOUBLE_BLOCK, i, num_double_layers)
         end;
-    concat_hidden := TMemoryBlock.Create(total_seq * hidden_size);
+    concat_hidden := TMemoryBlock.Create([total_seq, hidden_size]);
     QNNCopy(concat_hidden, txt_hidden, txt_seq*hidden_size);
     QNNCopy(concat_hidden + txt_seq*hidden_size, combined_hidden, combined_img_seq*hidden_size);
     for i := 0 to num_single_layers -1 do
@@ -1640,7 +1755,7 @@ begin
             if assigned(substep_callback) then
               substep_callback(SUBSTEP_SINGLE_BLOCK, i, num_single_layers)
         end;
-    img_hidden := TMemoryBlock.Create(img_seq * hidden_size);
+    img_hidden := TMemoryBlock.Create([img_seq, hidden_size]);
     QNNCopy(img_hidden, concat_hidden + txt_seq*hidden_size, img_seq*hidden_size);
     QNNSilu(t_emb_silu, t_emb, hidden_size);
     //for i := 0 to hidden_size -1 do
@@ -1655,9 +1770,9 @@ begin
     final_norm := work1;
     QNNAdaLN(final_norm, img_hidden, final_shift, final_scale, img_seq, hidden_size);
 
-    output_nlc := TMemoryBlock.Create(img_seq*latent_channels);
+    output_nlc := TMemoryBlock.Create([img_seq, latent_channels]);
     QNNLINEAR_BF16_OR_F32(output_nlc, final_norm, final_proj_weight, final_proj_weight_bf16, img_seq, hidden_size, latent_channels);
-    result := TMemoryBlock.Create(img_seq * latent_channels);
+    result := TMemoryBlock.Create([img_seq, latent_channels]);
     result_ptr := result;
     output_ptr := output_nlc;
     for pos := 0 to img_seq -1 do
@@ -1668,8 +1783,8 @@ begin
 end;
 
 function TTransformerFlux.sampleEuler(const z: TMemoryBlock; const batch,
-  channels, h, w: longint; const text_emb: PQNNFloat; const text_seq: longint;
-  const schedule: PQNNFloat; const num_steps: longint;
+  channels, h, w: longint; const text_emb: TMemoryBlock;
+  const text_seq: longint; const schedule: PQNNFloat; const num_steps: longint;
   const progress_callback: TStepCallback): TMemoryBlock;
 var
     latent_size, step: longint;
@@ -1678,37 +1793,34 @@ var
     img : TQNNImage;
 begin
     latent_size := batch * channels * h * w;
-    result := TMemoryBlock.Create(latent_size);
+    result := TMemoryBlock.Create([batch, channels, h, w]);
 
     QNNcopy(result, z, latent_size);
-    for step := 0 to num_steps -1 do
-        begin
-            t_curr := schedule[step];
-            t_next := schedule[step+1];
-            dt := t_next - t_curr;
-            if assigned(step_callback) then
-                step_callback(step+1, num_steps);
-            v_cond :=forward(result, h, w, text_emb, text_seq, t_curr);
-            QNNFusedScaleAdd(result, v_cond, result, dt, latent_size);
-            v_cond.free();
-            if assigned(progress_callback) then
-                progress_callback(step+1, num_steps);
-            if assigned(step_image_callback) and assigned(step_image_vae) and (step+1 < num_steps) then
-                begin
-                    img := PVAE(step_image_vae).decode(result, 1, h, w);
-                    if assigned(img.data) then
-                        begin
-                            step_image_callback(step+1, num_steps, img);
-                            img.free
-                        end
-                end
-        end;
+    for step := 0 to num_steps -1 do begin
+        t_curr := schedule[step];
+        t_next := schedule[step+1];
+        dt := t_next - t_curr;
+        if assigned(step_callback) then
+            step_callback(step, num_steps);
+        v_cond :=self.forward(result, h, w, text_emb, text_seq, t_curr);
+        QNNFusedScaleAdd(result, v_cond, result, dt, latent_size);
+        v_cond.free();
+        if assigned(progress_callback) then
+            progress_callback(step, num_steps);
+        if assigned(step_image_callback) and assigned(step_image_vae) and (step+1 < num_steps) then  begin
+            img := PVAE(step_image_vae).decode(result, 1, h, w);
+            if assigned(img.data) then begin
+                step_image_callback(step+1, num_steps, img);
+                img.free
+            end
+        end
+    end;
     freeMMapCache();
 end;
 
-function TTransformerFlux.sampleEuler(const z: PQNNFloat; const batch,
-  channels, h, w: longint; const text_emb_cond: PQNNFloat;
-  const text_seq_cond: longint; const text_emb_uncond: PQNNFloat;
+function TTransformerFlux.sampleEuler(const z: TMemoryBlock; const batch,
+  channels, h, w: longint; const text_emb_cond: TMemoryBlock;
+  const text_seq_cond: longint; const text_emb_uncond: TMemoryBlock;
   const text_seq_uncond: longint; const guidance_scale: QNNFloat;
   const schedule: PQNNFloat; const num_steps: longint;
   const progress_callback: TStepCallback): TMemoryBlock;
@@ -1720,7 +1832,7 @@ var
     img: TQNNImage;
 begin
     latent_size := batch * channels * h * w;
-    result := TMemoryblock.create(latent_size);
+    result := TMemoryblock.create([batch, channels, h, w]);
     resultPtr := result;
     QNNCopy(result, z, latent_size);
     for step := 0 to num_steps -1 do
@@ -1758,12 +1870,12 @@ begin
 end;
 
 function TTransformerFlux.sampleEuler(const z: TMemoryBlock; const batch,
-  channels, h, w: longint; const ref_latent: PQNNFloat; const ref_h, ref_w,
-  t_offset: longint; const text_emb_cond: PQNNFloat;
-  const text_seq_cond: longint; const text_emb_uncond: PQNNFloat;
+  channels, h, w: longint; const ref_latent: TMemoryBlock; const ref_h, ref_w,
+  t_offset: longint; const text_emb_cond: TMemoryBlock;
+  const text_seq_cond: longint; const text_emb_uncond: TMemoryBlock;
   const text_seq_uncond: longint; const guidance_scale: QNNFloat;
   const schedule: PQNNFloat; const num_steps: longint;
-  const progress_callback: TStepCallback):TMemoryBlock;
+  const progress_callback: TStepCallback): TMemoryBlock;
 var
     latent_size, step, i: longint;
     t_curr, t_next, dt, v: QNNFloat;
@@ -1772,7 +1884,7 @@ var
     img:TQNNImage;
 begin
     latent_size := batch * channels * h * w;
-    result := TMemoryBlock.Create(latent_size);
+    result := TMemoryBlock.Create([batch, channels, h, w]);
     resultPtr := result;
     QNNcopy(result, z, latent_size);
 
@@ -1810,6 +1922,880 @@ begin
     freeMMapCache()
 end;
 
+{ TBlockZi }
+
+procedure TBlockZi.load(const files: TSafeTensorFiles; const prefix: string;
+  const has_modulation: boolean; const useMMap: boolean);
+begin
+
+  (* Attention weights *)
+  attn_q_weight := files.getTensorDataMemBlock(prefix+'.attention.to_q.weight', useMMap);
+  attn_k_weight := files.getTensorDataMemBlock(prefix+'.attention.to_k.weight', useMMap);
+  attn_v_weight := files.getTensorDataMemBlock(prefix+'.attention.to_v.weight', useMMap);
+  attn_out_weight := files.getTensorDataMemBlock(prefix+'.attention.to_out.0.weight', useMMap);
+
+  (* QK norm *)
+  attn_norm_q := files.getTensorDataMemBlock(prefix+'.attention.norm_q.weight', useMMap);
+  attn_norm_k := files.getTensorDataMemBlock(prefix+'.attention.norm_k.weight', useMMap);
+
+  (* Pre/post attention norms *)
+  attn_norm1 := files.getTensorDataMemBlock(prefix+'.attention_norm1.weight', useMMap);
+  attn_norm2 := files.getTensorDataMemBlock(prefix+'.attention_norm2.weight', useMMap);
+
+  (* FFN weights *)
+  ffn_w1 := files.getTensorDataMemBlock(prefix+'.feed_forward.w1.weight', useMMap);
+  ffn_w2 := files.getTensorDataMemBlock(prefix+'.feed_forward.w2.weight', useMMap);
+  ffn_w3 := files.getTensorDataMemBlock(prefix+'.feed_forward.w3.weight', useMMap);
+
+  (* FFN norms *)
+  ffn_norm1 := files.getTensorDataMemBlock(prefix+'.ffn_norm1.weight', useMMap);
+  ffn_norm2 := files.getTensorDataMemBlock(prefix+'.ffn_norm2.weight', useMMap);
+
+  (* AdaLN modulation (only for modulated blocks) *)
+  if has_modulation then begin
+      adaln_weight := files.getTensorDataMemBlock(prefix+'.adaLN_modulation.0.weight', useMMap);
+      adaln_bias := files.getTensorDataMemBlock(prefix+'.adaLN_modulation.0.bias', useMMap);
+  end else begin
+//      adaln_weight := nil;
+//      adaln_bias := nil;
+  end
+
+end;
+
+procedure TBlockZi.free();
+begin
+  (* Attention weights *)
+  attn_q_weight      .free;
+  attn_k_weight      .free;
+  attn_v_weight      .free;
+  attn_out_weight    .free;
+  attn_norm_q        .free;
+  attn_norm_k        .free;
+  attn_norm1         .free;
+  attn_norm2         .free;
+  ffn_w1             .free;
+  ffn_w2             .free;
+  ffn_w3             .free;
+  ffn_norm1          .free;
+  ffn_norm2          .free;
+  if adaln_weight.isAssigned() then adaln_weight.free;
+  if adaln_bias.isAssigned() then adaln_bias.free;
+end;
+
+{ TTransformerZi }
+
+(* Converts scalar timestep to a 256-dim vector using log-spaced frequencies,
+ * the same idea as the original Transformer positional encoding but here it
+ * encodes the denoising step. The caller scales the input by 1000 before
+ * calling (t * 1000.0f), mapping the [0,1] sigma range to [0,1000]. *)
+// compute rope ?
+procedure sinusoidalEmbeddingZi(const dst:PQNNFloat; const t:QNNFloat; const dim:longint);
+var
+  half, i:longint;
+  freq, angle : QNNFloat;
+const log_max_period:QNNFloat = 9.2103403719761827360719658187375;//ln(10000.0);
+begin
+    half := dim div 2;
+    //log_max_period = ln(10000.0);
+    for i := 0 to half-1 do begin
+        freq  := exp(-log_max_period*i/half);
+        angle := t*freq;
+        dst[i] := cos(angle);
+        dst[i + half] := sin(angle);
+    end
+end;
+
+procedure TTransformerZI.attentionForward(const dst, src: PQNNFloat;
+  const block: TBlockZi; const pos_ids: Plongint; const mask: PLongint;
+  const seq: longint);
+var
+  Q, K, V, h_out, attn_out, scores, qi, kj, oi, vj: PQNNFloat;
+  d, h, i, j: longint;
+  scale, dot, s : QNNFloat;
+  dd:TArray<single>;
+begin
+
+    Q := work_qkv;
+    K := Q + seq*dim;
+    V := K + seq*dim;
+
+    (* Q, K, V projections *)
+    QNNMatMulNT(Q, src, block.attn_q_weight, seq, dim, dim);
+    QNNMatMulNT(K, src, block.attn_k_weight, seq, dim, dim);
+    QNNMatMulNT(V, src, block.attn_v_weight, seq, dim, dim);
+
+    (* QK normalization *)
+    QNNQKRMSNorm(Q, block.attn_norm_q, seq, n_heads, head_dim);
+    QNNQKRMSNorm(K, block.attn_norm_k, seq, n_heads, head_dim);
+
+
+    (* Apply RoPE *)
+    applyRope(Q, pos_ids, seq, n_heads);
+    applyRope(K, pos_ids, seq, n_heads);
+
+    (* Scaled dot-product attention per head *)
+    scale := 1.0 / sqrt(head_dim);
+    attn_out := work_ffn;
+
+    for h := 0 to n_heads-1 do begin
+        scores := work_attn;
+
+        (* Compute Q @ K^T for this head *)
+        //for i := 0 to seq-1 do begin
+        //    qi := Q + i * dim + h * head_dim;
+        //    for j := 0 to seq-1 do begin
+        //        kj := K + j * dim + h * head_dim;
+        //        dot := 0;
+        //        for d := 0 to head_dim-1 do
+        //            dot := dot + qi[d]*kj[d];
+        //        scores[i*seq + j] := dot*scale;
+        //    end
+        //end;
+        cblas_gemm(CblasRowMajor, CblasNoTrans, CblasTrans, seq, seq, head_dim, scale, Q + h*head_dim, dim, K + h*head_dim, dim, 0, scores, seq);
+
+        (* Apply mask: set padding positions to -inf *)
+        if assigned(mask) then
+            for i := 0 to seq-1 do
+                for j := 0 to seq-1 do
+                    if mask[j]=0 then
+                        scores[i*seq + j] := -1e9;
+
+        (* Softmax *)
+        QNNSoftmax(scores, seq, seq);
+
+        (* Scores @ V *)
+        //for i := 0 to seq-1 do begin
+        //    oi := attn_out + i*dim + h*head_dim;
+        //    QNNFill(oi, 0, head_dim);
+        //    for j  := 0 to seq-1 do begin
+        //        s  := scores[i * seq + j];
+        //        vj := V + j * dim + h * head_dim;
+        //        for d := 0 to head_dim-1 do
+        //            oi[d] := oi[d] + s*vj[d];
+        //    end;
+        //end;
+        cblas_gemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, seq, head_dim, seq, 1.0, scores, seq, V + h*head_dim, dim, 0, attn_out + h*head_dim, dim)
+    end;
+    QNNMatMulNT(dst, attn_out, block.attn_out_weight, seq, dim, dim);
+end;
+
+procedure TTransformerZI.ffnForward(const dst, src: PQNNFloat;
+  const block: TBlockZi; const seq: longint);
+var
+  gate, up : PQNNFloat;
+  N:longint;
+begin
+    N := seq*ffn_dim;
+    gate := work_ffn;
+    up := gate + N;
+
+    (* W1 (gate) and W3 (up) projections *)
+    QNNMatMulNT(gate, src, block.ffn_w1, seq, dim, ffn_dim);
+    QNNMatMulNT(up, src, block.ffn_w3, seq, dim, ffn_dim);
+
+    (* SiLU(gate) * up *)
+    QNNSilu(gate, N);
+    //for i := 0 to n-1 do gate[i] := gate[i]*up[i];
+    QNNMul(gate, up, N);
+
+    (* W2 (down) projection *)
+    QNNMatMulNT(dst, gate, block.ffn_w2, seq, ffn_dim, dim);
+end;
+
+procedure TTransformerZI.blockForward(const dst: PQNNFloat;
+  const block: TBlockZi; const pos_ids: PLongint; const mask: PLongint;
+  const t_emb: PQNNFloat; const seq: longint);
+var
+    _mod: array[0..4 * {dim}3840-1 ] of QNNFloat;
+    n, i, s: longint;
+    attn_out, norm_out, scaled, ffn_out, scale_msa, gate_msa, scale_mlp, gate_mlp: PQNNFloat;
+begin
+    n := seq * dim;
+    attn_out := work_tmp;
+    norm_out := attn_out+n;
+    scaled   := attn_out+2 * n;
+    ffn_out  := attn_out+3 * n;
+    if not work_tmp.isAssigned() or (max_seq < seq) then
+        exit();
+
+    if block.adaln_weight.isAssigned() then
+        begin
+            assert(assigned(t_emb), 'ERROR : blockForward t_emb not assigned!');
+            QNNMatMulNT(@_mod[0], t_emb, block.adaln_weight, 1, adaln_dim, 4 * dim);
+            //for i := 0 to 4 * dim -1 do
+            //    _mod[i] := _mod[i] + block.adaln_bias[i];
+            QNNAdd(@_mod[0], block.adaln_bias, 4*dim);
+            scale_msa := @_mod[0];
+            gate_msa  := @_mod[dim];
+            scale_mlp := @_mod[2 * dim];
+            gate_mlp  := @_mod[3 * dim];
+            //for i := 0 to dim -1 do
+            //    begin
+            //        scale_msa[i] := 1.0+scale_msa[i];
+            //        gate_msa[i] := tanh(gate_msa[i]);
+            //        scale_mlp[i] := 1.0+scale_mlp[i];
+            //        gate_mlp[i] := tanh(gate_mlp[i])
+            //    end;
+            QNNBias(scale_msa, 1.0, dim);
+            QNNTanh(gate_msa, dim);
+            QNNBias(scale_mlp, 1.0, dim);
+            QNNTanh(gate_mlp, dim);
+            QNNRMSNorm(norm_out, dst, block.attn_norm1, seq, dim);
+
+            for s := 0 to seq -1 do
+                //for i := 0 to dim -1 do
+                //    scaled[s * dim+i] := norm_out[s * dim+i] * scale_msa[i];
+                QNNMul(scaled + s*dim, norm_out + s*dim, scale_msa, dim);
+
+            attentionForward(attn_out, scaled, block, pos_ids, mask, seq);
+            QNNRMSNorm(norm_out, attn_out, block.attn_norm2, seq, dim);
+            for s := 0 to seq -1 do
+                //for i := 0 to dim -1 do
+                //    dst[s * dim+i] := dst[s * dim+i] + (gate_msa[i] * norm_out[s * dim+i]);
+                QNNFusedMulAdd(dst + s*dim, gate_msa, norm_out + s*dim, dst + s*dim, dim);
+            QNNRMSNorm(norm_out, dst, block.ffn_norm1, seq, dim);
+            for s := 0 to seq -1 do
+                QNNMul(scaled + s*dim, norm_out + s*dim, scale_mlp, dim);
+                //for i := 0 to dim -1 do
+                //    scaled[s * dim+i] := norm_out[s * dim+i] * scale_mlp[i];
+            ffnForward(ffn_out, scaled, block, seq);
+            QNNRMSNorm(norm_out, ffn_out, block.ffn_norm2, seq, dim);
+            for s := 0 to seq -1 do
+                QNNFusedMulAdd(dst + s*dim, gate_mlp, norm_out + s*dim, dst + s*dim, dim);
+                //for i := 0 to dim -1 do
+                //    dst[s * dim+i] := dst[s * dim+i] + (gate_mlp[i] * norm_out[s * dim+i])
+        end
+    else
+        begin
+            QNNRMSNorm(norm_out, dst, block.attn_norm1, seq, dim);
+            attentionForward(attn_out, norm_out, block, pos_ids, mask, seq);
+            QNNRMSNorm(norm_out, attn_out, block.attn_norm2, seq, dim);
+            //for i := 0 to N -1 do
+            //    dst[i] := dst[i] + norm_out[i];
+            QNNAdd(dst, norm_out, N);
+            QNNRMSNorm(norm_out, dst, block.ffn_norm1, seq, dim);
+            ffnForward(ffn_out, norm_out, block, seq);
+            QNNRMSNorm(norm_out, ffn_out, block.ffn_norm2, seq, dim);
+            //for i := 0 to N -1 do
+            //    dst[i] := dst[i] + norm_out[i]
+            QNNAdd(dst, norm_out, N);
+
+        end
+end;
+
+procedure TTransformerZI.preComputeRope;
+var
+  ax, d, half_d, pos, max_pos, i:longint;
+  freq, angle:QNNFloat;
+  ropeCos, ropeSin : PQNNFloat;
+begin
+    for ax := 0 to 3-1 do begin
+        d       := axes_dims[ax];
+        half_d  := d div 2;
+        max_pos := axes_lens[ax];
+
+        rope_cos[ax] := TMemoryBlock.create(max_pos*half_d);
+        rope_sin[ax] := TMemoryBlock.create(max_pos*half_d);
+        ropeCos := rope_cos[ax];
+        ropeSin := rope_sin[ax];
+        for pos := 0 to max_pos-1 do begin
+          for i := 0 to half_d-1 do begin
+                freq  := 1.0 / math.power(rope_theta, (2*i)/d);
+                angle := pos*freq;
+                ropeCos[pos*half_d + i] := cos(angle);
+                ropeSin[pos*half_d + i] := sin(angle);
+          end;
+        end
+    end
+end;
+
+procedure TTransformerZI.finalComputeScale(const scale: PQNNFloat;
+  const t_emb: PQNNFloat);
+var
+  silu_emb : array[0..255] of QNNFLoat;
+begin
+
+    QNNCopy(@silu_emb[0], t_emb, adaln_dim);
+    QNNSilu(@silu_emb[0], adaln_dim);
+
+    QNNMatMulNT(scale, @silu_emb[0], final_layer.adaln_weight, 1, adaln_dim, dim);
+    //for (int i = 0; i < dim; i++)
+    //    scale[i] = 1.0 + scale[i] + adaln_bias[i];
+    QNNFusedBiasAdd(scale, final_layer.adaln_bias, scale, 1.0, dim);
+end;
+
+procedure TTransformerZI.finalForward(const dst: PQNNFloat;
+  const src: PQNNFloat; const t_emb: PQNNFloat; const seq: longint);
+var
+  out_dim, s : longint;
+  scale, normed : TMemoryBlock;
+  normed_ptr : PQNNFloat;
+  //mean, variance, inv_std : QNNFloat;
+begin
+    out_dim := patch_size * patch_size * in_channels;
+
+    scale := TMemoryBlock.Create(dim);
+    finalComputeScale(scale, t_emb);
+
+    (* LayerNorm (no affine) -> scale *)
+    normed := TMemoryBlock.Create(seq * dim);
+    normed_ptr := normed;
+    for s := 0 to seq-1 do begin
+        //xr := src + s * dim;
+        //nr := normed + s * dim;
+
+        (* Compute mean and variance *)
+        //mean := QNNMean(dim, xr);
+        //variance := QNNVariance(dim, xr, mean);
+        //inv_std = 1.0 / sqrt(variance + 1e-6); (* Final LayerNorm uses 1e-6 *)
+        //QNNFusedBiasMulScale(nr, xr, scale, -mean, inv_std, dim);
+        QNNNorm(dim, normed_ptr + s*dim, src + s*dim, scale)
+    end;
+
+    (* Linear projection: dim -> out_dim *)
+    QNNMatMulNT(dst, normed, final_layer.linear_weight, seq, dim, out_dim);
+    for s := 0 to seq-1 do
+        //for i = 0 to out_dim-1 do
+        //    dst[s*out_dim + i] := dst[s*out_dim + i] + linear_bias[i];
+        QNNAdd(dst + s*out_dim, final_layer.linear_bias, out_dim);
+    scale.free;
+    normed.free;
+end;
+
+(* ========================================================================
+ * Patchify / Unpatchify
+ * ======================================================================== *)
+
+(* Converts latent [in_ch, H, W] to patch sequence [n_patches, ps*ps*in_ch].
+ * Gathers each ps x ps spatial block into a flat vector, ordering as
+ * (ph, pw, channel). This is the inverse of unpatchify and creates the
+ * token sequence the transformer operates on. *)
+procedure patchifyZi(const dst : PQNNFloat; const src:PQNNFloat; const in_ch, Height, Width, ps:longint);
+var
+  H_tokens, W_tokens, patch_feat, patch_idx, h, w, di, c, ph, pw, sx, sy:longint;
+  d : PQNNFloat;
+begin
+    H_tokens := Height div ps;
+    W_tokens := Width div ps;
+    patch_feat := ps * ps * in_ch;
+
+    for h := 0 to H_tokens-1 do begin
+      for w := 0 to W_tokens-1 do begin
+        patch_idx := h*W_tokens + w;
+        d         := dst + patch_idx*patch_feat;
+        di        := 0;
+
+        (* Gather patch: iterate (ph, pw, c) *)
+        for ph := 0 to ps-1 do
+          for pw := 0 to ps-1 do
+            for c := 0 to in_ch-1 do begin
+                sy := h * ps + ph;
+                sx := w * ps + pw;
+                d[di] := src[c*Height*Width + sy*Width + sx];
+                inc(di)
+            end
+      end
+    end
+end;
+
+(* Unpatchify: [n_patches, patch_feat_dim] -> [in_ch, H, W] *)
+procedure UnPatchifyZi(const dst: PQNNFloat; const src: PQNNFloat; const in_ch,
+  Height, Width, ps: longint);
+var
+  H_tokens, W_Tokens, patch_feat, h, w, patch_idx, si, ph, pw, sy, sx, c : longint;
+  d : PQNNFloat;
+begin
+    H_tokens := Height div ps;
+    W_tokens := Width div ps;
+    patch_feat := ps * ps * in_ch;
+
+    for h := 0 to H_tokens-1 do
+        for w := 0 to W_tokens-1 do begin
+            patch_idx := h*W_tokens + w;
+            d         := src + patch_idx * patch_feat;
+            si := 0;
+            for ph := 0 to ps-1 do
+                for pw := 0 to ps-1 do
+                    for c := 0 to in_ch-1 do begin
+                        sy := h * ps + ph;
+                        sx := w * ps + pw;
+                        dst[c*Height*Width + sy*Width + sx] := d[si];
+                        inc(si)
+                    end
+       end
+end;
+
+
+function TTransformerZI.forward(const latent: TMemoryBlock; const latent_h,
+  latent_w: longint; const timestep: QNNFloat; const cap_feats: PQNNFloat;
+  const cap_seq_len: longint): TMemoryBlock;
+var patch_feat, H_tokens, W_tokens, img_seq, refiner_total
+    , img_pad, cap_pad, img_padded, cap_padded, unified_seq, needed, i, s, h, w, out_ch : longint;
+  t_emb : array[0..255] of QNNFloat;
+  img_patches, img_emb, cap_emb, cap_normed, cap_padded_feats, img_out, final_out : TMemoryBlock;
+  cap_pos, img_pos, unified_pos : TArray<longint>;
+  img_patches_ptr, cap_padded_feats_ptr, img_emb_ptr, cap_emb_ptr, unified : PQNNFloat;
+begin
+
+    patch_feat := patch_size * patch_size * in_channels;  (* 64 *)
+
+    H_tokens      := latent_h div patch_size;
+    W_tokens      := latent_w div patch_size;
+    img_seq       := H_tokens * W_tokens;
+    refiner_total := n_refiner * 2;
+
+    (* Pad sequences to multiples of ZI_SEQ_MULTI_OF *)
+    img_pad := (ZI_SEQ_MULTI_OF - (img_seq mod ZI_SEQ_MULTI_OF)) mod ZI_SEQ_MULTI_OF;
+    cap_pad := (ZI_SEQ_MULTI_OF - (cap_seq_len mod ZI_SEQ_MULTI_OF)) mod ZI_SEQ_MULTI_OF;
+    img_padded := img_seq + img_pad;
+    cap_padded := cap_seq_len + cap_pad;
+    unified_seq := img_padded + cap_padded;
+
+    (* Ensure working memory is sufficient *)
+    needed := unified_seq * dim * 4 + unified_seq * dim * 3 +  (* QKV *) unified_seq * unified_seq + (* attention scores *) unified_seq * ffn_dim * 2;
+    if needed > work_alloc then begin
+        work_x   .free;
+        work_tmp .free;
+        work_qkv .free;
+        work_attn.free;
+        work_ffn .free;
+
+        work_x     := TMemoryBlock.Create(unified_seq * dim);
+        work_tmp   := TMemoryBlock.Create(unified_seq * dim * 4);
+        work_qkv   := TMemoryBlock.Create(unified_seq * dim * 3);
+        work_attn  := TMemoryBlock.Create(unified_seq * unified_seq);
+        work_ffn   := TMemoryBlock.Create(unified_seq * ffn_dim * 2);
+        work_alloc := needed;
+        max_seq := unified_seq;
+    end;
+
+    (* 1. Timestep embedding *)
+
+    timeStepEmbed(@t_emb[0], timestep);
+
+    (* 2. Patchify image -> [img_seq, patch_feat] *)
+    img_patches := TMemoryBlock.Create(img_padded * patch_feat);
+    img_patches_ptr := img_patches;
+
+    patchifyZi(img_patches, latent, in_channels, latent_h, latent_w, patch_size);
+
+    (* Pad image patches (repeat last token) *)
+    for i := img_seq to img_padded-1 do
+        QNNCopy(img_patches_ptr + i * patch_feat, img_patches_ptr + (img_seq - 1) * patch_feat, patch_feat);
+
+    (* Embed image: [img_padded, patch_feat] -> [img_padded, dim] *)
+    img_emb := TMemoryBlock.Create(img_padded * dim);
+    img_emb_ptr := img_emb;
+    QNNMatMulNT(img_emb, img_patches, x_emb_weight, img_padded, patch_feat, dim);
+    for s := 0 to img_padded-1 do
+        QNNAdd(img_emb_ptr + s*dim, x_emb_bias, dim);
+        //for i := 0 to dim-1 do
+        //    img_emb[s * dim + i] := img_emb[s * dim + i] + x_emb_bias[i];
+    img_patches.free;
+
+
+    (* Apply pad token to image padding positions *)
+    for s := img_seq to img_padded-1 do
+        QNNCopy(img_emb_ptr + s*dim, x_pad_token, dim);
+
+    (* 3. Caption embedding: RMSNorm -> Linear *)
+    cap_emb := TMemoryBlock.Create(cap_padded * dim);
+    cap_emb_ptr := cap_emb;
+    cap_normed := TMemoryBlock.Create(cap_padded * cap_feat_dim);
+
+    (* Pad caption features (repeat last token) *)
+    cap_padded_feats := TMemoryBlock.Create(cap_padded * cap_feat_dim);
+    cap_padded_feats_ptr := cap_padded_feats;
+    QNNCopy(cap_padded_feats, cap_feats, cap_seq_len * cap_feat_dim);
+    for s := cap_seq_len to cap_padded-1 do
+        QNNCopy(cap_padded_feats_ptr + s * cap_feat_dim,
+               cap_feats + (cap_seq_len - 1) * cap_feat_dim,
+               cap_feat_dim );
+
+    QNNRMSNorm(cap_normed, cap_padded_feats, cap_emb_norm, cap_padded, cap_feat_dim);
+    QNNMatMulNT(cap_emb, cap_normed, cap_emb_linear_w, cap_padded, cap_feat_dim, dim);
+
+    cap_padded_feats.free;
+    cap_normed.free;
+
+    for s := 0 to cap_seq_len-1 do //cap_padded-1 do  // todo should be to cap_seq_len-1, see the next fot to know why
+        //for (int i = 0; i < dim; i++)
+        //    cap_emb[s * dim + i] += tf->cap_emb_linear_b[i];
+        QNNAdd(cap_emb_ptr + s*dim, cap_emb_linear_b, dim);
+
+    (* Apply pad token to caption padding positions *)
+    for s := cap_seq_len to cap_padded-1 do
+        QNNCopy(cap_emb_ptr + s*dim, cap_pad_token, dim);
+
+    (* 4. Build position IDs *)
+
+    (* Image position IDs: (T=cap_padded+1, H=h_idx, W=w_idx)
+     * All image tokens share the same T position (one frame). *)
+    setLength(img_pos, img_padded * 3);//(int *)calloc(img_padded * 3, sizeof(int));
+
+    for h := 0 to H_tokens-1 do begin
+        for w := 0 to W_tokens-1 do begin
+            i := h * W_tokens + w;
+            img_pos[i * 3 + 0] := cap_padded + 1;  (* T (same for all) *)
+            img_pos[i * 3 + 1] := h;                (* H *)
+            img_pos[i * 3 + 2] := w;                (* W *)
+        end
+    end;
+    (* Padding tokens get (0, 0, 0) *)
+
+    (* Caption position IDs: (T=1+seq_idx, H=0, W=0) *)
+    setLength(cap_pos, cap_padded * 3);
+    for s := 0 to cap_padded-1 do begin
+        cap_pos[s * 3 + 0] := 1 + s;  (* T *)
+        cap_pos[s * 3 + 1] := 0;       (* H *)
+        cap_pos[s * 3 + 2] := 0;       (* W *)
+    end;
+
+    (* 5. Noise refiner: image-only self-attention with modulation *)
+    for i := 0 to n_refiner-1 do begin
+        blockForward(img_emb, noise_refiner[i], pointer(img_pos), nil, @t_emb[0], img_padded);
+        if assigned(substep_callback) then
+            substep_callback(SUBSTEP_DOUBLE_BLOCK, i, refiner_total);
+    end;
+
+    (* 6. Context refiner: caption-only self-attention without modulation *)
+    for i := 0 to n_refiner-1 do begin
+        blockForward(cap_emb, context_refiner[i], pointer(cap_pos), nil, nil, cap_padded);
+        if assigned(substep_callback) then
+            substep_callback(SUBSTEP_DOUBLE_BLOCK, n_refiner + i, refiner_total);
+    end;
+
+    (* 7. Build unified sequence: [image_tokens, caption_tokens] *)
+    unified := work_x;
+    QNNCopy(unified, img_emb, img_padded * dim);
+    QNNCopy(unified + img_padded * dim, cap_emb, cap_padded * dim);
+    img_emb.free;
+    cap_emb.free;
+
+    (* Unified position IDs *)
+    setLength(unified_pos, unified_seq * 3);
+    move(img_pos[0], unified_pos[0]             , img_padded * 3 * sizeof(longint));
+    move(cap_pos[0], unified_pos[img_padded * 3], cap_padded * 3 * sizeof(longint));
+
+    (* 8. Main transformer layers *)
+    for i := 0 to n_layers-1 do begin
+        blockForward(unified, layers[i], pointer(unified_pos), nil, @t_emb[0], unified_seq);
+        if assigned(substep_callback) then
+            substep_callback(SUBSTEP_SINGLE_BLOCK, i, n_layers);
+    end;
+
+    setLength(unified_pos, 0);
+
+    (* 9. Final layer: extract image tokens only, then project *)
+    img_out := TMemoryBlock.Create(img_seq * dim);
+    QNNCopy(img_out, unified, img_seq * dim);
+
+    out_ch := patch_size * patch_size * in_channels;  (* 64 *)
+    final_out := TMemoryBlock.Create(img_seq * out_ch);
+    finalForward(final_out, img_out, @t_emb[0], img_seq);
+    img_out.free();
+    if assigned(substep_callback) then
+        substep_callback(SUBSTEP_FINAL_LAYER, 0, 1);
+    (* 10. Unpatchify: [n_patches, 64] -> [16, latent_h, latent_w] *)
+    result := TMemoryBlock.Create(in_channels * latent_h * latent_w);
+    UnpatchifyZi(result, final_out, in_channels, latent_h, latent_w, patch_size);
+    final_out.free();
+end;
+
+procedure TTransformerZI.applyRope(const dst: PQNNFloat;
+  const pos_ids: PLongint; const seq, n_heads: longint);
+var
+  offset, d, half_d, s, pos, h, i, ax : longint;
+  cos_tab, sin_tab, head, ropeCos, ropeSin : PQNNFloat;
+  x0, x1, c, sn :QNNFloat;
+begin
+  offset := 0;
+
+  for ax := 0 to 3-1 do begin
+      d      := axes_dims[ax];
+      half_d := d div 2;
+      ropeCos := rope_cos[ax];
+      ropeSin := rope_sin[ax];
+
+      for s := 0 to seq-1 do begin
+          pos := pos_ids[s * 3 + ax];
+          if (pos < 0) or (pos >= axes_lens[ax]) then continue;
+
+          cos_tab := ropeCos + pos * half_d;
+          sin_tab := ropeSin + pos * half_d;
+
+          for h := 0 to n_heads-1 do begin
+              head := dst + (s * n_heads + h) * head_dim + offset;
+              for i := 0 to half_d-1 do begin
+                  x0 := head[2 * i];
+                  x1 := head[2 * i + 1];
+                  c  := cos_tab[i];
+                  sn := sin_tab[i];
+                  head[2 * i]     := x0*c - x1*sn;
+                  head[2 * i + 1] := x1*c + x0*sn;
+              end
+          end
+      end;
+      inc(offset, d);
+  end
+
+end;
+
+(* Converts scalar timestep to a 256-dim vector using log-spaced frequencies,
+ * the same idea as the original Transformer positional encoding but here it
+ * encodes the denoising step. The caller scales the input by 1000 before
+ * calling (t * 1000.0f), mapping the [0,1] sigma range to [0,1000]. *)
+procedure TTransformerZI.timeStepEmbed(const dst: TMemoryBlock;
+  const t: QNNFloat);
+var
+  sin_emb : array[0..255] of QNNFloat;
+  hidden : TMemoryBlock;
+begin
+    sinusoidalEmbeddingZi(@sin_emb[0], t*1000.0, 256);
+
+    (* MLP: Linear(256 -> t_emb_mid_size) + SiLU + Linear(t_emb_mid_size -> adaln_dim) *)
+    hidden := TMemoryBlock.Create(t_emb_mid_size);
+
+    (* Linear 0 *)
+    QNNMatMulNT(hidden, @sin_emb[0], t_emb_mlp0_weight, 1, 256, t_emb_mid_size);
+    QNNAdd(hidden, t_emb_mlp0_bias, t_emb_mid_size);
+    //for i := 0 to t_emb_mid_size-1 do
+    //    hidden[i] := hidden[i] + t_emb_mlp0_bias[i];
+
+    (* SiLU *)
+    QNNSilu(hidden, t_emb_mid_size);
+
+    (* Linear 2 *)
+    QNNMatMulNT(dst, hidden, t_emb_mlp2_weight, 1, t_emb_mid_size, adaln_dim);
+    QNNAdd(dst, t_emb_mlp2_bias, adaln_dim);
+    //for i := 0 to adaln_dim-1 do
+    //    dst[i] := dst[i] + t_emb_mlp2_bias[i];
+
+    hidden.free();
+end;
+
+function TTransformerZI.sampleEuler(const z: PQNNFloat; const batch{, channels},
+  h, w, patch_size: longint; const cap_feats: PQNNFloat;
+  const cap_seq: longint; const schedule: PQNNFloat; const num_steps: longint;
+  const progress_callback: TStepCallback): TMemoryBlock;
+var
+    latent_size, step_h, step_w, step_ch, step_latent_size, step, i, decode_h, decode_w: longint;
+    sigma, sigma_next, dt, timestep: QNNFloat;
+    step_latent, model_out, decode_latent: TMemoryBlock;
+    img: TQNNImage;
+begin
+    latent_size := batch * in_channels{channels} * h * w;
+    result := TMemoryBlock.Create([batch, in_channels{channels}, h, w]);
+    QNNCopy(result, z, latent_size);
+//    step_latent := nil;
+    step_h := h;
+    step_w := w;
+    if assigned(step_image_callback) and assigned(step_image_vae) and (num_steps > 1) and (patch_size > 1) then begin
+      if (h mod patch_size = 0) and (w mod patch_size = 0) then begin
+        step_ch := in_channels{channels} *patch_size * patch_size;
+        step_h := h div patch_size;
+        step_w := w div patch_size;
+        step_latent_size := batch * step_ch * step_h * step_w;
+        step_latent := TMemoryBlock.create([batch, step_ch, step_h, step_w])
+      end
+    end;
+    for step := 0 to num_steps -1 do
+        begin
+            sigma := schedule[step];
+            sigma_next := schedule[step+1];
+            dt := sigma_next - sigma;
+            timestep := 1.0-sigma;
+            if assigned(step_callback) then
+                step_callback(step, num_steps);
+            model_out := forward(result, h, w, timestep, cap_feats, cap_seq);
+
+            //for i := 0 to latent_size -1 do
+            //    result[i] := result[i] + (dt * (-model_out[i]));
+            QNNFusedScaleAdd(result, model_out, result, -dt, latent_size);
+            model_out.free;
+
+            if assigned(progress_callback) then
+                progress_callback(step+1, num_steps);
+            if assigned(step_image_callback) and assigned(step_image_vae) and (step+1 < num_steps) then begin
+              decode_latent := result;
+              decode_h := h;
+              decode_w := w;
+              if patch_size > 1 then begin
+                  if not step_latent.isAssigned() then
+                      continue;
+                  QNNPatchify(step_latent, result, batch, in_channels{channels}, h, w, patch_size);
+                  decode_latent := step_latent;
+                  decode_h := step_h;
+                  decode_w := step_w
+              end;
+              img := PVAE(step_image_vae).decode(decode_latent, 1, decode_h, decode_w);
+              step_image_callback(step, num_steps, img);
+              img.free
+            end
+        end;
+    step_latent.free;
+end;
+
+procedure TTransformerZI.load(const modelDir: string; const adim, an_heads,
+  an_layers, an_refiner, acap_feat_dim, ain_channels, apatch_size: longint;
+  const arope_theta: QNNFloat; const aAxes_dims: Plongint; const useMMAP: boolean
+  );
+var i:longint;
+  json, wm : TJSON;
+  sf : PSafeTensor;
+  fn : string;
+begin
+  (* Set config *)
+  dim := adim;
+  n_heads := an_heads;
+  head_dim := dim div n_heads;
+  n_layers := an_layers;
+  n_refiner := an_refiner;
+  ffn_dim := (8 * dim div 3 + 255) div 256 * 256;  (* Round up to 256 *)
+  in_channels := ain_channels;
+  patch_size := apatch_size;
+  if dim < 256 then adaln_dim := dim else adaln_dim := 256;
+  rope_theta := arope_theta;
+  cap_feat_dim := acap_feat_dim;
+
+  for i := 0 to 3-1 do begin
+      axes_dims[i] := aAxes_dims[i];
+      axes_lens[i] := 1024;  (* Default max positions *)
+  end;
+
+  (* Open safetensors files *)
+
+  sf_files := loadShards(modelDir);
+
+
+  num_sf_files := length(sf_files);
+
+  (* Determine FFN dimension from weights *)
+  sf := sf_files.getTensor('layers.0.feed_forward.w1.weight');
+  if assigned(sf) then
+      ffn_dim := sf.shape[0];
+
+  (* Determine t_embedder mid_size from weights *)
+  t_emb_mid_size := 1024;  (* Default *)
+  sf := sf_files.getTensor('t_embedder.mlp.0.weight');
+  if assigned(sf) then
+      t_emb_mid_size := sf.shape[0];
+
+  (* BLAS/CPU fast-load mode: keep mmap files open and use direct f32 pointers. *)
+  mmap_f32_weights := useMMAp;
+
+  (* Load timestep embedder *)
+  t_emb_mlp0_weight := sf_files.getTensorDataMemBlock('t_embedder.mlp.0.weight', useMMAp);
+  t_emb_mlp0_bias := sf_files.getTensorDataMemBlock('t_embedder.mlp.0.bias', useMMap);
+  t_emb_mlp2_weight := sf_files.getTensorDataMemBlock('t_embedder.mlp.2.weight', useMMap);
+  t_emb_mlp2_bias := sf_files.getTensorDataMemBlock('t_embedder.mlp.2.bias', useMMap);
+
+  (* Load caption embedder: RMSNorm + Linear *)
+  cap_emb_norm := sf_files.getTensorDataMemBlock('cap_embedder.0.weight', useMMap);
+  cap_emb_linear_w := sf_files.getTensorDataMemBlock('cap_embedder.1.weight', useMMap);
+  cap_emb_linear_b := sf_files.getTensorDataMemBlock('cap_embedder.1.bias', useMMap);
+
+  (* Load image embedder *)
+  x_emb_weight := sf_files.getTensorDataMemBlock(format('all_x_embedder.%d-1.weight', [patch_size]), false);
+  x_emb_bias := sf_files.getTensorDataMemBlock(format('all_x_embedder.%d-1.bias', [patch_size]), false);
+
+  (* Pad tokens *)
+  x_pad_token := sf_files.getTensorDataMemBlock('x_pad_token', useMMap);
+  cap_pad_token := sf_files.getTensorDataMemBlock('cap_pad_token', useMMap);
+
+  (* Load noise refiner blocks *)
+  setLength(noise_refiner, n_refiner);
+
+  for i := 0 to high(noise_refiner) do
+      noise_refiner[i].load(sf_files, format('noise_refiner.%d', [i]), true, useMMap);
+
+  (* Load context refiner blocks (no modulation) *)
+  setLength(context_refiner, n_refiner);
+
+  for i := 0 to n_refiner-1 do
+      context_refiner[i].load(sf_files, format('context_refiner.%d', [i]), false, useMMap);
+
+  (* Load main transformer blocks *)
+  setLength(layers, n_layers);
+
+  for i := 0 to n_layers-1 do
+      layers[i].load(sf_files, format('layers.%d', [i]), true, useMMap);
+
+  (* Load final layer *)
+  final_layer.adaln_weight := sf_files.getTensorDataMemBlock(format('all_final_layer.%d-1.adaLN_modulation.1.weight', [patch_size]), useMMAP);
+  final_layer.adaln_bias := sf_files.getTensorDataMemBlock(format('all_final_layer.%d-1.adaLN_modulation.1.bias', [patch_size]), useMMAP);
+  final_layer.norm_weight := sf_files.getTensorDataMemBlock(format('all_final_layer.%d-1.norm_final.weight', [patch_size]), useMMAP);
+  final_layer.linear_weight := sf_files.getTensorDataMemBlock(format('all_final_layer.%d-1.linear.weight', [patch_size]), useMMAP);
+  final_layer.linear_bias := sf_files.getTensorDataMemBlock(format('all_final_layer.%d-1.linear.bias', [patch_size]), useMMAP);
+
+  (* Precompute RoPE tables *)
+  precomputeRope();
+
+  (* Allocate initial working memory (will be resized as needed) *)
+  work_alloc := 0;
+  //work_x := nil;
+  //work_tmp := nil;
+  //work_qkv := nil;
+  //work_attn := nil;
+  //work_ffn := nil;
+  max_seq := 0;
+
+end;
+
+procedure TTransformerZI.free;
+var i:longint;
+begin
+  if not mmap_f32_weights then begin
+      t_emb_mlp0_weight.free;
+      t_emb_mlp0_bias.free;
+      t_emb_mlp2_weight.free;
+      t_emb_mlp2_bias.free;
+      cap_emb_norm.free;
+      cap_emb_linear_w.free;
+      cap_emb_linear_b.free;
+      x_emb_weight.free;
+      x_emb_bias.free;
+      x_pad_token.free;
+      cap_pad_token.free;
+  end;
+
+  if assigned(noise_refiner) then begin
+      for i := 0 to high(noise_refiner) do
+          noise_refiner[i].free();
+      setLength(noise_refiner, 0);
+  end;
+  if assigned(context_refiner) then begin
+      for i := 0 to high(context_refiner) do
+          context_refiner[i].free;
+      setLength(context_refiner, 0);
+  end;
+  if assigned(layers) then begin
+      for i := 0 to high(layers) do
+          layers[i].free;
+      setLength(layers, 0);
+  end;
+
+  final_layer.adaln_weight.free;
+  final_layer.adaln_bias.free;
+  final_layer.norm_weight.free;
+  final_layer.linear_weight.free;
+  final_layer.linear_bias.free;
+
+  for i := 0 to high(sf_files) do
+      sf_files[i].close();
+  num_sf_files := 0;
+
+  for i := 0 to 3-1 do begin
+      rope_cos[i].free;
+      rope_sin[i].free;
+  end;
+
+  work_x.free;
+  work_tmp.free;
+  work_qkv.free;
+  work_attn.free;
+  work_ffn.free;
+end;
 
 //var
 //  db : TDoubleBlock;
