@@ -50,6 +50,10 @@
           </Linking>
           <Other>
             <CustomOptions Value="-dUSE_MULTITHREADING"/>
+            <OtherDefines Count="2">
+              <Define0 Value="USE_MULTITHREADING"/>
+              <Define1 Value="DEBUG"/>
+            </OtherDefines>
           </Other>
         </CompilerOptions>
       </Item>
@@ -61,6 +65,11 @@
     <RunParams>
       <FormatVersion Value="2"/>
     </RunParams>
+    <RequiredPackages>
+      <Item>
+        <PackageName Value="LCL"/>
+      </Item>
+    </RequiredPackages>
     <Units>
       <Unit>
         <Filename Value="invision.lpr"/>
@@ -118,6 +127,18 @@
         <Filename Value="..\src\quicknn_zimage.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
+      <Unit>
+        <Filename Value="..\src\quicknn_downloader.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="unit1.pas"/>
+        <IsPartOfProject Value="True"/>
+        <ComponentName Value="Form1"/>
+        <HasResources Value="True"/>
+        <ResourceBaseClass Value="Form"/>
+        <UnitName Value="Unit1"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
@@ -157,6 +178,11 @@
     <Other>
       <CustomOptions Value="-dUSE_MULTITHREADING
 -dDEBUG"/>
+      <OtherDefines Count="3">
+        <Define0 Value="USE_MULTITHREADING"/>
+        <Define1 Value="DEBUG"/>
+        <Define2 Value="USE_FLASHATTENTION"/>
+      </OtherDefines>
     </Other>
   </CompilerOptions>
   <Debugging>

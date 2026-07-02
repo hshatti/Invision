@@ -128,11 +128,12 @@ type
       work1, work2, work3: TMemoryBlock; // PSingle;
       work_size : IntPtr;
       useMMap : boolean;
-      function encode(const img: PQNNFloat; const batch, H, W: longint; var out_h, out_w: longint): TMemoryBlock;
+      function encode(const img: TMemoryBlock; const batch, H, W: longint; var out_h, out_w: longint): TMemoryBlock;
       function decode(const latent: TMemoryBlock; const batch, latent_h, latent_w: longint):TQNNImage;   overload;
       procedure decode(const dst, latent: TMemoryBlock; const batch, latent_h, latent_w: longint);       overload;
       //procedure load(var f: file);                                    overload;
       procedure load(const sf:TSafetensorFiles; const zChannels:longint; const scalingFactor, shiftFactor:QNNFloat);  overload;
+      function isLoaded():boolean;
       class procedure padRightBottom(const dst, src: PQNNFloat; batch, channels, H, W: longint); static;
       procedure free;
   end;
@@ -146,8 +147,10 @@ begin
 end;
 
 function readSingles(var f:file; const count:longint):TMemoryBlock;
+var s : string;
 begin
-    result := TMemoryBlock.Create(count, dtF32);
+    s := TFileRec(f).name;
+    result := TMemoryBlock.Create(count, s+'['+IntToStr(FilePos(f) div 128)+']');
     blockread(f, PSingle(result)^, count*sizeof(single))
 end;
 
@@ -166,14 +169,14 @@ begin
 //printCompare(batch*in_channels*spatial, dst, readTensor());
     QNNGroupNorm(work, src, norm1_weight, norm1_bias, batch, in_channels, H, W, num_groups);
 //printCompare(batch*in_channels*spatial, work, readTensor());
-    QNNSilu(work, batch*in_channels*spatial);
+    QNNSiluInplace(work, batch*in_channels*spatial);
 //printCompare(batch*in_channels*spatial, work, readTensor());
     conv1_out := work + batch*in_channels*spatial;
     QNNConv2d(conv1_out, work, conv1_weight, conv1_bias, in_channels, out_channels, H, W, 3, 3, 1, 1, batch);
     QNNGroupNorm(work, conv1_out, norm2_weight, norm2_bias, batch, out_channels, H, W, num_groups);
-    QNNSilu(work, batch*out_channels*spatial);
+    QNNSiluInplace(work, batch*out_channels*spatial);
     QNNConv2d(conv1_out, work, conv2_weight, conv2_bias, out_channels, out_channels, H, W, 3, 3, 1, 1, batch);
-    QNNadd(dst, conv1_out, batch*out_channels*spatial);
+    QNNAddInplace(dst, conv1_out, batch*out_channels*spatial);
 //printCompare(batch*out_channels*spatial, dst, readTensor());
 end;
 
@@ -272,7 +275,7 @@ begin
                         v_ptr[i * ch+c] := vb[c * spatial+i]
                     end;
             QNNMatMulNT(scores, q_t, k_t, spatial, ch, spatial);
-            QNNSoftmax(scores, spatial, spatial);
+            QNNSoftmaxRows(scores, spatial, spatial);
             QNNMatMulNN(o_t, scores, v_t, spatial, spatial, ch);
             for c := 0 to ch -1 do
                 for i := 0 to spatial -1 do
@@ -340,14 +343,18 @@ end;
 
 { TVAE }
 
-function TVAE.encode(const img: PQNNFloat; const batch, H, W: longint;
-  var out_h, out_w: longint): TMemoryBlock;
+function TVAE.isLoaded(): boolean;
+begin
+  result := enc_conv_in_weight.isAssigned() and dec_conv_in_weight.isAssigned();
+end;
+
+function TVAE.encode(const img: TMemoryBlock; const batch, H, W: longint; var out_h, out_w: longint): TMemoryBlock;
 //const ch_mult : array[0..3] of longint = (1, 2, 4, 4);
 var
    cur_h, cur_w, block_idx, down_idx
     , progress, total_blocks, level, ch_out, r, padded_h, padded_w, new_h, new_w
     , mid_ch, z_ch, latent_h, latent_w, z_spatial, b, patch_h, patch_w, lat_ch, n, i: longint;
-    x, work, padded, latent : PQNNFloat;
+    x, work, padded : PQNNFloat;
     mean: TMemoryBlock;
 begin
     x := work1;
@@ -358,34 +365,31 @@ begin
     down_idx := 0;
     progress := 0;
     total_blocks := 4 * num_res_blocks+3;
-    for level := 0 to 4 -1 do
-        begin
-            ch_out := base_channels * ch_mult[level];
-            for r := 0 to num_res_blocks -1 do
-                begin
-                    enc_down_blocks[block_idx].forward(work, x, work3, batch, cur_h, cur_w, num_groups);
-                    inc(block_idx);
-                    QNNCopy(x, work, batch * ch_out * cur_h * cur_w);
-                    if assigned(vae_progress_callback) then begin
-                        vae_progress_callback(progress, total_blocks);
-                        inc(progress);
-                    end
-                end;
-            if level < 3 then
-                begin
-                    padded := work3;
-                    padded_h := cur_h+1;
-                    padded_w := cur_w+1;
-                    new_h := (padded_h-3) div 2+1;
-                    new_w := (padded_w-3) div 2+1;
-                    padRightBottom(padded, x, batch, ch_out, cur_h, cur_w);
-                    QNNConv2d(work, padded, enc_downsample[down_idx].conv_weight, enc_downsample[down_idx].conv_bias, ch_out, ch_out, padded_h, padded_w, 3, 3, 2, 0, batch);
-                    inc(down_idx);
-                    cur_h := new_h;
-                    cur_w := new_w;
-                    QNNCopy(x, work, batch*ch_out*cur_h*cur_w);
-                end
+    for level := 0 to 4 -1 do begin
+        ch_out := base_channels * ch_mult[level];
+        for r := 0 to num_res_blocks -1 do begin
+            enc_down_blocks[block_idx].forward(work, x, work3, batch, cur_h, cur_w, num_groups);
+            inc(block_idx);
+            QNNCopy(x, work, batch * ch_out * cur_h * cur_w);
+            if assigned(vae_progress_callback) then begin
+                vae_progress_callback(progress, total_blocks);
+                inc(progress);
+            end
         end;
+        if level < 3 then begin
+            padded := work3;
+            padded_h := cur_h+1;
+            padded_w := cur_w+1;
+            new_h := (padded_h-3) div 2+1;
+            new_w := (padded_w-3) div 2+1;
+            padRightBottom(padded, x, batch, ch_out, cur_h, cur_w);
+            QNNConv2d(work, padded, enc_downsample[down_idx].conv_weight, enc_downsample[down_idx].conv_bias, ch_out, ch_out, padded_h, padded_w, 3, 3, 2, 0, batch);
+            inc(down_idx);
+            cur_h := new_h;
+            cur_w := new_w;
+            QNNCopy(x, work, batch*ch_out*cur_h*cur_w);
+        end
+    end;
     mid_ch := base_channels * ch_mult[3];
     enc_mid_block1.forward(work, x, work3, batch, cur_h, cur_w, num_groups);
     if assigned(vae_progress_callback) then begin
@@ -405,7 +409,7 @@ begin
         inc(progress)
     end;
     QNNGroupNorm(work, x, enc_norm_out_weight, enc_norm_out_bias, batch, mid_ch, cur_h, cur_w, num_groups);
-    QNNSilu(work, batch * mid_ch * cur_h * cur_w);
+    QNNSiluInplace(work, batch * mid_ch * cur_h * cur_w);
     z_ch := z_channels * 2;
     QNNConv2d(x, work, enc_conv_out_weight, enc_conv_out_bias, mid_ch, z_ch, cur_h, cur_w, 3, 3, 1, 1, batch);
     if boolean(quant_conv_weight) then
@@ -416,29 +420,26 @@ begin
     latent_h := cur_h;
     latent_w := cur_w;
     z_spatial := latent_h * latent_w;
-    mean := TMemoryBlock.Create(batch * z_channels * z_spatial);
+    mean := TMemoryBlock.Create([batch, z_channels, latent_h, latent_w]);
     for b := 0 to batch -1 do
-        QNNCopy(PQNNFloat(mean) + b*z_channels*z_spatial, x + b*z_ch*z_spatial, z_channels*z_spatial);
+        QNNCopy(mean + b*z_channels*z_spatial, x + b*z_ch*z_spatial, z_channels*z_spatial);
     patch_h := latent_h div 2;
     patch_w := latent_w div 2;
     lat_ch := latent_channels;
-    result := TMemoryBlock.Create(batch * lat_ch * patch_h * patch_w); latent := result;
-    QNNPatchify(latent, mean, batch, z_channels, latent_h, latent_w, 2);
-    if scaling_factor <> 0.0 then
-        begin
-            n := batch * lat_ch * patch_h * patch_w;
-            QNNFusedBiasScale(latent, latent, -shift_factor, scaling_factor, N);
-            //for i := 0 to n -1 do
-            //    latent[i] := (latent[i]-shift_factor) * scaling_factor
-        end
-    else
-        begin
-            QNNBatchNorm(work, latent, bn_mean, bn_var, nil, nil, batch, lat_ch, patch_h, patch_w);
-            QNNCopy(latent, work, batch * lat_ch * patch_h * patch_w)
-        end;
+    result := TMemoryBlock.Create([batch, lat_ch, patch_h, patch_w]);
+    QNNPatchify(result, mean, batch, z_channels, latent_h, latent_w, 2);
+    mean.free;
+    if scaling_factor <> 0.0 then begin
+        n := batch * lat_ch * patch_h * patch_w;
+        QNNFusedBiasScale(result, result, -shift_factor, scaling_factor, N);
+        //for i := 0 to n -1 do
+        //    latent[i] := (latent[i]-shift_factor) * scaling_factor
+    end else begin
+        QNNBatchNorm(work, result, bn_mean, bn_var, nil, nil, batch, lat_ch, patch_h, patch_w);
+        QNNCopy(result, work, batch * lat_ch * patch_h * patch_w)
+    end;
      out_h := patch_h;
      out_w := patch_w;
-    //exit(latent)
 end;
 
 function TVAE.decode(const latent: TMemoryBlock; const batch, latent_h,
@@ -546,7 +547,7 @@ begin
     end;
     out_ch := base_channels;
     QNNGroupNorm(work, x, dec_norm_out_weight, dec_norm_out_bias, batch, out_ch, cur_h, cur_w, num_groups);
-    QNNSilu(work, batch * out_ch * cur_h * cur_w);
+    QNNSiluInplace(work, batch * out_ch * cur_h * cur_w);
     QNNConv2d(x, work, dec_conv_out_weight, dec_conv_out_bias, out_ch, 3, cur_h, cur_w, 3, 3, 1, 1, batch);
     H := cur_h;
     W := cur_w;
@@ -666,7 +667,7 @@ begin
     end;
     out_ch := base_channels;
     QNNGroupNorm(work, x, dec_norm_out_weight, dec_norm_out_bias, batch, out_ch, cur_h, cur_w, num_groups);
-    QNNSilu(work, batch * out_ch * cur_h * cur_w);
+    QNNSiluInplace(work, batch * out_ch * cur_h * cur_w);
     QNNConv2d(x, work, dec_conv_out_weight, dec_conv_out_bias, out_ch, 3, cur_h, cur_w, 3, 3, 1, 1, batch);
     QNNCopy(dst, x, 4*cur_w*cur_h)
 end;

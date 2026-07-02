@@ -224,7 +224,7 @@ var i , off:longint;
 begin
   for i:=0 to seqLen-1 do begin
     off := i*numHeads*headDim;
-    QNNRMSNorm(dst+off , src+off, weight, numHeads, headDim);
+    QNNRMSNormRows(dst+off , src+off, weight, numHeads, headDim);
   end;
 end;
 
@@ -700,7 +700,8 @@ end;
 procedure TQWEN3Attention.forward(const seq_len: longint; const attention_mask: TArray<longint>);
 var scale :QNNFloat;
     kv_dim, q_dim, heads_per_kv, kv_h, h, i, j : longint;
-    q_strided, k_strided, v_strided, out_strided, scores : PQNNFloat;
+    q_strided, k_strided, v_strided, out_strided : TMemoryBlock;
+    scores_ptr : PQNNFloat;
 begin
   assert(assigned(model) and assigned(layer),'ERROR : failed attention forward, no model loaded!');
   kv_dim := model.num_kv_heads * model.head_dim;
@@ -724,43 +725,43 @@ begin
 
   for h := 0 to model.num_heads-1 do begin
     kv_h := h div heads_per_kv;  (* Which KV head to use *)
-    scores := PQNNFloat(model.attn_scores) + h*seq_len*seq_len;
+    scores_ptr := model.attn_scores + h*seq_len*seq_len;
 
     (* Q accessed directly with strided lda (avoids copy)
      * Q[s,d] = q_buf[s * q_dim + h * head_dim + d] *)
-    q_strided := PQNNFloat(model.q_buf) + h*model.head_dim;
+    q_strided := model.q_buf + h*model.head_dim;
 
     (* K accessed directly with strided lda + CblasTrans (avoids transpose)
      * K[s,d] = k_buf[s * kv_dim + kv_h * head_dim + d] *)
-    k_strided := PQNNFloat(model.k_buf) + kv_h*model.head_dim;
+    k_strided := model.k_buf + kv_h*model.head_dim;
 
     cblas_gemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                         seq_len, seq_len, model.head_dim,
                         scale, q_strided, q_dim, k_strided, kv_dim,
-                        0.0, scores, seq_len);
+                        0.0, scores_ptr, seq_len);
 
     (* Apply causal mask and attention mask, then softmax *)
     for i := 0 to seq_len-1 do begin          // todo [QWEN3Attention.Forward] optimize for GPU?
         for j := 0 to seq_len-1 do begin
             if (j > i) or assigned(attention_mask) and (attention_mask[j] = 0) then begin
-                scores[i*seq_len + j] := -1e9;
+                scores_ptr[i*seq_len + j] := Single.NegativeInfinity;//-1e9;
             end;
         end;
-        QNNSoftmax(scores + i * seq_len, seq_len);
+        QNNSoftmax(scores_ptr + i*seq_len, seq_len);
     end;
     (* V can be accessed directly with strided lda (avoids copy)
      * V[s,d] = v_buf[s * kv_dim + kv_h * head_dim + d] *)
-    v_strided := PQNNFloat(model.v_buf) + kv_h*model.head_dim;
+    v_strided := model.v_buf + kv_h*model.head_dim;
 
     (* Output can be written directly with strided ldc (avoids copy)
      * out[s,d] = attn_out[s * q_dim + h * head_dim + d] *)
-    out_strided := PQNNFloat(model.attn_out) + h*model.head_dim;
+    out_strided := model.attn_out + h*model.head_dim;
 
     (* out = scores @ V using strided BLAS (avoids V copy and output copy)
      * scores: [seq_len, seq_len], V: [seq_len, head_dim] with ldb=kv_dim *)
      cblas_gemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                  seq_len, model.head_dim, seq_len,
-                 1.0, scores, seq_len, v_strided, kv_dim,
+                 1.0, scores_ptr, seq_len, v_strided, kv_dim,
                  0.0, out_strided, q_dim);
   end;
 
@@ -795,13 +796,13 @@ begin
   QNNCopy(model.residual, model.hidden_state, seq_len * model.hidden_size);
 
   (* Pre-attention LayerNorm *)
-  QNNRMSNorm(model.norm_buf, model.hidden_state, input_layernorm_weight, seq_len, model.hidden_size);
+  QNNRMSNormRows(model.norm_buf, model.hidden_state, input_layernorm_weight, seq_len, model.hidden_size);
 
   (* Self-attention *)
   attn.forward(seq_len, attentionMask);
 
   (* Residual connection *)
-  QNNAdd(model.hidden_state, model.residual, seq_len*model.hidden_size);
+  QNNAddInplace(model.hidden_state, model.residual, seq_len*model.hidden_size);
   //for i := 0 to seq_len * model.hidden_size do
   //    model.hidden_state[i] += model.residual[i];
 
@@ -810,7 +811,7 @@ begin
   QNNCopy(model.residual, model.hidden_state, seq_len * model.hidden_size);
 
   (* Pre-MLP LayerNorm *)
-  QNNRMSNorm(model.norm_buf, model.hidden_state, post_attention_layernorm_weight, seq_len, model.hidden_size);
+  QNNRMSNormRows(model.norm_buf, model.hidden_state, post_attention_layernorm_weight, seq_len, model.hidden_size);
 
   (* MLP *)
   mlp.forward(seq_len);
@@ -1073,9 +1074,9 @@ begin
         begin
             token_id := input_ids[s];
             if (token_id >= 0) and (token_id<vocab_size) then
-                QNNCopy(PQNNFloat(hidden_state) + s*hidden_size, PQNNFloat(embed_tokens) + token_id*hidden_size, hidden_size)
+                QNNCopy(hidden_state + s*hidden_size, embed_tokens + token_id*hidden_size, hidden_size)
             else
-                QNNFill(PQNNFloat(hidden_state) + s*hidden_size, 0, hidden_size)
+                QNNFill(hidden_state + s*hidden_size, 0, hidden_size)
         end;
 
     for layer_idx := 0 to last_layer do
@@ -1106,9 +1107,9 @@ begin
     else
         for s := 0 to seq_len -1 do
             begin
-                QNNCopy(PQNNFloat(result) + s*text_dim                , PQNNFloat(layer_outputs[0]) + s*hidden_size, hidden_size);
-                QNNCopy(PQNNFloat(result) + s*text_dim +   hidden_size, PQNNFloat(layer_outputs[1]) + s*hidden_size, hidden_size);
-                QNNCopy(PQNNFloat(result) + s*text_dim + 2*hidden_size, PQNNFloat(layer_outputs[2]) + s*hidden_size, hidden_size)
+                QNNCopy(result + s*text_dim                , layer_outputs[0] + s*hidden_size, hidden_size);
+                QNNCopy(result + s*text_dim +   hidden_size, layer_outputs[1] + s*hidden_size, hidden_size);
+                QNNCopy(result + s*text_dim + 2*hidden_size, layer_outputs[2] + s*hidden_size, hidden_size)
             end;
 end;
 

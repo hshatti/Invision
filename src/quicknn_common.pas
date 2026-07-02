@@ -20,17 +20,8 @@
 {$define _USE_CALLOC}
 
 interface
-uses Classes, Types, typinfo, generics.Collections
-  {$ifdef FPC}
-  , FPCanvas
-  , FPWriteBMP
-  , FPWriteJPEG
-  , FPWritePNG
-  , FPReadBMP
-  , FPReadJPEG
-  , FPReadPNG
-  , FPImage
-  {$endif}
+uses typinfo, generics.Collections
+
   ;
 
 //{$if not declared(FP16)}
@@ -103,21 +94,6 @@ type
   QNNFloat = single;
 
 
-  PQNNImage = ^TQNNImage;
-
-  { TQNNImage }
-
-  TQNNImage = record
-      width : longint;
-      height : longint;
-      channels : longint;// RGB
-      data : TArray<byte>;      (* Row-major, channel-interleaved *)
-      constructor Create(const aWidth, aHeight:longint; const aChannels : longint =3; const aData:PQNNFloat =nil);
-      procedure saveToFile(const filename:string);
-      class function loadFromFile(const fileName : string; resizeWidth: longint =0; resizeHeight: longint=0):TQNNImage;static;
-      procedure free();
-  end;
-
 const
   DATATYPE_BITS : array[low(TQNNDataType)..high(TQNNDataType)] of byte=
         (0, 16, 16, 32, 32, 8, 8, 64, 1, 8, 8, 4, 4, 8, 4, 4, 16, 16) ;
@@ -153,7 +129,7 @@ type
     powerAlpha : single;
   end;
 // todo link TMemoryBlock to IMemoryArena for allocations
-  TOnMemoryUpdate = procedure(const status:string; const old, New:IntPtr);
+
   { TMemoryBlock }
 
   TMemoryBlock = record
@@ -174,17 +150,28 @@ type
       Data4    : TArray<INT4>;
 {$endif}
       device   : TQNNDevice;
+      name : string;
   const
       ERRSTR_CAST_ARRAY = 'MemoryBlock with non zero offset cannot be casted to an Array';
       ERRSTR_CAST_TYPE = 'ERROR : Data is not of ';
   public
-      constructor Create(const aSize:NativeInt; const dType:TQNNDataType = QNN_DATATYPE; const src : pointer =nil);           overload;
-      constructor Create(const aShape : TArray<Int64>; const dType:TQNNDataType = QNN_DATATYPE; const aData : pointer =nil);  overload;
+      constructor Create(const aSize:NativeInt; const aName:string = ''; const dType:TQNNDataType = QNN_DATATYPE; const src : pointer =nil);           overload;
+      constructor Create(const aShape : TArray<Int64>; const aName:string = ''; const dType:TQNNDataType = QNN_DATATYPE; const aData : pointer =nil);  overload;
       procedure reSize(const aSize:NativeInt);
       procedure free();
       function count:NativeInt;
       function isAssigned():boolean;
+      function isAllocated():boolean;
       procedure printStat;
+      procedure assignPtr(const ptr:PSingle; const aShape:TArray<int64>); overload;
+      procedure assignPtr(const ptr:PBF16; const aShape:TArray<int64>); overload;
+      procedure assignPtr(const ptr:PFP16; const aShape:TArray<int64>); overload;
+      procedure assignPtr(const ptr:PLongint; const aShape:TArray<int64>); overload;
+      procedure assignPtr(const ptr:PSmallInt; const aShape:TArray<int64>); overload;
+      procedure assignPtr(const ptr:PShortInt; const aShape:TArray<int64>); overload;
+      procedure assignPtr(const ptr:PInt4; const aShape:TArray<int64>); overload;
+
+
       //class operator implicit(const val:Pointer ):TMemoryBlock;
 
 {$ifndef USE_CALLOC}
@@ -204,6 +191,7 @@ type
       class operator implicit(const val:TMemoryBlock):TArray<shortint>;
       class operator implicit(const val:TMemoryBlock):TArray<INT4>;
 {$endif}
+(*
       class operator implicit(const val:PLongint ):TMemoryBlock;
       class operator implicit(const val:PSingle  ):TMemoryBlock;
       class operator implicit(const val:PBF16    ):TMemoryBlock;
@@ -211,6 +199,7 @@ type
       class operator implicit(const val:Psmallint):TMemoryBlock;
       class operator implicit(const val:PShortint):TMemoryBlock;
       class operator implicit(const val:PINT4    ):TMemoryBlock;
+*)
 
       class operator implicit(const val:TMemoryBlock):Plongint  ;
       class operator implicit(const val:TMemoryBlock):PSingle  ;
@@ -228,12 +217,34 @@ type
       class operator Initialize({$ifdef FPC}var{$else}out{$endif} val:TMemoryBlock);
   end;
 
+  TOnMemoryUpdate = procedure(const status:string; const old, New:IntPtr; const mem:TMemoryBlock);
+
+  TQNNPixelOrder = (poHWC, poCHW);
+
+  PQNNImage = ^TQNNImage;
+
+  { TQNNImage }
+
+  TQNNImage = record
+      width : longint;
+      height : longint;
+      channels : longint;// RGB
+      data : TArray<byte>;      (* Row-major, channel-interleaved *)
+      function resize(const w, h:longint):TQNNImage;
+      constructor Create(const aWidth, aHeight:longint; const aChannels : longint =3; const aData:PQNNFloat =nil);
+      function asMemoryBlock(const aDataType:TQNNDataType=QNN_DATATYPE; const aPixelOrder: TQNNPixelOrder= poCHW):TMemoryBlock;
+      procedure saveToFile(const filename:string);
+      class function loadFromFile(const fileName : string; resizeWidth: longint =0; resizeHeight: longint=0):TQNNImage;static;
+      procedure print;
+      procedure free();
+  end;
+
   { TImageRef }
   PImageRef = ^TImageRef;
 
   TImageRef = record
-    w, h, offset : longint;
-    latent : PQNNFloat;
+    w, h, t_offset : longint;
+    latent : TMemoryBlock;
   end;
 
   { IMemoryArena }
@@ -443,6 +454,18 @@ uses SysUtils, Math
   {$ifdef MSWINDOWS}
   , Windows
   {$endif}
+  {$ifdef FPC}
+  , FPCanvas
+  , FPWriteBMP
+  , FPWriteJPEG
+  , FPWritePNG
+  , FPReadBMP
+  , FPReadJPEG
+  , FPReadPNG
+  , FPImage
+  {$else}
+  ,UITypes, fmx.Types, fmx.Graphics
+  {$endif}
   , quicknn_kernels, termesc, sixel;
 
 type
@@ -479,7 +502,7 @@ end;
 
 function readSingles(var f:file; const count:longint):TMemoryBlock;
 begin
-    result := TMemoryBlock.Create(count, dtF32);
+    result := TMemoryBlock.Create(count);
     blockread(f, PSingle(result)^, count*sizeof(single))
 end;
 
@@ -493,6 +516,50 @@ end;
 
 { TQNNImage }
 
+function TQNNImage.resize(const w, h: longint): TQNNImage;
+var y, x, x0, x1, y0, y1, c :longint;
+  scale_x, scale_y, v, v00, v01, v10, v11, wx, wy, src_x, src_y : single;
+begin
+  result := TQNNImage.create(w, h, channels);
+
+  scale_x := width / w;
+  scale_y := height / h;
+
+  for y := 0 to h-1 do begin
+      for x := 0 to w-1 do begin
+          src_x := (x + 0.5) * scale_x - 0.5;
+          src_y := (y + 0.5) * scale_y - 0.5;
+
+          x0 := floor(src_x);
+          y0 := floor(src_y);
+          x1 := x0 + 1;
+          y1 := y0 + 1;
+
+          wx := src_x - x0;
+          wy := src_y - y0;
+
+          if x0 < 0 then x0 := 0 else if x0 >= width then x0 := width - 1 ;
+          if x1 < 0 then x1 := 0 else if x1 >= width then x1 := width - 1 ;
+          if y0 < 0 then y0 := 0 else if y0 >= height then y0 := height - 1;
+          if y1 < 0 then y1 := 0 else if y1 >= height then y1 := height - 1;
+
+          for c := 0 to channels -1 do begin
+              v00 := data[(y0 * width + x0) * channels + c];
+              v01 := data[(y0 * width + x1) * channels + c];
+              v10 := data[(y1 * width + x0) * channels + c];
+              v11 := data[(y1 * width + x1) * channels + c];
+
+              v := v00 * (1 - wx) * (1 - wy) +
+                   v01 * wx * (1 - wy) +
+                   v10 * (1 - wx) * wy +
+                   v11 * wx * wy;
+
+              result.data[(y * w + x) * channels + c] := round(v);
+          end
+      end
+  end;
+end;
+
 constructor TQNNImage.Create(const aWidth, aHeight: longint; const aChannels: longint; const aData: PQNNFloat);
 var y, x, ch : longint; val: QNNFloat;
 begin
@@ -501,7 +568,7 @@ begin
   height := aHeight;
   channels := aChannels;
   setLength(data, width*height*channels);
-  if assigned(data) then
+  if assigned(adata) then
     for y := 0 to height -1 do
       for x := 0 to width -1 do
         for ch := 0 to channels -1 do
@@ -517,6 +584,51 @@ begin
           end;
 end;
 
+function TQNNImage.asMemoryBlock(const aDataType: TQNNDataType; const aPixelOrder: TQNNPixelOrder): TMemoryBlock;
+var c, y, x, idx : longint;
+  single_ptr : PSingle;
+begin
+  assert(aDataType=dtF32, '[TQNNImage.asMemoryBlock]: ERROR DataType not implemented.');
+  case aPixelOrder of
+    poHWC : begin
+      result := TMemoryBlock.Create([Height, Width, Channels], '',aDataType);
+      case aDataType of
+        dtF32 :
+          begin
+            single_ptr := result;
+            for y:=0 to height-1 do
+              for x := 0 to width-1 do
+                for c :=0 to channels-1 do begin
+                  idx := (y*width + x)*channels + c;
+                  single_ptr[idx] := data[idx]*2.0/255.0 - 1.0; // result range must be between -1.0 and +1.0
+                end;
+          end;
+
+      end;
+    end;
+    poCHW : begin
+      result := TMemoryBlock.Create([channels, Height, Width], intToStr(Random($fffffff)), aDataType);
+      case aDataType of
+        dtF32 :
+          begin
+            single_ptr := result;
+            for c :=0 to channels-1 do
+              for y:=0 to height-1 do
+                for x := 0 to width-1 do begin
+                  idx := (y*width + x)*channels + c;
+                  single_ptr[(c*height + y)*width + x] := data[idx]*2.0/255.0 - 1.0; // result range must be between -1.0 and +1.0
+                end;
+          end;
+      end
+    end
+  else
+    assert(false, '[TQNNImage.asMemoryBlock]: ERROR PixelOrder not implemented.');
+  end;
+
+
+
+end;
+
 procedure TQNNImage.saveToFile(const filename: string);
 var
   y, x, w, h : longint;
@@ -524,6 +636,8 @@ var
   clr:TFPColor;
   bmp : TFPMemoryImage;
   {$else}
+  bmp : TBitmap;
+  bmpData : TBitmapData;
   {$endif}
   D : PByte;
 begin
@@ -544,16 +658,41 @@ begin
   bmp.SaveToFile(fileName);
   bmp.free
   {$else}
+  bmp := TBitmap.Create();
+  bmp.setSize(width, height);
+  bmp.Map(TMapAccess.Write, bmpData);
+  for y := 0 to height-1 do begin
+    d := bmpData.GetScanline(y);
+    for x :=0 to width-1 do begin
+      {$ifdef MSWINDOWS}
+      d[0] := data[(y*width + x)*3 + 2];
+      d[1] := data[(y*width + x)*3 + 1];
+      d[2] := data[(y*width + x)*3    ];
+      d[3] := $FF;
+      {$else}
+      // todo check posix color order on delphi
+      d[0] := $FF;
+      d[1] := data[(y*width + x)*3    ];
+      d[2] := data[(y*width + x)*3 + 1];
+      d[3] := data[(y*width + x)*3 + 2];
+      {$endif}
+      inc(d, 4);
+    end;
+  end;
+  bmp.Unmap(bmpData);
+  bmp.SaveToFile(fileName);
+  bmp.free
   {$endif}
 end;
 
 class function TQNNImage.loadFromFile(const fileName: string;
   resizeWidth: longint; resizeHeight: longint): TQNNImage;
 {$ifdef FPC}
-var img : TFPMemoryImage;
-    P:TFPColor;
-    x, y, imSize, _h, _w : SizeInt;
-    d:PByte;
+var
+  img : TFPMemoryImage;
+  P:TFPColor;
+  x, y, imSize, _h, _w : SizeInt;
+  d:PByte;
 begin
   result := default(TQNNImage);
   img := TFPMemoryImage.Create(0, 0);
@@ -580,21 +719,62 @@ begin
     freeAndNil(img)
   end;
 end;
+
+procedure TQNNImage.print;
+begin
+  printSixel(Data, width, height, true);
+end;
+
 {$else}
+var
+  img:TBitmap;
+  bmpData : TBitmapData;
+  y, x, _w, _h, imSize : longint;
+  d : PByte;
+  p : TAlphaColor;
 begin
   result := default(TQNNImage);
+  img := TBitmap.Create;
+  try
+    img.LoadFromFile(fileName);
+    if resizeWidth<=0 then resizeWidth    := img.Width;
+    if resizeHeight<=0 then resizeHeight  := img.Height;
+    _w := img.Width;
+    _h := img.Height;
+    img.Map(TMapAccess.Read, bmpData);
+    imSize := resizeHeight*resizeWidth;
+    setLength(result.Data, 3*imSize);
+    for y := 0 to resizeHeight-1 do begin
+      for x := 0 to resizeWidth-1 do begin
+         p := bmpData.GetPixel(round(_w * x/resizeWidth), round(_h * y/resizeHeight));  // nearst neighor
+         d := @result.data[3*(y*resizeWidth + x)];
+         d[0] := (p shr 16) and $FF;
+         d[1] := (p shr 8) and $FF;
+         d[2] :=  p and $FF;
+
+      end;
+    end;
+    result.width  := resizeWidth;
+    result.height := resizeHeight;
+    result.channels := 3;
+  finally
+    if assigned(bmpData.Data) then
+      img.Unmap(bmpData);
+    img.Free
+  end;
 end;
 {$endif}
 
 procedure TQNNImage.free();
 begin
-  setLength(Data, 0);
+  if assigned(data) then setLength(Data, 0);
   self := default(TQNNImage)
 end;
 
 { TMemoryBlock }
 
-constructor TMemoryBlock.create(const aSize:NativeInt; const dType:TQNNDataType; const src : pointer);
+constructor TMemoryBlock.Create(const aSize: NativeInt;
+  const aName:string; const dType: TQNNDataType; const src: pointer);
 begin
   self := default(TMemoryBlock);
   DataType := dType;
@@ -609,8 +789,8 @@ begin
       setLength(Data4 , aSize);
       {$endif}
       if assigned(onMemoryUpdate) then
-        onMemoryUpdate('new', 0, (aSize*DATATYPE_BITS[dtype]+4) div 8);
-      assert(assigned(data4), 'ERROR : TMemoryBlock.Create, not enough memory!');
+        onMemoryUpdate('new', 0, (aSize*DATATYPE_BITS[dtype]+4) div 8, self);
+      assert((aSize<>0) and assigned(data4), 'ERROR : TMemoryBlock.Create, not enough memory!');
       if assigned(src) then
         move(src^, pointer(Data4) , (aSize*DATATYPE_BITS[dType]) div 8)
     end;
@@ -624,8 +804,8 @@ begin
       setLength(Data8 , aSize);
       {$endif}
       if assigned(onMemoryUpdate) then
-        onMemoryUpdate('new', 0, (aSize*DATATYPE_BITS[dtype]) div 8);
-      assert(assigned(data8), 'ERROR : TMemoryBlock.Create, not enough memory!');
+        onMemoryUpdate('new', 0, (aSize*DATATYPE_BITS[dtype]) div 8, self);
+      assert((aSize<>0) and assigned(data8), 'ERROR : TMemoryBlock.Create, not enough memory!');
       if assigned(src) then
         move(src^, pointer(Data8) , (aSize*DATATYPE_BITS[dType]) div 8)
     end;
@@ -639,8 +819,8 @@ begin
       setLength(Data16, aSize);
       {$endif}
       if assigned(onMemoryUpdate) then
-        onMemoryUpdate('new', 0, (aSize*DATATYPE_BITS[dtype]) div 8);
-      assert(assigned(data16), 'ERROR : TMemoryBlock.Create, not enough memory!');
+        onMemoryUpdate('new', 0, (aSize*DATATYPE_BITS[dtype]) div 8, self);
+      assert((aSize<>0) and assigned(data16), 'ERROR : TMemoryBlock.Create, not enough memory!');
       if assigned(src) then
         move(src^, pointer(Data16), (aSize*DATATYPE_BITS[dType]) div 8)
     end;
@@ -655,24 +835,26 @@ begin
       setLength(Data32, aSize);
       {$endif}
       if assigned(onMemoryUpdate) then
-        onMemoryUpdate('new', 0, (aSize*DATATYPE_BITS[dtype]) div 8);
-      assert(assigned(data32), 'ERROR : TMemoryBlock.Create, not enough memory!');
+        onMemoryUpdate('new', 0, (aSize*DATATYPE_BITS[dtype]) div 8, self);
+      assert((aSize<>0) and assigned(data32), 'ERROR : TMemoryBlock.Create, not enough memory!');
       if assigned(src) then
         move(src^, pointer(Data32), (aSize*DATATYPE_BITS[dType]) div 8)
     end;
   else
     assert(false, 'ERROR : TMemoryBlock.create, Unsupported data type ')
   end;
+  name := aName
 end;
 
-constructor TMemoryBlock.Create(const aShape : TArray<Int64>; const dType:TQNNDataType; const aData:pointer);
+constructor TMemoryBlock.Create(const aShape : TArray<Int64>; const aName:string; const dType:TQNNDataType; const aData:pointer);
 begin
-  self := create(product(aShape), dType, aData);
+  self := create(product(aShape), aName, dType, aData);
   shape := aShape
 end;
 
 procedure TMemoryBlock.reSize(const aSize:NativeInt);
 begin
+  assert(isAllocated(), 'TMemoryBlock.resize : cannot resize a pointer assigned memory!');
   case DATATYPE_BITS[DataType] of
     //1 : setlength(Data1, aSize);
     4  : begin
@@ -682,7 +864,7 @@ begin
       setLength(Data4 , aSize);
       {$endif}
       if assigned(onMemoryUpdate) then
-        onMemoryUpdate('resize', (size*DATATYPE_BITS[DataType]+4) div 8, (aSize*DATATYPE_BITS[DataType]+4) div 8);
+        onMemoryUpdate('resize', (size*DATATYPE_BITS[DataType]+4) div 8, (aSize*DATATYPE_BITS[DataType]+4) div 8, self);
       size := aSize;
       assert(assigned(data4), 'ERROR : TMemoryBlock.Create, not enough memory!');
     end;
@@ -694,7 +876,7 @@ begin
       setLength(Data8 , aSize);
       {$endif}
       if assigned(onMemoryUpdate) then
-        onMemoryUpdate('resize', size*DATATYPE_BITS[DataType] div 8, (aSize*DATATYPE_BITS[DataType]) div 8);
+        onMemoryUpdate('resize', size*DATATYPE_BITS[DataType] div 8, (aSize*DATATYPE_BITS[DataType]) div 8, self);
       size := aSize;
       assert(assigned(data8), 'ERROR : TMemoryBlock.Create, not enough memory!');
     end;
@@ -706,7 +888,7 @@ begin
       setLength(Data16, aSize);
       {$endif}
       if assigned(onMemoryUpdate) then
-        onMemoryUpdate('resize', size*DATATYPE_BITS[DataType] div 8, (aSize*DATATYPE_BITS[DataType]) div 8);
+        onMemoryUpdate('resize', size*DATATYPE_BITS[DataType] div 8, (aSize*DATATYPE_BITS[DataType]) div 8, self);
       size := aSize;
       assert(assigned(data16), 'ERROR : TMemoryBlock.Create, not enough memory!');
     end;
@@ -718,7 +900,7 @@ begin
       setLength(Data32, aSize);
       {$endif}
       if assigned(onMemoryUpdate) then
-        onMemoryUpdate('resize', size*DATATYPE_BITS[DataType] div 8, (aSize*DATATYPE_BITS[DataType]) div 8);
+        onMemoryUpdate('resize', size*DATATYPE_BITS[DataType] div 8, (aSize*DATATYPE_BITS[DataType]) div 8, self);
       size := aSize;
       assert(assigned(data32), 'ERROR : TMemoryBlock.Create, not enough memory!');
     end;
@@ -730,6 +912,11 @@ end;
 procedure TMemoryBlock.free();
 var m:pointer;
 begin
+ if assigned(onMemoryUpdate) and isAllocated() then
+   if DATATYPE_BITS[DataType]=4 then
+     onMemoryUpdate('free', (Size*DATATYPE_BITS[DataType]+4) div 8, 0, self)
+   else
+     onMemoryUpdate('free', (Size*DATATYPE_BITS[DataType]) div 8, 0, self);
   {$ifdef USE_CALLOC}
   case DATATYPE_BITS[DataType] of
     4 :if assigned(Data4 ) and (size>0) then begin m := Data4 ; Data4  :=nil; quicknn_common.free(m) end;
@@ -749,11 +936,6 @@ begin
   if assigned(Data16) then setLength(Data16, 0);
   if assigned(Data32) then setLength(Data32, 0);
  {$endif}
- if assigned(onMemoryUpdate) then
-   if DATATYPE_BITS[DataType]=4 then
-     onMemoryUpdate('free', (Size*DATATYPE_BITS[DataType]+4) div 8, 0)
-   else
-     onMemoryUpdate('free', (Size*DATATYPE_BITS[DataType]) div 8, 0);
  fillchar(self, sizeof(self), #0);
 end;
 
@@ -785,6 +967,10 @@ begin
     result := assigned(DataPtr)
 end;
 
+function TMemoryBlock.isAllocated():boolean;
+begin
+  result := assigned(Data4) or assigned(Data8)or assigned(Data16) or assigned(Data32);
+end;
 procedure TMemoryBlock.printStat;
 begin
   case DataType of
@@ -793,6 +979,69 @@ begin
   else
     assert(false, 'ERROR : Datatype '+ GetEnumName(TypeInfo(TQNNDataType), ord(DataType))+' not implemented!')
   end;
+end;
+
+procedure TMemoryBlock.assignPtr(const ptr: PSingle; const aShape:TArray<int64>);
+begin
+  assert(not isAllocated(), 'TMemoryBlock.assignPtr : Cannot assign a pointer to an already allocatd memory block!');
+  shape := aShape;
+  size := product(aShape);
+  DataType := dtF32;
+  DataPtr := ptr;
+end;
+
+procedure TMemoryBlock.assignPtr(const ptr: PBF16; const aShape:TArray<int64>);
+begin
+  assert(not isAllocated(), 'TMemoryBlock.assignPtr : Cannot assign a pointer to an already allocatd memory block!');
+  shape := aShape;
+  size := product(aShape);
+  DataType := dtbf16;
+  DataPtr := ptr;
+end;
+
+procedure TMemoryBlock.assignPtr(const ptr: PFP16; const aShape:TArray<int64>);
+begin
+  assert(not isAllocated(), 'TMemoryBlock.assignPtr : Cannot assign a pointer to an already allocatd memory block!');
+  shape := aShape;
+  size := product(aShape);
+  DataType := dtF16;
+  DataPtr := ptr;
+end;
+
+procedure TMemoryBlock.assignPtr(const ptr: PLongint; const aShape:TArray<int64>);
+begin
+  assert(not isAllocated(), 'TMemoryBlock.assignPtr : Cannot assign a pointer to an already allocatd memory block!');
+  shape := aShape;
+  size := product(aShape);
+  DataType := dts32;
+  DataPtr := ptr;
+end;
+
+procedure TMemoryBlock.assignPtr(const ptr: PSmallInt; const aShape:TArray<int64>);
+begin
+  assert(not isAllocated(), 'TMemoryBlock.assignPtr : Cannot assign a pointer to an already allocatd memory block!');
+  shape := aShape;
+  size := product(aShape);
+  DataType := dts16;
+  DataPtr := ptr;
+end;
+
+procedure TMemoryBlock.assignPtr(const ptr: PShortInt; const aShape:TArray<int64>);
+begin
+  assert(not isAllocated(), 'TMemoryBlock.assignPtr : Cannot assign a pointer to an already allocatd memory block!');
+  shape := aShape;
+  size := product(aShape);
+  DataType := dtS8;
+  DataPtr := ptr;
+end;
+
+procedure TMemoryBlock.assignPtr(const ptr: Pint4; const aShape:TArray<int64>);
+begin
+  assert(not isAllocated(), 'TMemoryBlock.assignPtr : Cannot assign a pointer to an already allocatd memory block!');
+  shape := aShape;
+  size := product(aShape);
+  DataType := dtS4;
+  DataPtr := ptr;
 end;
 
 //class operator TMemoryBlock.implicit(const val:Pointer ):TMemoryBlock;
@@ -899,6 +1148,7 @@ begin
   result := val.isAssigned();
 end;
 
+(*
 class operator TMemoryBlock.implicit(const val:PLongint ):TMemoryBlock;
 begin
   result.DataType := dts32;
@@ -940,7 +1190,7 @@ begin
   result.DataType := dtS4;
   result.DataPtr := val;
 end;
-
+*)
 
 class operator TMemoryBlock.implicit(const val:TMemoryBlock):Plongint  ;
 begin
@@ -1015,7 +1265,7 @@ end;
 class operator TMemoryBlock.add(const src:TMemoryBlock; const aOffset:nativeInt):TMemoryBlock  ;
 begin
   result := src;
-  result.offset:=aOffset;
+  result.offset:= src.offset + aOffset;
 end;
 
 procedure TMemoryBlock.printCompare(const src:TMemoryBlock; const isSumSqrDiff:boolean =false);
@@ -1025,10 +1275,14 @@ begin
   printStat;
   src.printStat;
   if isSumSqrDiff then begin
-    md := QNNSumSqrDiff(count, self, src);
-    writeln('SumSqrAbsDiff :', md:1:5);
+    md := QNNSqrDistance(count, self, src);
+    writeln('SqrDistance :', md:1:5);
   end else begin
     md := QNNMaxAbsDiff(count, self, src, src1, src2);
+    if md<>0 then begin
+      src.print(psSIXELDithered, 3);
+      readln;
+    end;
     writeln('MaxAbsDiff :', md:1:5, ' max src1 :', src1:1:6, ' max src2:', src2:1:6);
   end;
 end;

@@ -18,7 +18,7 @@ unit quicknn_transformers;
 {$pointermath on}
 {$T+}
 
-{$define USE_MULTITHREADING}
+{.$define USE_MULTITHREADING}
 
 interface
 uses SysUtils, math, safetensor, quicknn_common, quicknn_kernels, quicknn_vae, quicknn_qwen3, quickjson
@@ -278,10 +278,10 @@ type
     procedure reInitialize(const totalSeq:longint);
     procedure free();
     procedure freeMMapCache();
-    procedure getCachedRefRoPE(const patch_h, patch_w, offset:longint; var cosOut : TSingles; var sinOut:TSingles);
+    procedure getCachedRefRoPE(const patch_h, patch_w, t_offset:longint; var cosOut : TSingles; var sinOut:TSingles);
     procedure getCachedImgRoPE(const patch_h, patch_w:longint; var cosOut : TSingles; var sinOut:TSingles);
     procedure getCachedTxtRoPE(const txt_seq:longint; var cosOut : TSingles; var sinOut:TSingles);
-    procedure getCachedCombinedRoPE(const img_h, img_w, ref_h, ref_w, offset:longint; var cosOut:TSingles; var sinOut:TSingles);
+    procedure getCachedCombinedRoPE(const img_h, img_w, ref_h, ref_w, t_offset:longint; var cosOut:TSingles; var sinOut:TSingles);
     procedure multiHeadForward(const dst, Q, K, V:PQNNFloat; const seq{, heads, head_dim}:longint);
     procedure jointAttentionForward(
               const img_out, txt_out,
@@ -307,33 +307,59 @@ type
                                  const seq, img_offset:longint);
 
     // for text to image
-    function forward(const img_latent: PQNNFloat; const img_h, img_w: longint; const txt_emb: PQNNFloat; const txt_seq: longint; timestep: QNNFloat):TMemoryBlock; overload;
+    function forward(const img_latent: TMemoryBlock; const img_h, img_w: longint; const txt_emb: TMemoryBlock; const txt_seq: longint; timestep: QNNFloat):TMemoryBlock; overload;
     // for reference image with text to image?
-    function forward(const img_latent: PQNNFloat; const img_h, img_w: longint; const ref_latent: PQNNFloat; const ref_h, ref_w, t_offset: longint; const txt_emb: PQNNFloat; const txt_seq: longint; timestep: QNNFloat):TMemoryBlock; overload;
+    function forward(const img_latent: TMemoryBlock; const img_h, img_w: longint; const ref_latent: TMemoryBlock; const ref_h, ref_w, t_offset: longint; const txt_emb: TMemoryBlock; const txt_seq: longint; timestep: QNNFloat):TMemoryBlock; overload;
     // for multi-reference images with text to image
-    function forward(const img_latent: PQNNFloat; const img_h, img_w: longint; const refs: TArray<TImageRef>; const txt_emb: PQNNFloat; const txt_seq: longint; const timestep: single):TMemoryBlock; overload;
+    function forward(const img_latent: TMemoryBlock; const img_h, img_w: longint; const refs: TArray<TImageRef>; const txt_emb: TMemoryBlock; const txt_seq: longint; const timestep: single):TMemoryBlock; overload;
 
+    // simplest for distilled
     function sampleEuler(const z: TMemoryBlock; const batch, channels, h, w: longint;
       const text_emb: TMemoryBlock; const text_seq: longint;
-      const schedule: PQNNFloat; const num_steps: longint;
+      const schedule: TMemoryBlock; const num_steps: longint;
       const progress_callback:TStepCallback): TMemoryBlock; overload;
 
+    // simplist distilled with one latent image
+    function sampleEuler(const z: TMemoryBlock;
+      const batch, channels, h, w: longint;
+      const ref_latent: TMemoryBlock; const ref_h, ref_w, t_offset: longint;
+      const text_emb: TMemoryBlock; const text_seq: longint;
+      const schedule: TMemoryBlock; const num_steps: longint;
+      const progress_callback:TStepCallback): TMemoryBlock; overload;
+
+    // non distilled with uncoditioning and guidance
     function sampleEuler(const z: TMemoryBlock;
       const batch, channels, h, w: longint;
       const text_emb_cond: TMemoryBlock ; const text_seq_cond  : longint;
       const text_emb_uncond: TMemoryBlock; const text_seq_uncond: longint;
-      const guidance_scale: QNNFloat;   const schedule: PQNNFloat;
+      const guidance_scale: QNNFloat;   const schedule: TMemoryBlock;
       const num_steps: longint;
       const progress_callback: TStepCallback):TMemoryBlock; overload;
 
+    // non distiled with unconditioning, guidance and one latent image
     function sampleEuler(const z: TMemoryBlock;
       const batch, channels, h, w: longint;
       const ref_latent: TMemoryBlock; const ref_h, ref_w, t_offset: longint;
       const text_emb_cond: TMemoryBlock; const text_seq_cond: longint;
       const text_emb_uncond: TMemoryBlock; const text_seq_uncond: longint;
-      const guidance_scale: QNNFloat; const schedule: PQNNFloat;
+      const guidance_scale: QNNFloat; const schedule: TMemoryBlock;
       const num_steps: longint;
       const progress_callback: TStepCallback): TMemoryBlock; overload;
+
+    // simplest disilled with multi images
+    function sampleEuler(const z:TMemoryBlock; const batch, channels, h, w : longint;
+      const refs : TArray<TImageRef>;
+      const text_emb : TMemoryBlock; const text_seq:longint;
+      const schedule:TMemoryBlock; const num_steps:longint;
+      const progress_callback:TStepCallback):TMemoryBlock;    overload;
+
+    // non disilled with unconditioning, gudance and multi images
+    function sampleEuler(const z:TMemoryBlock; const batch, channels, h, w : longint;
+      const refs : TArray<TImageRef>;
+      const text_emb_cond : TMemoryBlock; const text_seq_cond:longint;
+      const text_emb_uncond : TMemoryBlock; const text_seq_uncond:longint;
+      const gudance_scale:QNNFloat; const schedule:PQNNFloat; num_steps:longint;
+      const progress_callback:TStepCallback):TMemoryBlock;  overload;
   end;
 
   const
@@ -444,16 +470,16 @@ type
       work_ffn    : TSingles;   (* FFN intermediate *)
       work_alloc  : NativeInt; (* Total allocated *)
       max_seq : longint;                (* Max sequence length allocated for *)
-      procedure attentionForward(const dst, src : PQNNFloat;
+      procedure attentionForward(const dst, src : TMemoryBlock;
                           const block : TBlockZi; const pos_ids : Plongint;
                           const mask : PLongint; const seq : longint);
-      procedure ffnForward(const dst, src:PQNNFloat; const block:TBlockZi; const seq:longint);
+      procedure ffnForward(const dst, src:TMemoryBlock; const block:TBlockZi; const seq:longint);
       procedure blockForward(const dst : PQNNFloat; const block : TBlockZi;
                               const pos_ids:PLongint; const mask:PLongint;
-                              const t_emb:PQNNFloat; const seq:longint);
+                              const t_emb:TMemoryBlock; const seq:longint);
       procedure preComputeRope();
-      procedure finalComputeScale(const scale:PQNNFloat; const t_emb:PQNNFloat);
-      procedure finalForward(const dst : PQNNFloat; const src:PQNNFloat; const t_emb:PQNNFloat; const seq: longint);
+      procedure finalComputeScale(const scale:TMemoryBlock; const t_emb:PQNNFloat);
+      procedure finalForward(const dst, src:TMemoryBlock; const t_emb:PQNNFloat; const seq: longint);
       function forward(const latent : TMemoryBlock; const latent_h, latent_w:longint; const timestep : QNNFloat; const cap_feats: PQNNFloat; const cap_seq_len:longint):TMemoryBlock;
       procedure applyRope(const dst:PQNNFloat; const pos_ids:PLongint; const seq, n_heads:longint);
       procedure timeStepEmbed(const dst:TMemoryBlock; const t:QNNFloat);
@@ -529,7 +555,7 @@ begin
   (* Image FFN - linear_in contains gate and up fused - skip f32 if bf16 available *)
     img_mlp_gate_weight_bf16 := safeTensorfiles.getTensorDataMemBlockBF16(format(TRANSFORMER_BLOCK[6], [idx]), use_mmap);
     assert(use_mmap or (img_mlp_gate_weight_bf16.count >= mlp*h*2), 'ERROR : incorrect size of '+format(TRANSFORMER_BLOCK[6], [idx]));
-    img_mlp_up_weight_bf16 := PBF16(img_mlp_gate_weight_bf16) + mlp*h;
+    img_mlp_up_weight_bf16 := img_mlp_gate_weight_bf16 + mlp*h;
     img_mlp_down_weight_bf16 := safeTensorFiles.getTensorDataMemBlockBF16(format(TRANSFORMER_BLOCK[7], [idx]), use_mmap);
     // during forward attention norm added q and v should be here,
     // this is just loading so will be loaded after this block
@@ -543,7 +569,7 @@ begin
     txt_proj_weight_bf16 := safeTensorFiles.getTensorDataMemBlockBF16(format(TRANSFORMER_BLOCK[13], [idx]), use_mmap);
     txt_mlp_gate_weight_bf16 := safeTensorFiles.getTensorDataMemBlockBF16(format(TRANSFORMER_BLOCK[14], [idx]), use_mmap);
     assert(use_mmap or (txt_mlp_gate_weight_bf16.count >= mlp*h*2), 'ERROR : incorrect size of '+format(TRANSFORMER_BLOCK[14], [idx]));
-    txt_mlp_up_weight_bf16 := PBF16(txt_mlp_gate_weight_bf16) + mlp * h;
+    txt_mlp_up_weight_bf16 := txt_mlp_gate_weight_bf16 + mlp * h;
     txt_mlp_down_weight_bf16 := safeTensorFiles.getTensorDataMemBlockBF16(format(TRANSFORMER_BLOCK[15], [idx]), use_mmap)
   end else begin
   (* Image Q, K, V projections - skip f32 if bf16 available *)
@@ -554,7 +580,7 @@ begin
   (* Image FFN - linear_in contains gate and up fused - skip f32 if bf16 available *)
     img_mlp_gate_weight := safeTensorfiles.getTensorDataMemBlock(format(TRANSFORMER_BLOCK[6], [idx]), use_mmap);
     assert(use_mmap or (img_mlp_gate_weight.count >= mlp*h*2), 'ERROR : incorrect size of '+format(TRANSFORMER_BLOCK[6], [idx]));
-    img_mlp_up_weight := PSingle(img_mlp_gate_weight) + mlp*h;
+    img_mlp_up_weight := img_mlp_gate_weight + mlp*h;
     img_mlp_down_weight := safeTensorFiles.getTensorDataMemBlock(format(TRANSFORMER_BLOCK[7], [idx]), use_mmap);
     // during forward attention norm added q and v should be here,
     // this is just loading so will be loaded after this block
@@ -568,7 +594,7 @@ begin
     txt_proj_weight := safeTensorFiles.getTensorDataMemBlock(format(TRANSFORMER_BLOCK[13], [idx]), use_mmap);
     txt_mlp_gate_weight := safeTensorFiles.getTensorDataMemBlock(format(TRANSFORMER_BLOCK[14], [idx]), use_mmap);
     assert(use_mmap or (txt_mlp_gate_weight.count >= mlp*h*2), 'ERROR : incorrect size of '+format(TRANSFORMER_BLOCK[14], [idx]));
-    txt_mlp_up_weight := PSingle(txt_mlp_gate_weight) + mlp * h;
+    txt_mlp_up_weight := txt_mlp_gate_weight + mlp * h;
     txt_mlp_down_weight := safeTensorFiles.getTensorDataMemBlock(format(TRANSFORMER_BLOCK[15], [idx]), use_mmap)
   end;
 
@@ -668,7 +694,7 @@ begin
   //  setLength(workspace, hidden);
 
   QNNLinearNoBias(outSilu, sinCos, fc1_weight, 1, sincos_dim, hidden);
-  QNNSilu(outSilu, hidden);
+  QNNSiluInplace(outSilu, hidden);
   QNNLinearNoBias(dst, outSilu, fc2_weight, 1, hidden, hidden);
 end;
 
@@ -751,23 +777,21 @@ begin
 
   img_in_weight := sf_files.getTensorDataMemBlock('x_embedder.weight', use_mmap);
   txt_in_weight := sf_files.getTensorDataMemBlock('context_embedder.weight', use_mmap);
-  if use_bf16 then
-      begin
-          img_in_weight_bf16 := sf_files.getTensorDataMemBlockBF16('x_embedder.weight', use_mmap);
-          txt_in_weight_bf16 := sf_files.getTensorDataMemBlockBF16('context_embedder.weight', use_mmap)
-      end;
+  if use_bf16 then begin
+      img_in_weight_bf16 := sf_files.getTensorDataMemBlockBF16('x_embedder.weight', use_mmap);
+      txt_in_weight_bf16 := sf_files.getTensorDataMemBlockBF16('context_embedder.weight', use_mmap)
+  end;
   time_embed.sincos_dim := 256;
   time_embed.fc1_weight := sf_files.getTensorDataMemBlock('time_guidance_embed.timestep_embedder.linear_1.weight', use_mmap);
   time_embed.fc2_weight := sf_files.getTensorDataMemBlock('time_guidance_embed.timestep_embedder.linear_2.weight', use_mmap);
   adaln_double_img_weight := sf_files.getTensorDataMemBlock('double_stream_modulation_img.linear.weight', use_mmap);
   adaln_double_txt_weight := sf_files.getTensorDataMemBlock('double_stream_modulation_txt.linear.weight', use_mmap);
   adaln_single_weight := sf_files.getTensorDataMemBlock('single_stream_modulation.linear.weight', use_mmap);
-  if use_bf16 then
-      begin
-          adaln_double_img_weight_bf16 := sf_files.getTensorDataMemBlockBF16('double_stream_modulation_img.linear.weight', use_mmap);
-          adaln_double_txt_weight_bf16 := sf_files.getTensorDataMemBlockBF16('double_stream_modulation_txt.linear.weight', use_mmap);
-          adaln_single_weight_bf16 := sf_files.getTensorDataMemBlockBF16('single_stream_modulation.linear.weight', use_mmap)
-      end;
+  if use_bf16 then begin
+      adaln_double_img_weight_bf16 := sf_files.getTensorDataMemBlockBF16('double_stream_modulation_img.linear.weight', use_mmap);
+      adaln_double_txt_weight_bf16 := sf_files.getTensorDataMemBlockBF16('double_stream_modulation_txt.linear.weight', use_mmap);
+      adaln_single_weight_bf16 := sf_files.getTensorDataMemBlockBF16('single_stream_modulation.linear.weight', use_mmap)
+  end;
   setLength(double_blocks, num_double_layers);
   setLength(single_blocks, num_single_layers);
   final_norm_weight := sf_files.getTensorDataMemBlock('norm_out.linear.weight', use_mmap);
@@ -945,14 +969,17 @@ begin
 end;
 
 procedure TTransformerFlux.getCachedRefRoPE(const patch_h, patch_w,
-  offset: longint; var cosOut: TSingles; var sinOut: TSingles);
+  t_offset: longint; var cosOut: TSingles; var sinOut: TSingles);
 var
     seq, axisDim: longint;
     size: NativeInt;
 begin
     seq := patch_h * patch_w;
     axisDim := axis_dim;
-    if (cached_ref_h = patch_h) and (cached_ref_w = patch_w) and (cached_ref_t_offset = offset) and (boolean(cached_ref_rope_cos) and boolean(cached_ref_rope_sin)) then
+    if (cached_ref_h = patch_h) and
+       (cached_ref_w = patch_w) and
+       (cached_ref_t_offset = t_offset) and
+       cached_ref_rope_cos.isAssigned() and cached_ref_rope_sin.isAssigned() then
       begin
         cosOut := cached_ref_rope_cos;
         sinOut := cached_ref_rope_sin;
@@ -961,12 +988,12 @@ begin
     if cached_ref_rope_cos.isAssigned() then cached_ref_rope_cos.free();
     if cached_ref_rope_sin.isAssigned() then cached_ref_rope_sin.free();
     size := seq * axisDim * 4 ;
-    cached_ref_rope_cos := TMemoryBlock.Create([seq, axisDim * 4], dtF32);
-    cached_ref_rope_sin := TMemoryBlock.Create([seq, axisDim * 4], dtF32);
+    cached_ref_rope_cos := TMemoryBlock.Create([seq, axisDim * 4]);
+    cached_ref_rope_sin := TMemoryBlock.Create([seq, axisDim * 4]);
     cached_ref_h := patch_h;
     cached_ref_w := patch_w;
-    cached_ref_t_offset := offset;
-    QNNComputeRoPE2DOffset(cached_ref_rope_cos, cached_ref_rope_sin, patch_h, patch_w, axisDim, rope_theta, offset);
+    cached_ref_t_offset := t_offset;
+    QNNComputeRoPE2DOffset(cached_ref_rope_cos, cached_ref_rope_sin, patch_h, patch_w, axisDim, rope_theta, t_offset);
     cosOut := cached_ref_rope_cos;
     sinOut := cached_ref_rope_sin
 end;
@@ -993,11 +1020,12 @@ begin
     if cached_img_rope_cos.isAssigned() then cached_img_rope_cos.free;
     if cached_img_rope_sin.isAssigned() then cached_img_rope_sin.free;
 
-    cached_img_rope_cos := TMemoryBlock.Create([seq, axisDim, 4], dtF32);
-    cached_img_rope_sin := TMemoryBlock.Create([seq, axisDim, 4], dtF32);
+    cached_img_rope_cos := TMemoryBlock.Create([seq, axisDim, 4]);
+    cached_img_rope_sin := TMemoryBlock.Create([seq, axisDim, 4]);
     cached_img_h := patch_h;
     cached_img_w := patch_w;
     QNNComputeRoPE2D(cached_img_rope_cos, cached_img_rope_sin, patch_h, patch_w, axisDim, rope_theta);
+
     cosOut := cached_img_rope_cos;
     sinOut := cached_img_rope_sin
 end;
@@ -1019,15 +1047,16 @@ begin
       end;
     if cached_txt_rope_cos.isAssigned() then cached_txt_rope_cos.free();
     if cached_txt_rope_sin.isAssigned() then cached_txt_rope_sin.free();
-    cached_txt_rope_cos := TMemoryBlock.Create([txt_seq, headDim], dtF32);
-    cached_txt_rope_sin := TMemoryBlock.Create([txt_seq, headDim], dtF32);
+    cached_txt_rope_cos := TMemoryBlock.Create([txt_seq, headDim]);
+    cached_txt_rope_sin := TMemoryBlock.Create([txt_seq, headDim]);
     cached_txt_seq := txt_seq;
     QNNComputeRoPEText(cached_txt_rope_cos, cached_txt_rope_sin, txt_seq, axis_dim, rope_theta);
     cosOut := cached_txt_rope_cos;
     sinOut := cached_txt_rope_sin
 end;
 
-procedure TTransformerFlux.getCachedCombinedRoPE(const img_h, img_w, ref_h, ref_w, offset: longint; var cosOut: TSingles; var sinOut: TSingles);
+procedure TTransformerFlux.getCachedCombinedRoPE(const img_h, img_w, ref_h,
+  ref_w, t_offset: longint; var cosOut: TSingles; var sinOut: TSingles);
 var
     img_seq, ref_seq, combined_seq, axisDim: longint;
     combined_size, img_size, ref_size: NativeInt;
@@ -1037,11 +1066,15 @@ begin
     ref_seq := ref_h * ref_w;
     combined_seq := img_seq+ref_seq;
     axisDim := axis_dim;
+    combined_size := combined_seq * axisDim * 4;
+    img_size := img_seq * axisDim * 4;
+    ref_size := ref_seq * axisDim * 4;
     if (cached_combined_img_h = img_h) and
        (cached_combined_img_w = img_w) and
        (cached_combined_ref_h = ref_h) and
        (cached_combined_ref_w = ref_w) and
-       (cached_combined_t_offset = offset) and boolean(cached_combined_rope_cos) and boolean(cached_combined_rope_sin) then
+       (cached_combined_t_offset = t_offset) and
+       cached_combined_rope_cos.isAssigned() and cached_combined_rope_sin.isAssigned() then
         begin
             cosOut := cached_combined_rope_cos;
             sinOut := cached_combined_rope_sin;
@@ -1049,26 +1082,23 @@ begin
         end;
     if cached_combined_rope_cos.isAssigned() then cached_combined_rope_cos.free();
     if cached_combined_rope_sin.isAssigned() then cached_combined_rope_sin.free();
-    combined_size := combined_seq * axisDim * 4;
-    cached_combined_rope_cos := TMemoryBlock.Create([combined_seq, axisDim, 4], dtF32);
-    cached_combined_rope_sin := TMemoryBlock.Create([combined_seq, axisDim, 4], dtF32);
+    cached_combined_rope_cos := TMemoryBlock.Create([combined_seq, axisDim, 4]);
+    cached_combined_rope_sin := TMemoryBlock.Create([combined_seq, axisDim, 4]);
     cached_combined_img_h := img_h;
     cached_combined_img_w := img_w;
     cached_combined_ref_h := ref_h;
     cached_combined_ref_w := ref_w;
-    cached_combined_t_offset := offset;
+    cached_combined_t_offset := t_offset;
 
     getCachedImgRoPE(img_h, img_w, img_rope_cos,  img_rope_sin);
 
-    getCachedRefRoPE(ref_h, ref_w, offset,  ref_rope_cos,  ref_rope_sin);
+    getCachedRefRoPE(ref_h, ref_w, t_offset,  ref_rope_cos,  ref_rope_sin);
 
-    img_size := img_seq * axisDim * 4;
-    ref_size := ref_seq * axisDim * 4;
 
-    QNNCopy(PQNNFloat(cached_combined_rope_cos)                        ,img_rope_cos, img_size);
-    QNNCopy(PQNNFloat(cached_combined_rope_cos) + img_size             ,ref_rope_cos, ref_size);
-    QNNCopy(PQNNFloat(cached_combined_rope_sin)                        ,img_rope_sin, img_size);
-    QNNCopy(PQNNFloat(cached_combined_rope_sin) + img_size             ,ref_rope_sin, ref_size);
+    QNNCopy(cached_combined_rope_cos             ,img_rope_cos, img_size);
+    QNNCopy(cached_combined_rope_cos + img_size  ,ref_rope_cos, ref_size);
+    QNNCopy(cached_combined_rope_sin             ,img_rope_sin, img_size);
+    QNNCopy(cached_combined_rope_sin + img_size  ,ref_rope_sin, ref_size);
 
     cosOut := cached_combined_rope_cos;
     sinOut := cached_combined_rope_sin
@@ -1108,7 +1138,7 @@ begin
                     kh {K      + i*headDim}, hidden,
                     0.0,
                     sh {scores + i*seq*seq}, seq);
-        QNNSoftmax(sh {scores + i*seq*seq}, seq, seq);
+        QNNSoftmaxRows(sh {scores + i*seq*seq}, seq, seq);
 
         cblas_gemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                     seq, headDim, seq,
@@ -1132,7 +1162,7 @@ begin
   QNNFlashAttention(dst, Q, K, V, seq, seq, num_heads, head_dim, 1/sqrt(head_dim));
 {$else}
   scores := attn_scores;
-  {$ifdef _USE_MULTITHREADING}
+  {$ifdef USE_MULTITHREADING}
   mp.&for(worker, 0, num_heads-1) ;
   {$else}
   worker(0, num_heads-1, nil);
@@ -1163,14 +1193,14 @@ begin
     kh, vh : PQNNFloat;
   begin
     for i:= start to finish do begin
-            imgQh  := PQNNFloat(img_Q)   + i*headDim;
-            txtQh  :=PQNNFloat( txt_Q)   + i*headDim;
-            kh     := cat_k   + i*headDim;
-            vh     := cat_v   + i*headDim;
-            imgOh := PQNNFloat(img_out) + i*headDim;
-            txtOh := PQNNFloat(txt_out) + i*headDim;
+            imgQh := img_Q   + i*headDim;
+            txtQh := txt_Q   + i*headDim;
+            kh    := cat_k   + i*headDim;
+            vh    := cat_v   + i*headDim;
+            imgOh := img_out + i*headDim;
+            txtOh := txt_out + i*headDim;
             imgSh := scores  + i*totalSeq*totalSeq;
-            txtSh := imgSh  + img_seq*totalSeq; // txt_sh is an offset from img_sh
+            txtSh := imgSh   + img_seq*totalSeq; // txt_sh is an offset from img_sh
 
             cblas_gemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                         img_seq, totalSeq, headDim,
@@ -1179,7 +1209,7 @@ begin
                         kh, hidden,
                         0.0,
                         imgSh, totalSeq);
-            QNNSoftmax(imgSh, img_seq, totalSeq);
+            QNNSoftmaxRows(imgSh, img_seq, totalSeq);
             cblas_gemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                         img_seq, headDim, totalSeq,
                         1.0,
@@ -1195,7 +1225,7 @@ begin
                         kh, hidden,
                         0.0,
                         txtSh, totalSeq);
-            QNNSoftmax(txtSh, txt_seq, totalSeq);
+            QNNSoftmaxRows(txtSh, txt_seq, totalSeq);
             cblas_gemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                         txt_seq, headDim, totalSeq,
                         1.0,
@@ -1231,7 +1261,7 @@ begin
   QNNFlashAttention(txt_out, txt_q, cat_k, cat_v, txt_seq, totalSeq, num_heads, head_dim, scale);
 {$else}
   scores := attn_scores;
-  {$ifdef _USE_MULTITHREADING}
+  {$ifdef USE_MULTITHREADING}
   mp.&for(worker, 0, num_heads-1);
   {$else}
   worker(0, num_heads-1, nil)
@@ -1295,24 +1325,24 @@ var
   img_shift1, img_scale1, img_gate1, img_shift2, img_scale2, img_gate2,
   txt_shift1, txt_scale1, txt_gate1, txt_shift2, txt_scale2, txt_gate2,
   img_norm, img_q, img_k, img_v, txt_norm, txt_q, txt_k, txt_v,
-  img_proj, txt_proj :PQNNFloat;
+  img_proj, txt_proj :TMemoryBlock;
   block : PDoubleBlock;
 begin
 
   (* Extract pre-computed modulation parameters *)
   img_shift1 := img_mod;
-  img_scale1 := PQnnFloat(img_mod) + hidden_size;
-  img_gate1  := PQnnFloat(img_mod) + hidden_size*2;
-  img_shift2 := PQnnFloat(img_mod) + hidden_size*3;
-  img_scale2 := PQnnFloat(img_mod) + hidden_size*4;
-  img_gate2  := PQnnFloat(img_mod) + hidden_size*5;
+  img_scale1 := img_mod + hidden_size;
+  img_gate1  := img_mod + hidden_size*2;
+  img_shift2 := img_mod + hidden_size*3;
+  img_scale2 := img_mod + hidden_size*4;
+  img_gate2  := img_mod + hidden_size*5;
 
-  txt_shift1 := PQNNFloat(txt_mod);
-  txt_scale1 := PQNNFloat(txt_mod) + hidden_size;
-  txt_gate1  := PQNNFloat(txt_mod) + hidden_size*2;
-  txt_shift2 := PQNNFloat(txt_mod) + hidden_size*3;
-  txt_scale2 := PQNNFloat(txt_mod) + hidden_size*4;
-  txt_gate2  := PQNNFloat(txt_mod) + hidden_size*5;
+  txt_shift1 := txt_mod;
+  txt_scale1 := txt_mod + hidden_size;
+  txt_gate1  := txt_mod + hidden_size*2;
+  txt_shift2 := txt_mod + hidden_size*3;
+  txt_scale2 := txt_mod + hidden_size*4;
+  txt_gate2  := txt_mod + hidden_size*5;
 
   img_norm := work1;
   txt_norm := img_norm + img_seq*hidden_size;
@@ -1406,8 +1436,8 @@ procedure TTransformerFlux.singleBlockForward(const hidden: TMemoryBlock;
 const AXIS_DIM = 32;
 var
   fused_dim, mod_size, s, img_seq, txt_seq: longint;
-  mod_params, shift, scale, gate, norm, fused_out, q, k, v, mlp_gate,
-    mlp_up, row, img_q, img_k, attn_out, concat, proj_out: PQNNFloat;
+  mod_params, shift, scale, gate, norm, fused_out,
+    row, img_q, img_k, proj_out: TMemoryBlock;
   block : PSingleBlock;
 begin
 
@@ -1420,7 +1450,7 @@ begin
     //        x := t_emb[i];
     //        t_emb_silu[i] := x / (1.0+expf(-x))
     //    end;
-    mod_params := PQNNFloat(work2) + seq*fused_dim;
+    mod_params := work2 + seq*fused_dim;
 
     QNNLinearNoBias(mod_params, t_emb_silu, adaln_weight, 1, hidden_size, mod_size);
     shift := mod_params;
@@ -1431,59 +1461,54 @@ begin
     fused_out := work2;
     block := @single_blocks[blockIdx];
     QNNLINEAR_BF16_OR_F32(fused_out, norm, block.qkv_mlp_weight, block.qkv_mlp_weight_bf16, seq, hidden_size, fused_dim);
-    q := single_q;
-    k := single_k;
-    v := single_v;
-    mlp_gate := single_mlp_gate;
-    mlp_up   := single_mlp_up;
+
     for s := 0 to seq -1 do begin
-        row := fused_out+s * fused_dim;
-        QNNCopy(q        + s*hidden_size, row                             , hidden_size);
-        QNNCopy(k        + s*hidden_size, row + hidden_size               , hidden_size);
-        QNNCopy(v        + s*hidden_size, row + hidden_size*2             , hidden_size);
-        QNNCopy(mlp_gate + s*mlp_hidden , row + hidden_size*3             , mlp_hidden );
-        QNNCopy(mlp_up   + s*mlp_hidden , row + hidden_size*3 + mlp_hidden, mlp_hidden )
+        row := fused_out + s*fused_dim;
+        QNNCopy(single_q        + s*hidden_size       , row                             , hidden_size);
+        QNNCopy(single_k        + s*hidden_size       , row + hidden_size               , hidden_size);
+        QNNCopy(single_v        + s*hidden_size       , row + hidden_size*2             , hidden_size);
+        QNNCopy(single_mlp_gate + s*mlp_hidden , row + hidden_size*3             , mlp_hidden );
+        QNNCopy(single_mlp_up   + s*mlp_hidden , row + hidden_size*3 + mlp_hidden, mlp_hidden )
     end;
-    QNNQKRMSNorm(q, k, block.norm_q_weight, block.norm_k_weight, seq, num_heads, head_dim);
+    QNNQKRMSNorm(single_q, single_k, block.norm_q_weight, block.norm_k_weight, seq, num_heads, head_dim);
     txt_seq := img_offset;
-    QNNApplyRoPE2D(q, txt_rope_cos, txt_rope_sin, txt_seq, num_heads, head_dim, AXIS_DIM);
-    QNNApplyRoPE2D(k, txt_rope_cos, txt_rope_sin, txt_seq, num_heads, head_dim, AXIS_DIM);
-    img_q := q+img_offset * hidden_size;
-    img_k := k+img_offset * hidden_size;
+    QNNApplyRoPE2D(single_q, txt_rope_cos, txt_rope_sin, txt_seq, num_heads, head_dim, AXIS_DIM);
+    QNNApplyRoPE2D(single_k, txt_rope_cos, txt_rope_sin, txt_seq, num_heads, head_dim, AXIS_DIM);
+    img_q := single_q+img_offset * hidden_size;
+    img_k := single_k+img_offset * hidden_size;
     QNNApplyRoPE2D(img_q, img_rope_cos, img_rope_sin, img_seq, num_heads, head_dim, AXIS_DIM);
     QNNApplyRoPE2D(img_k, img_rope_cos, img_rope_sin, img_seq, num_heads, head_dim, AXIS_DIM);
-    attn_out := single_attn_out;
-    multiHeadForward(attn_out, q, k, v, seq);
-    QNNSiluMul(mlp_gate, mlp_up, seq*mlp_hidden);
-    concat := single_concat;
+    multiHeadForward(single_attn_out, single_q, single_k, single_v, seq);
+    QNNSiluMul(single_mlp_gate, single_mlp_up, seq*mlp_hidden);
     for s := 0 to seq -1 do begin
-        QNNCopy(concat + s*(hidden_size+mlp_hidden)              , attn_out + s*hidden_size, hidden_size);
-        QNNCopy(concat + s*(hidden_size+mlp_hidden) + hidden_size, mlp_gate + s*mlp_hidden , mlp_hidden )
+        QNNCopy(single_concat + s*(hidden_size+mlp_hidden)              , single_attn_out + s*hidden_size, hidden_size);
+        QNNCopy(single_concat + s*(hidden_size+mlp_hidden) + hidden_size, single_mlp_gate + s*mlp_hidden , mlp_hidden )
     end;
     proj_out := work1;
-    QNNLINEAR_BF16_OR_F32(proj_out, concat, block.proj_mlp_weight, block.proj_mlp_weight_bf16, seq, hidden_size+mlp_hidden, hidden_size);
+    QNNLINEAR_BF16_OR_F32(proj_out, single_concat, block.proj_mlp_weight, block.proj_mlp_weight_bf16, seq, hidden_size+mlp_hidden, hidden_size);
     QNNGatedAdd(hidden, gate, proj_out, seq, hidden_size)
 end;
 
-function TTransformerFlux.forward(const img_latent: PQNNFloat; const img_h,
-  img_w: longint; const txt_emb: PQNNFloat; const txt_seq: longint;
+function TTransformerFlux.forward(const img_latent: TMemoryBlock; const img_h,
+  img_w: longint; const txt_emb: TMemoryBlock; const txt_seq: longint;
   timestep: QNNFloat): TMemoryBlock;
 
 var
     img_seq, total_seq, double_mod_size, i: longint;
     //x: single;
     t_emb, img_transposed, concat_hidden, img_rope_cos, txt_rope_cos, img_rope_sin, txt_rope_sin, output_nlc : TSingles;
-    final_mod, final_scale, final_shift, final_norm : PQNNFloat;
-    t_sincos : array[0..255] of QNNFloat;
+    final_mod, final_scale, final_shift, final_norm : TMemoryBlock;
+    t_sincos : TMemoryBlock;//array[0..255] of QNNFloat;
 begin
     img_seq := img_h*img_w;
     total_seq := img_seq+txt_seq;
     reInitialize(total_seq);
 
     t_emb := TMemoryBlock.Create(hidden_size);
-    QNNTimestepEmbedding(@t_sincos[0], timestep * 1000.0, time_embed.sincos_dim, 10000.0);
+    t_sincos := QNNTimestepEmbedding(timestep * 1000.0, time_embed.sincos_dim, 10000.0);
 
-    time_embed.forward(t_emb, @t_sincos[0],  hidden_size, t_emb_silu);
+    time_embed.forward(t_emb, t_sincos,  hidden_size, t_emb_silu);
+    t_sincos.free;
 
     getCachedImgRoPE(img_h, img_w, img_rope_cos, img_rope_sin);
 
@@ -1528,21 +1553,20 @@ begin
     end;
     concat_hidden := TMemoryBlock.Create([total_seq, hidden_size]);
     QNNCopy(concat_hidden                                 , txt_hidden, txt_seq*hidden_size);
-    QNNCopy(PQNNFloat(concat_hidden) + txt_seq*hidden_size, img_hidden, img_seq*hidden_size);
-    for i := 0 to num_single_layers -1 {high(single_blocks)} do
-        begin
-            if use_mmap and not(boolean(single_blocks[i].qkv_mlp_weight) or boolean(single_blocks[i].qkv_mlp_weight_bf16)) then
-                single_blocks[i].load(sf_files, i, hidden_size, mlp_hidden, use_bf16);
-            singleBlockForward(concat_hidden, i, t_emb, adaln_single_weight, img_rope_cos, img_rope_sin, txt_rope_cos, txt_rope_sin, total_seq, txt_seq);
-            if use_mmap then
-                single_blocks[i].free;
-            //    free_single_block_weights(@single_blocks[i]);
-            if assigned(substep_callback) then
-                substep_callback(SUBSTEP_SINGLE_BLOCK, i, num_single_layers) ;
-        end;
+    QNNCopy(concat_hidden + txt_seq*hidden_size, img_hidden, img_seq*hidden_size);
+    for i := 0 to num_single_layers -1 {high(single_blocks)} do begin
+        if use_mmap and not(boolean(single_blocks[i].qkv_mlp_weight) or boolean(single_blocks[i].qkv_mlp_weight_bf16)) then
+            single_blocks[i].load(sf_files, i, hidden_size, mlp_hidden, use_bf16);
+        singleBlockForward(concat_hidden, i, t_emb, adaln_single_weight, img_rope_cos, img_rope_sin, txt_rope_cos, txt_rope_sin, total_seq, txt_seq);
+        if use_mmap then
+            single_blocks[i].free;
+        //    free_single_block_weights(@single_blocks[i]);
+        if assigned(substep_callback) then
+            substep_callback(SUBSTEP_SINGLE_BLOCK, i, num_single_layers) ;
+    end;
 
 
-    QNNCopy(img_hidden, PQNNFloat(concat_hidden) + txt_seq*hidden_size, img_seq*hidden_size);
+    QNNCopy(img_hidden, concat_hidden + txt_seq*hidden_size, img_seq*hidden_size);
     concat_hidden.free;
     QNNSilu(t_emb_silu, t_emb, hidden_size);
     //for i := 0 to hidden_size -1 do
@@ -1553,7 +1577,7 @@ begin
     final_mod := double_mod_img;
     QNNLinearNoBias(final_mod, t_emb_silu, final_norm_weight, 1, hidden_size, hidden_size * 2);
     final_scale := final_mod;
-    final_shift := final_mod+hidden_size;
+    final_shift := final_mod + hidden_size;
     final_norm := work1;
     QNNAdaLN(final_norm, img_hidden, final_shift, final_scale, img_seq, hidden_size, -6);
     output_nlc := TMemoryBlock.create([img_seq, latent_channels]);
@@ -1565,28 +1589,25 @@ begin
     QNNMatTranspose(result, output_nlc, img_seq, latent_channels);
     output_nlc.free;
     t_emb.free;
-    //iris_timing_transformer_double := iris_timing_transformer_double + double_time;
-    //iris_timing_transformer_single := iris_timing_transformer_single + single_time;
-    //iris_timing_transformer_final := iris_timing_transformer_final + final_time;
-    //iris_timing_transformer_total := iris_timing_transformer_total + (double_time+single_time+final_time);
+
     if assigned(substep_callback) then
         substep_callback(SUBSTEP_FINAL_LAYER, 0, 1);
 end;
 
-function TTransformerFlux.forward(const img_latent: PQNNFloat; const img_h,
-  img_w: longint; const ref_latent: PQNNFloat; const ref_h, ref_w,
-  t_offset: longint; const txt_emb: PQNNFloat; const txt_seq: longint;
+function TTransformerFlux.forward(const img_latent: TMemoryBlock; const img_h,
+  img_w: longint; const ref_latent: TMemoryBlock; const ref_h, ref_w,
+  t_offset: longint; const txt_emb: TMemoryBlock; const txt_seq: longint;
   timestep: QNNFloat): TMemoryBlock;
 var
     img_seq, ref_seq, combined_img_seq, total_seq, pos, c, i, double_mod_size: longint;
-    t_sincos: array[0..255] of QNNFloat;
+    t_sincos: TMemoryBlock;//array[0..255] of QNNFloat;
 
-    final_mod, final_scale, final_shift, final_norm, output_nlc_ptr, result_ptr, combined_transposed_ptr: PQNNFloat;
+    //output_nlc_ptr, result_ptr, combined_transposed_ptr, img_latent_ptr, ref_latent_ptr: PQNNFloat;
 
-    t_emb, combined_transposed, combined_hidden, txt_rope_cos, txt_rope_sin
+    final_mod, final_scale, final_shift, final_norm, t_emb, combined_transposed, combined_hidden, txt_rope_cos, txt_rope_sin
     , combined_rope_cos, combined_rope_sin, concat_hidden, output_nlc : TMemoryBlock;
 begin
-    if not assigned(ref_latent) then
+    if not ref_latent.isAssigned() then
         exit(forward(img_latent, img_h, img_w, txt_emb, txt_seq, timestep));
     img_seq := img_h*img_w;
     ref_seq := ref_h*ref_w;
@@ -1594,23 +1615,31 @@ begin
     total_seq := combined_img_seq + txt_seq;
     reInitialize(total_seq);
     t_emb := TMemoryBlock.Create(hidden_size);
-    QNNTimestepEmbedding(@t_sincos[0], timestep * 1000.0, time_embed.sincos_dim, 10000.0);
-    time_embed.forward(t_emb, @t_sincos[0], hidden_size, t_emb_silu);
+    t_sincos := QNNTimeStepEmbedding(timestep * 1000.0, time_embed.sincos_dim, 10000.0);
+    time_embed.forward(t_emb, t_sincos, hidden_size, t_emb_silu);
+    t_sincos.free;
     getCachedCombinedRoPE(img_h, img_w, ref_h, ref_w, t_offset, combined_rope_cos,  combined_rope_sin);
 
     getCachedTxtRoPE(txt_seq, txt_rope_cos, txt_rope_sin);
     combined_transposed := TMemoryBlock.Create([combined_img_seq, latent_channels]);
-    combined_transposed_ptr := combined_transposed;
-    for pos := 0 to img_seq -1 do
-        for c := 0 to latent_channels -1 do
-            combined_transposed_ptr[pos * latent_channels+c] := img_latent[c * img_seq+pos];
-    for pos := 0 to ref_seq -1 do
-        for c := 0 to latent_channels -1 do
-            combined_transposed_ptr[(img_seq+pos) * latent_channels+c] := ref_latent[c * ref_seq+pos];
+    //combined_transposed_ptr := combined_transposed;
+    //img_latent_ptr := img_latent;
+    //ref_latent_ptr := ref_latent;
+    //for pos := 0 to img_seq -1 do
+    //    for c := 0 to latent_channels -1 do
+    //        combined_transposed_ptr[pos*latent_channels + c] := img_latent_ptr[c*img_seq + pos];
+
+    //for pos := 0 to ref_seq -1 do
+    //    for c := 0 to latent_channels -1 do
+    //        combined_transposed_ptr[(img_seq + pos)*latent_channels + c] := ref_latent_ptr[c*ref_seq + pos];
+
+    QNNMatTranspose(combined_transposed, img_latent, latent_channels, img_seq);
+    QNNMatTranspose(combined_transposed + img_seq*latent_channels, ref_latent, latent_channels, img_seq);
+
 
     combined_hidden := TMemoryBlock.Create([combined_img_seq, hidden_size]);
     QNNLINEAR_BF16_OR_F32(combined_hidden, combined_transposed, img_in_weight, img_in_weight_bf16, combined_img_seq, latent_channels, hidden_size);
-
+    combined_transposed.free;
     QNNLINEAR_BF16_OR_F32(txt_hidden, txt_emb, txt_in_weight, txt_in_weight_bf16, txt_seq, text_dim, hidden_size);
     double_mod_size := hidden_size * 6;
 
@@ -1622,29 +1651,28 @@ begin
     //    end;
     QNNLinearNoBias(double_mod_img, t_emb_silu, adaln_double_img_weight, 1, hidden_size, double_mod_size);
     QNNLinearNoBias(double_mod_txt, t_emb_silu, adaln_double_txt_weight, 1, hidden_size, double_mod_size);
-    for i := 0 to num_double_layers -1 do
-        begin
-            if use_mmap then
-                double_blocks[i].load(sf_files, i, hidden_size, mlp_hidden, use_bf16);
-            doubleBlockForward(combined_hidden, txt_hidden, i, double_mod_img, double_mod_txt, combined_rope_cos, combined_rope_sin, txt_rope_cos, txt_rope_sin, combined_img_seq, txt_seq);
-            //if use_mmap then
-            //    free_double_block_weights( and double_blocks[i]);
-            if assigned(substep_callback) then
-                substep_callback(SUBSTEP_DOUBLE_BLOCK, i, num_double_layers)
-        end;
+    for i := 0 to num_double_layers -1 do begin
+        if use_mmap then
+            double_blocks[i].load(sf_files, i, hidden_size, mlp_hidden, use_bf16);
+        doubleBlockForward(combined_hidden, txt_hidden, i, double_mod_img, double_mod_txt, combined_rope_cos, combined_rope_sin, txt_rope_cos, txt_rope_sin, combined_img_seq, txt_seq);
+        //if use_mmap then
+        //    free_double_block_weights( and double_blocks[i]);
+        if assigned(substep_callback) then
+            substep_callback(SUBSTEP_DOUBLE_BLOCK, i, num_double_layers)
+    end;
     concat_hidden := TMemoryBlock.Create([total_seq, hidden_size]);
     QNNCopy(concat_hidden, txt_hidden, txt_seq * hidden_size);
-    QNNCopy(PQNNFloat(concat_hidden)+txt_seq * hidden_size, combined_hidden, combined_img_seq*hidden_size);
-    for i := 0 to num_single_layers -1 do
-        begin
-            if use_mmap then
-                single_blocks[i].load(sf_files, i, hidden_size, mlp_hidden, use_bf16);
-            singleblockforward(concat_hidden, i, t_emb, adaln_single_weight, combined_rope_cos, combined_rope_sin, txt_rope_cos, txt_rope_sin, total_seq, txt_seq);
-            if assigned(substep_callback) then
-                substep_callback(SUBSTEP_SINGLE_BLOCK, i, num_single_layers)
-        end;
+    QNNCopy(concat_hidden + txt_seq*hidden_size, combined_hidden, combined_img_seq*hidden_size);
+    for i := 0 to num_single_layers -1 do begin
+        if use_mmap then
+            single_blocks[i].load(sf_files, i, hidden_size, mlp_hidden, use_bf16);
+        singleblockforward(concat_hidden, i, t_emb, adaln_single_weight, combined_rope_cos, combined_rope_sin, txt_rope_cos, txt_rope_sin, total_seq, txt_seq);
+        if assigned(substep_callback) then
+            substep_callback(SUBSTEP_SINGLE_BLOCK, i, num_single_layers)
+    end;
     img_hidden :=  TMemoryBlock.Create([img_seq, hidden_size]);
-    QNNCopy(img_hidden, PQNNFloat(concat_hidden)+txt_seq * hidden_size, img_seq * hidden_size);
+    QNNCopy(img_hidden, concat_hidden + txt_seq*hidden_size, img_seq * hidden_size);
+    concat_hidden.free;
     QNNSilu(t_emb_silu, t_emb, hidden_size);
     //for i := 0 to hidden_size -1 do
     //    begin
@@ -1657,34 +1685,39 @@ begin
     final_shift := final_mod + hidden_size;
     final_norm := work1;
     QNNAdaLN(final_norm, img_hidden, final_shift, final_scale, img_seq, hidden_size, -6);
-
+    img_hidden.free;
     output_nlc := TMemoryBlock.create([img_seq, latent_channels]);
     QNNLINEAR_BF16_OR_F32(output_nlc, final_norm, final_proj_weight, final_proj_weight_bf16, img_seq, hidden_size, latent_channels);
     result := TMemoryBlock.create([img_seq, latent_channels]);
-    output_nlc_ptr := output_nlc;
-    result_ptr := result;
-    for pos := 0 to img_seq -1 do
-        for c := 0 to latent_channels -1 do
-            result_ptr[c * img_seq+pos] := output_nlc_ptr[pos * latent_channels+c];
+    //output_nlc_ptr := output_nlc;
+    //result_ptr := result;
+    //for pos := 0 to img_seq -1 do
+    //    for c := 0 to latent_channels -1 do
+    //        result_ptr[c * img_seq+pos] := output_nlc_ptr[pos * latent_channels+c];
+    QNNMatTranspose(result, output_nlc, img_seq, latent_channels);
+    output_nlc.free;
     if assigned(substep_callback) then
         substep_callback(SUBSTEP_FINAL_LAYER, 0, 1);
 end;
 
-function TTransformerFlux.forward(const img_latent: PQNNFloat; const img_h, img_w: longint; const refs: TArray<TImageRef>; const txt_emb: PQNNFloat; const txt_seq: longint; const timestep: single):TMemoryBlock;
+function TTransformerFlux.forward(const img_latent: TMemoryBlock; const img_h,
+  img_w: longint; const refs: TArray<TImageRef>; const txt_emb: TMemoryBlock;
+  const txt_seq: longint; const timestep: single): TMemoryBlock;
 var
     img_seq, axis_dim, total_ref_seq, r, combined_img_seq,
-      total_seq, rope_offset, ref_seq, pos, c,
-      trans_offset, i, double_mod_size: longint;
+      total_seq, rope_offset, pos, c,
+      {ref_seq, trans_offset,} i, double_mod_size: longint;
 
-    t_emb, combined_rope_cos, combined_rope_sin, txt_rope_cos, txt_rope_sin, output_nlc : TMemoryBlock;
-      combined_transposed, combined_hidden, concat_hidden,
-      img_hidden, final_mod, final_scale, final_shift, final_norm, result_ptr, output_ptr: PQNNFloat;
-    t_sincos : array[0..255] of QNNFloat;
+    t_emb, combined_rope_cos, combined_rope_sin, txt_rope_cos, txt_rope_sin, output_nlc,
+      combined_transposed, combined_hidden, concat_hidden, img_hidden, t_sincos,
+      final_mod, final_scale, final_shift, final_norm : TMemoryBlock;
+    //result_ptr, output_nlc_ptr, combined_transposed_ptr, ref_latent_ptr, img_latent_ptr : PQNNFloat;
+    //t_sincos : array[0..255] of QNNFloat;
 begin
     if not assigned(refs) then
         exit(forward(img_latent, img_h, img_w, txt_emb, txt_seq, timestep));
     if (length(refs) = 1) then
-        exit(forward(img_latent, img_h, img_w, refs[0].latent, refs[0].h, refs[0].w, refs[0].offset, txt_emb, txt_seq, timestep));
+        exit(forward(img_latent, img_h, img_w, refs[0].latent, refs[0].h, refs[0].w, refs[0].t_offset, txt_emb, txt_seq, timestep));
 
     img_seq := img_h * img_w;
     axis_dim := 32;
@@ -1696,35 +1729,40 @@ begin
     reInitialize(total_seq);
     t_emb := TMemoryBlock.Create(hidden_size);
 
-    QNNTimestepEmbedding(@t_sincos[0], timestep * 1000.0, time_embed.sincos_dim, 10000.0);
-    time_embed.forward(t_emb, @t_sincos[0],  hidden_size, t_emb_silu);
+    t_sincos := QNNTimestepEmbedding(timestep * 1000.0, time_embed.sincos_dim, 10000.0);
+    time_embed.forward(t_emb, t_sincos,  hidden_size, t_emb_silu);
+    t_sincos.free;
     combined_rope_cos := TMemoryblock.Create([combined_img_seq, axis_dim, 4]);
     combined_rope_sin := TMemoryblock.Create([combined_img_seq, axis_dim, 4]);
     QNNComputeRoPE2D(combined_rope_cos, combined_rope_sin, img_h, img_w, axis_dim, rope_theta);
     rope_offset := img_seq * axis_dim * 4;
-    for r := 0 to high(refs) do
-        begin
-            ref_seq := refs[r].h*refs[r].w;
-            QNNComputeRoPE2DOffset(PQNNFloat(combined_rope_cos) + rope_offset, PQNNFloat(combined_rope_sin) + rope_offset, refs[r].h, refs[r].w, axis_dim, rope_theta, refs[r].offset);
-            inc(rope_offset, ref_seq * axis_dim * 4)
-        end;
+    for r := 0 to high(refs) do begin
+        QNNComputeRoPE2DOffset(combined_rope_cos + rope_offset, combined_rope_sin + rope_offset, refs[r].h, refs[r].w, axis_dim, rope_theta, refs[r].t_offset);
+        inc(rope_offset, refs[r].h*refs[r].w * axis_dim * 4)
+    end;
 
     getCachedTxtRoPE(txt_seq, txt_rope_cos, txt_rope_sin);
     combined_transposed := TMemoryBlock.Create([combined_img_seq, latent_channels]);
-    for pos := 0 to img_seq -1 do
-        for c := 0 to latent_channels -1 do
-            combined_transposed[pos * latent_channels+c] := img_latent[c * img_seq+pos];
-    trans_offset := img_seq;
+    //combined_transposed_ptr := combined_transposed;
+    //img_latent_ptr := img_latent;
+    //for pos := 0 to img_seq -1 do
+    //    for c := 0 to latent_channels -1 do
+    //        combined_transposed_ptr[pos * latent_channels+c] := img_latent_ptr[c * img_seq+pos];
+    QNNMatTranspose(combined_transposed, img_latent, latent_channels, img_seq);
+    //trans_offset := img_seq;
     for r := 0 to high(refs) do
         begin
-            ref_seq := refs[r].h * refs[r].w;
-            for pos := 0 to ref_seq -1 do
-                for c := 0 to latent_channels -1 do
-                    combined_transposed[(trans_offset + pos)*latent_channels + c] := refs[r].latent[c*ref_seq + pos];
-            trans_offset := trans_offset + ref_seq
+            //ref_latent_ptr := refs[r].latent;
+            //ref_seq := refs[r].h * refs[r].w;
+            //for pos := 0 to ref_seq -1 do
+            //    for c := 0 to latent_channels -1 do
+            //        combined_transposed_ptr[(trans_offset + pos)*latent_channels + c] := ref_latent_ptr[c*ref_seq + pos];
+            QNNMatTranspose(combined_transposed + r*img_seq*latent_channels, refs[r].latent, latent_channels, refs[r].h*refs[r].w);
+            //trans_offset := trans_offset + ref_seq
         end;
     combined_hidden := TMemoryBlock.Create([combined_img_seq, hidden_size]);
     QNNLINEAR_BF16_OR_F32(combined_hidden, combined_transposed, img_in_weight, img_in_weight_bf16, combined_img_seq, latent_channels, hidden_size);
+    combined_transposed.free;
     QNNLINEAR_BF16_OR_F32(txt_hidden, txt_emb, txt_in_weight, txt_in_weight_bf16, txt_seq, text_dim, hidden_size);
     double_mod_size := hidden_size * 6;
     QNNSilu(t_emb_silu, t_emb, hidden_size);
@@ -1746,17 +1784,20 @@ begin
     concat_hidden := TMemoryBlock.Create([total_seq, hidden_size]);
     QNNCopy(concat_hidden, txt_hidden, txt_seq*hidden_size);
     QNNCopy(concat_hidden + txt_seq*hidden_size, combined_hidden, combined_img_seq*hidden_size);
-    for i := 0 to num_single_layers -1 do
-        begin
-            if use_mmap then
-                single_blocks[i].load(sf_files, i, hidden_size, mlp_hidden, use_bf16);
-            singleBlockForward(concat_hidden, i, t_emb, adaln_single_weight, combined_rope_cos, combined_rope_sin, txt_rope_cos, txt_rope_sin, total_seq, txt_seq);
+    combined_hidden.free;
+    for i := 0 to num_single_layers -1 do begin
+        if use_mmap then
+            single_blocks[i].load(sf_files, i, hidden_size, mlp_hidden, use_bf16);
+        singleBlockForward(concat_hidden, i, t_emb, adaln_single_weight, combined_rope_cos, combined_rope_sin, txt_rope_cos, txt_rope_sin, total_seq, txt_seq);
 
-            if assigned(substep_callback) then
-              substep_callback(SUBSTEP_SINGLE_BLOCK, i, num_single_layers)
-        end;
+        if assigned(substep_callback) then
+          substep_callback(SUBSTEP_SINGLE_BLOCK, i, num_single_layers)
+    end;
+    combined_rope_cos.free;
+    combined_rope_sin.free;
     img_hidden := TMemoryBlock.Create([img_seq, hidden_size]);
     QNNCopy(img_hidden, concat_hidden + txt_seq*hidden_size, img_seq*hidden_size);
+    concat_hidden.free;
     QNNSilu(t_emb_silu, t_emb, hidden_size);
     //for i := 0 to hidden_size -1 do
     //    begin
@@ -1769,40 +1810,45 @@ begin
     final_shift := final_mod+hidden_size;
     final_norm := work1;
     QNNAdaLN(final_norm, img_hidden, final_shift, final_scale, img_seq, hidden_size);
-
+    img_hidden.free;
     output_nlc := TMemoryBlock.Create([img_seq, latent_channels]);
     QNNLINEAR_BF16_OR_F32(output_nlc, final_norm, final_proj_weight, final_proj_weight_bf16, img_seq, hidden_size, latent_channels);
     result := TMemoryBlock.Create([img_seq, latent_channels]);
-    result_ptr := result;
-    output_ptr := output_nlc;
-    for pos := 0 to img_seq -1 do
-        for c := 0 to latent_channels -1 do
-            result_ptr[c * img_seq+pos] := output_ptr[pos * latent_channels+c];
+    //result_ptr := result;
+    //output_nlc_ptr := output_nlc;
+    //for pos := 0 to img_seq -1 do
+    //    for c := 0 to latent_channels -1 do
+    //        result_ptr[c * img_seq+pos] := output_nlc_ptr[pos * latent_channels+c];
+    QNNMatTranspose(result, output_nlc, img_seq, latent_channels);
+    output_nlc.free;
     if assigned(substep_callback) then
         substep_callback(SUBSTEP_FINAL_LAYER, 0, 1);
 end;
 
 function TTransformerFlux.sampleEuler(const z: TMemoryBlock; const batch,
   channels, h, w: longint; const text_emb: TMemoryBlock;
-  const text_seq: longint; const schedule: PQNNFloat; const num_steps: longint;
-  const progress_callback: TStepCallback): TMemoryBlock;
+  const text_seq: longint; const schedule: TMemoryBlock;
+  const num_steps: longint; const progress_callback: TStepCallback
+  ): TMemoryBlock;
 var
     latent_size, step: longint;
     v_cond:TMemoryBlock;
     t_curr, t_next, dt: QNNFloat;
     img : TQNNImage;
+    schedule_ptr : PQNNFloat;
 begin
     latent_size := batch * channels * h * w;
     result := TMemoryBlock.Create([batch, channels, h, w]);
 
     QNNcopy(result, z, latent_size);
+    schedule_ptr := schedule;
     for step := 0 to num_steps -1 do begin
-        t_curr := schedule[step];
-        t_next := schedule[step+1];
+        t_curr := schedule_ptr[step];
+        t_next := schedule_ptr[step+1];
         dt := t_next - t_curr;
         if assigned(step_callback) then
             step_callback(step, num_steps);
-        v_cond :=self.forward(result, h, w, text_emb, text_seq, t_curr);
+        v_cond :=forward(result, h, w, text_emb, text_seq, t_curr);
         QNNFusedScaleAdd(result, v_cond, result, dt, latent_size);
         v_cond.free();
         if assigned(progress_callback) then
@@ -1819,52 +1865,103 @@ begin
 end;
 
 function TTransformerFlux.sampleEuler(const z: TMemoryBlock; const batch,
+  channels, h, w: longint; const ref_latent: TMemoryBlock; const ref_h, ref_w,
+  t_offset: longint; const text_emb: TMemoryBlock; const text_seq: longint;
+  const schedule: TMemoryBlock; const num_steps: longint;
+  const progress_callback: TStepCallback): TMemoryBlock;
+var
+  latent_size, step: LongInt;
+  t_curr, t_next, dt: QNNFloat;
+  v : TMemoryBlock;
+  img : TQNNImage;
+  schedule_ptr : PQNNFloat;
+begin
+  latent_size := batch * channels * h * w;
+
+  (* Working buffer *)
+  result := TMemoryBlock.Create([batch, channels, h, w]);
+  QNNcopy(result, z, latent_size);
+  schedule_ptr := schedule;
+  for step := 0 to num_steps -1 do begin
+      t_curr := schedule_ptr[step];
+      t_next := schedule_ptr[step+1];
+      dt     := t_next - t_curr;
+
+      (* Notify step start *)
+      if assigned(step_callback) then
+          step_callback(step, num_steps);
+
+      (* Predict velocity with reference image conditioning *)
+      v := forward(result, h, w,
+                  ref_latent, ref_h, ref_w,
+                  t_offset,
+                  text_emb, text_seq,
+                  t_curr);
+
+      (* Euler step: z_next = result + dt * v *)
+      QNNFusedScaleAdd(result, v, result, dt, latent_size);
+
+      v.free;
+
+      if assigned(progress_callback) then
+          progress_callback(step, num_steps);
+
+      (* Step image callback - decode and display intermediate result *)
+      if assigned(step_image_callback) and assigned(step_image_vae) and (step + 1 < num_steps) then begin
+          img := PVAE(step_image_vae).decode(result, 1, h, w);
+          step_image_callback(step, num_steps, img);
+          img.free;
+      end
+  end;
+
+  freeMMapCache();
+end;
+
+function TTransformerFlux.sampleEuler(const z: TMemoryBlock; const batch,
   channels, h, w: longint; const text_emb_cond: TMemoryBlock;
   const text_seq_cond: longint; const text_emb_uncond: TMemoryBlock;
   const text_seq_uncond: longint; const guidance_scale: QNNFloat;
-  const schedule: PQNNFloat; const num_steps: longint;
+  const schedule: TMemoryBlock; const num_steps: longint;
   const progress_callback: TStepCallback): TMemoryBlock;
 var
     latent_size, step, i: longint;
     t_curr, t_next, dt, v: QNNFloat;
     v_uncond, v_cond: TMemoryBlock;
-    v_uncondPtr, v_condPtr, resultPtr: PQNNFloat;
+    v_uncondPtr, v_condPtr, resultPtr, schedule_ptr: PQNNFloat;
     img: TQNNImage;
 begin
     latent_size := batch * channels * h * w;
     result := TMemoryblock.create([batch, channels, h, w]);
     resultPtr := result;
     QNNCopy(result, z, latent_size);
-    for step := 0 to num_steps -1 do
-        begin
-            t_curr := schedule[step];
-            t_next := schedule[step+1];
-            dt := t_next-t_curr;
-            if assigned(step_callback) then
-                step_callback(step+1, num_steps);
-            v_uncond := forward(result, h, w, text_emb_uncond, text_seq_uncond, t_curr);
-            v_uncondPtr := v_uncond;
-            v_cond := forward(result, h, w, text_emb_cond, text_seq_cond, t_curr);
-            v_condPtr := v_cond;
-            for i := 0 to latent_size -1 do
-                begin
-                    v := v_uncondPtr[i]+guidance_scale * (v_condPtr[i]-v_uncondPtr[i]);
-                    resultPtr[i] := resultPtr[i] + (dt * v)
-                end;
-            v_uncond.free;
-            v_cond.free;
-            if assigned(progress_callback) then
-                progress_callback(step+1, num_steps);
-            if assigned(step_image_callback) and assigned(step_image_vae) and (step+1 < num_steps) then
-                begin
-                    img := PVAE(step_image_vae).decode(result, 1, h, w);
-                    if assigned(img.data) then
-                        begin
-                            step_image_callback(step+1, num_steps, img);
-                            img.free
-                        end
-                end
+    schedule_ptr := schedule;
+    for step := 0 to num_steps -1 do begin
+        t_curr := schedule_ptr[step];
+        t_next := schedule_ptr[step+1];
+        dt := t_next-t_curr;
+        if assigned(step_callback) then
+            step_callback(step, num_steps);
+        v_uncond := forward(result, h, w, text_emb_uncond, text_seq_uncond, t_curr);
+        v_uncondPtr := v_uncond;
+        v_cond := forward(result, h, w, text_emb_cond, text_seq_cond, t_curr);
+        v_condPtr := v_cond;
+        // todo sampleEuuler refactor as fused axpy
+        for i := 0 to latent_size -1 do begin
+            v := v_uncondPtr[i]+guidance_scale * (v_condPtr[i]-v_uncondPtr[i]);
+            resultPtr[i] := resultPtr[i] + (dt * v)
         end;
+        v_uncond.free;
+        v_cond.free;
+        if assigned(progress_callback) then
+            progress_callback(step, num_steps);
+        if assigned(step_image_callback) and assigned(step_image_vae) and (step+1 < num_steps) then begin
+            img := PVAE(step_image_vae).decode(result, 1, h, w);
+            if assigned(img.data) then begin
+                step_image_callback(step, num_steps, img);
+                img.free
+            end
+        end
+    end;
     freeMMapCache();
 
 end;
@@ -1874,52 +1971,105 @@ function TTransformerFlux.sampleEuler(const z: TMemoryBlock; const batch,
   t_offset: longint; const text_emb_cond: TMemoryBlock;
   const text_seq_cond: longint; const text_emb_uncond: TMemoryBlock;
   const text_seq_uncond: longint; const guidance_scale: QNNFloat;
-  const schedule: PQNNFloat; const num_steps: longint;
+  const schedule: TMemoryBlock; const num_steps: longint;
   const progress_callback: TStepCallback): TMemoryBlock;
 var
     latent_size, step, i: longint;
     t_curr, t_next, dt, v: QNNFloat;
     v_uncond,  v_cond: TMemoryBlock;
-    v_condPtr, v_uncondPtr, resultPtr:PQNNFloat;
+    v_condPtr, v_uncondPtr, resultPtr, schedule_ptr:PQNNFloat;
     img:TQNNImage;
 begin
     latent_size := batch * channels * h * w;
     result := TMemoryBlock.Create([batch, channels, h, w]);
     resultPtr := result;
     QNNcopy(result, z, latent_size);
+    schedule_ptr := schedule;
+    for step := 0 to num_steps -1 do begin
+        t_curr := schedule_ptr[step];
+        t_next := schedule_ptr[step+1];
+        dt := t_next-t_curr;
+        if assigned(step_callback) then
+            step_callback(step, num_steps);
+        v_uncond := forward(result, h, w, ref_latent, ref_h, ref_w, t_offset, text_emb_uncond, text_seq_uncond, t_curr);
+        v_cond := forward(result, h, w, ref_latent, ref_h, ref_w, t_offset, text_emb_cond, text_seq_cond, t_curr);
+        v_condPtr := v_cond;
+        v_uncondPtr := v_uncond;
 
-    for step := 0 to num_steps -1 do
-        begin
-            t_curr := schedule[step];
-            t_next := schedule[step+1];
-            dt := t_next-t_curr;
-            if assigned(step_callback) then
-                step_callback(step+1, num_steps);
-            v_uncond := forward(result, h, w, ref_latent, ref_h, ref_w, t_offset, text_emb_uncond, text_seq_uncond, t_curr);
-            v_cond := forward(result, h, w, ref_latent, ref_h, ref_w, t_offset, text_emb_cond, text_seq_cond, t_curr);
-            v_condPtr := v_cond;
-            v_uncondPtr := v_uncond;
-
-            for i := 0 to latent_size -1 do
-                begin
-                    v := v_uncondPtr[i] + guidance_scale * (v_condPtr[i] - v_uncondPtr[i]);
-                    resultPtr[i] := resultPtr[i] + (dt * v)
-                end;
-            v_uncond.free;
-            v_cond.free;
-            if assigned(progress_callback) then
-                progress_callback(step+1, num_steps);
-            if assigned(step_image_callback) and assigned(step_image_vae) and (step+1 < num_steps) then
-                begin
-                    img := PVAE(step_image_vae).decode(result, 1, h, w);
-                    if assigned(img.data) then
-                        begin
-                            step_image_callback(step+1, num_steps, img);
-                            img.free
-                        end
-                end
+        for i := 0 to latent_size -1 do begin
+            v := v_uncondPtr[i] + guidance_scale * (v_condPtr[i] - v_uncondPtr[i]);
+            resultPtr[i] := resultPtr[i] + (dt * v)
         end;
+        v_uncond.free;
+        v_cond.free;
+        if assigned(progress_callback) then
+            progress_callback(step, num_steps);
+        if assigned(step_image_callback) and assigned(step_image_vae) and (step+1 < num_steps) then begin
+            img := PVAE(step_image_vae).decode(result, 1, h, w);
+            if assigned(img.data) then begin
+                step_image_callback(step+1, num_steps, img);
+                img.free
+            end
+        end
+    end;
     freeMMapCache()
+end;
+
+function TTransformerFlux.sampleEuler(const z: TMemoryBlock; const batch,
+  channels, h, w: longint; const refs: TArray<TImageRef>;
+  const text_emb: TMemoryBlock; const text_seq: longint;
+  const schedule: TMemoryBlock; const num_steps: longint;
+  const progress_callback: TStepCallback): TMemoryBlock;
+var
+  i, step, latent_size:longint;
+  t_curr, t_next, dt: QNNFloat;
+  v:TMemoryBlock;
+  img:TQNNImage;
+  schedule_ptr : PQNNFloat;
+begin
+  latent_size := batch * channels * h * w;
+
+  result := TMemoryBlock.create([batch, channels, h, w]);
+  QNNCopy(result, z, latent_size);
+  schedule_ptr := schedule;
+  for step := 0 to num_steps -1 do begin
+      t_curr := schedule_ptr[step];
+      t_next := schedule_ptr[step+1];
+      dt := t_next - t_curr;
+
+
+      if assigned(step_callback) then
+          step_callback(step, num_steps);
+
+      (* Predict velocity with multiple reference images *)
+      v := forward(result, h, w, refs, text_emb, text_seq, t_curr);
+
+      (* Euler step *)
+      QNNFusedScaleAdd(result, v, result, dt, latent_size);
+      v.free;
+
+      if assigned(progress_callback) then
+          progress_callback(step, num_steps);
+
+      if assigned(step_image_callback) and assigned(step_image_vae) and (step + 1 < num_steps) then begin
+          img := PVAE(step_image_vae).decode(result, 1, h, w);
+          step_image_callback(step, num_steps, img);
+          img.free;
+      end;
+  end;
+
+  freeMMapCache();
+
+end;
+
+function TTransformerFlux.sampleEuler(const z: TMemoryBlock; const batch,
+  channels, h, w: longint; const refs: TArray<TImageRef>;
+  const text_emb_cond: TMemoryBlock; const text_seq_cond: longint;
+  const text_emb_uncond: TMemoryBlock; const text_seq_uncond: longint;
+  const gudance_scale: QNNFloat; const schedule: PQNNFloat;
+  num_steps: longint; const progress_callback: TStepCallback): TMemoryBlock;
+begin
+
 end;
 
 { TBlockZi }
@@ -2005,11 +2155,13 @@ begin
     end
 end;
 
-procedure TTransformerZI.attentionForward(const dst, src: PQNNFloat;
+procedure TTransformerZI.attentionForward(const dst, src: TMemoryBlock;
   const block: TBlockZi; const pos_ids: Plongint; const mask: PLongint;
   const seq: longint);
 var
-  Q, K, V, h_out, attn_out, scores, qi, kj, oi, vj: PQNNFloat;
+  Q, K, V, attn_out
+    {, qi, kj, oi, vj}: TMemoryBlock;
+  scores : PQNNFloat;
   d, h, i, j: longint;
   scale, dot, s : QNNFloat;
   dd:TArray<single>;
@@ -2037,8 +2189,8 @@ begin
     scale := 1.0 / sqrt(head_dim);
     attn_out := work_ffn;
 
+    scores := work_attn;
     for h := 0 to n_heads-1 do begin
-        scores := work_attn;
 
         (* Compute Q @ K^T for this head *)
         //for i := 0 to seq-1 do begin
@@ -2061,7 +2213,7 @@ begin
                         scores[i*seq + j] := -1e9;
 
         (* Softmax *)
-        QNNSoftmax(scores, seq, seq);
+        QNNSoftmaxRows(scores, seq, seq);
 
         (* Scores @ V *)
         //for i := 0 to seq-1 do begin
@@ -2079,10 +2231,10 @@ begin
     QNNMatMulNT(dst, attn_out, block.attn_out_weight, seq, dim, dim);
 end;
 
-procedure TTransformerZI.ffnForward(const dst, src: PQNNFloat;
+procedure TTransformerZI.ffnForward(const dst, src: TMemoryBlock;
   const block: TBlockZi; const seq: longint);
 var
-  gate, up : PQNNFloat;
+  gate, up : TMemoryBlock;
   N:longint;
 begin
     N := seq*ffn_dim;
@@ -2094,9 +2246,9 @@ begin
     QNNMatMulNT(up, src, block.ffn_w3, seq, dim, ffn_dim);
 
     (* SiLU(gate) * up *)
-    QNNSilu(gate, N);
+    QNNSiluInplace(gate, N);
     //for i := 0 to n-1 do gate[i] := gate[i]*up[i];
-    QNNMul(gate, up, N);
+    QNNMulInplace(gate, up, N);
 
     (* W2 (down) projection *)
     QNNMatMulNT(dst, gate, block.ffn_w2, seq, ffn_dim, dim);
@@ -2104,11 +2256,13 @@ end;
 
 procedure TTransformerZI.blockForward(const dst: PQNNFloat;
   const block: TBlockZi; const pos_ids: PLongint; const mask: PLongint;
-  const t_emb: PQNNFloat; const seq: longint);
+  const t_emb: TMemoryBlock; const seq: longint);
 var
     _mod: array[0..4 * {dim}3840-1 ] of QNNFloat;
+    modMem: TMemoryBlock;
     n, i, s: longint;
-    attn_out, norm_out, scaled, ffn_out, scale_msa, gate_msa, scale_mlp, gate_mlp: PQNNFloat;
+    scale_msa, gate_msa, scale_mlp, gate_mlp: PQNNFloat;
+    norm_out, attn_out, ffn_out, scaled : TMemoryBlock;
 begin
     n := seq * dim;
     attn_out := work_tmp;
@@ -2117,14 +2271,14 @@ begin
     ffn_out  := attn_out+3 * n;
     if not work_tmp.isAssigned() or (max_seq < seq) then
         exit();
-
+    modMem.assignPtr(PQNNFloat(@_mod[0]), [length(_mod)]);
     if block.adaln_weight.isAssigned() then
         begin
-            assert(assigned(t_emb), 'ERROR : blockForward t_emb not assigned!');
-            QNNMatMulNT(@_mod[0], t_emb, block.adaln_weight, 1, adaln_dim, 4 * dim);
+            assert(t_emb.isAssigned(), 'ERROR : blockForward t_emb not assigned!');
+            QNNMatMulNT(modMem, t_emb, block.adaln_weight, 1, adaln_dim, 4 * dim);
             //for i := 0 to 4 * dim -1 do
             //    _mod[i] := _mod[i] + block.adaln_bias[i];
-            QNNAdd(@_mod[0], block.adaln_bias, 4*dim);
+            QNNAddInplace(@_mod[0], block.adaln_bias, 4*dim);
             scale_msa := @_mod[0];
             gate_msa  := @_mod[dim];
             scale_mlp := @_mod[2 * dim];
@@ -2136,11 +2290,11 @@ begin
             //        scale_mlp[i] := 1.0+scale_mlp[i];
             //        gate_mlp[i] := tanh(gate_mlp[i])
             //    end;
-            QNNBias(scale_msa, 1.0, dim);
+            QNNBiasInplace(scale_msa, 1.0, dim);
             QNNTanh(gate_msa, dim);
-            QNNBias(scale_mlp, 1.0, dim);
+            QNNBiasInplace(scale_mlp, 1.0, dim);
             QNNTanh(gate_mlp, dim);
-            QNNRMSNorm(norm_out, dst, block.attn_norm1, seq, dim);
+            QNNRMSNormRows(norm_out, dst, block.attn_norm1, seq, dim);
 
             for s := 0 to seq -1 do
                 //for i := 0 to dim -1 do
@@ -2148,18 +2302,18 @@ begin
                 QNNMul(scaled + s*dim, norm_out + s*dim, scale_msa, dim);
 
             attentionForward(attn_out, scaled, block, pos_ids, mask, seq);
-            QNNRMSNorm(norm_out, attn_out, block.attn_norm2, seq, dim);
+            QNNRMSNormRows(norm_out, attn_out, block.attn_norm2, seq, dim);
             for s := 0 to seq -1 do
                 //for i := 0 to dim -1 do
                 //    dst[s * dim+i] := dst[s * dim+i] + (gate_msa[i] * norm_out[s * dim+i]);
                 QNNFusedMulAdd(dst + s*dim, gate_msa, norm_out + s*dim, dst + s*dim, dim);
-            QNNRMSNorm(norm_out, dst, block.ffn_norm1, seq, dim);
+            QNNRMSNormRows(norm_out, dst, block.ffn_norm1, seq, dim);
             for s := 0 to seq -1 do
                 QNNMul(scaled + s*dim, norm_out + s*dim, scale_mlp, dim);
                 //for i := 0 to dim -1 do
                 //    scaled[s * dim+i] := norm_out[s * dim+i] * scale_mlp[i];
             ffnForward(ffn_out, scaled, block, seq);
-            QNNRMSNorm(norm_out, ffn_out, block.ffn_norm2, seq, dim);
+            QNNRMSNormRows(norm_out, ffn_out, block.ffn_norm2, seq, dim);
             for s := 0 to seq -1 do
                 QNNFusedMulAdd(dst + s*dim, gate_mlp, norm_out + s*dim, dst + s*dim, dim);
                 //for i := 0 to dim -1 do
@@ -2167,18 +2321,18 @@ begin
         end
     else
         begin
-            QNNRMSNorm(norm_out, dst, block.attn_norm1, seq, dim);
+            QNNRMSNormRows(norm_out, dst, block.attn_norm1, seq, dim);
             attentionForward(attn_out, norm_out, block, pos_ids, mask, seq);
-            QNNRMSNorm(norm_out, attn_out, block.attn_norm2, seq, dim);
+            QNNRMSNormRows(norm_out, attn_out, block.attn_norm2, seq, dim);
             //for i := 0 to N -1 do
             //    dst[i] := dst[i] + norm_out[i];
-            QNNAdd(dst, norm_out, N);
-            QNNRMSNorm(norm_out, dst, block.ffn_norm1, seq, dim);
+            QNNAddInplace(dst, norm_out, N);
+            QNNRMSNormRows(norm_out, dst, block.ffn_norm1, seq, dim);
             ffnForward(ffn_out, norm_out, block, seq);
-            QNNRMSNorm(norm_out, ffn_out, block.ffn_norm2, seq, dim);
+            QNNRMSNormRows(norm_out, ffn_out, block.ffn_norm2, seq, dim);
             //for i := 0 to N -1 do
             //    dst[i] := dst[i] + norm_out[i]
-            QNNAdd(dst, norm_out, N);
+            QNNAddInplace(dst, norm_out, N);
 
         end
 end;
@@ -2209,27 +2363,28 @@ begin
     end
 end;
 
-procedure TTransformerZI.finalComputeScale(const scale: PQNNFloat;
+procedure TTransformerZI.finalComputeScale(const scale: TMemoryBlock;
   const t_emb: PQNNFloat);
 var
   silu_emb : array[0..255] of QNNFLoat;
+  siluEmbMem : TMemoryBlock;
 begin
-
+    siluEmbMem.assignPtr(PQNNFloat(@silu_emb[0]), [length(silu_emb)]);
     QNNCopy(@silu_emb[0], t_emb, adaln_dim);
-    QNNSilu(@silu_emb[0], adaln_dim);
+    QNNSiluInplace(@silu_emb[0], adaln_dim);
 
-    QNNMatMulNT(scale, @silu_emb[0], final_layer.adaln_weight, 1, adaln_dim, dim);
+    QNNMatMulNT(scale, siluEmbMem, final_layer.adaln_weight, 1, adaln_dim, dim);
     //for (int i = 0; i < dim; i++)
     //    scale[i] = 1.0 + scale[i] + adaln_bias[i];
     QNNFusedBiasAdd(scale, final_layer.adaln_bias, scale, 1.0, dim);
 end;
 
-procedure TTransformerZI.finalForward(const dst: PQNNFloat;
-  const src: PQNNFloat; const t_emb: PQNNFloat; const seq: longint);
+procedure TTransformerZI.finalForward(const dst, src: TMemoryBlock;
+  const t_emb: PQNNFloat; const seq: longint);
 var
   out_dim, s : longint;
   scale, normed : TMemoryBlock;
-  normed_ptr : PQNNFloat;
+  //normed_ptr : PQNNFloat;
   //mean, variance, inv_std : QNNFloat;
 begin
     out_dim := patch_size * patch_size * in_channels;
@@ -2239,7 +2394,6 @@ begin
 
     (* LayerNorm (no affine) -> scale *)
     normed := TMemoryBlock.Create(seq * dim);
-    normed_ptr := normed;
     for s := 0 to seq-1 do begin
         //xr := src + s * dim;
         //nr := normed + s * dim;
@@ -2249,7 +2403,7 @@ begin
         //variance := QNNVariance(dim, xr, mean);
         //inv_std = 1.0 / sqrt(variance + 1e-6); (* Final LayerNorm uses 1e-6 *)
         //QNNFusedBiasMulScale(nr, xr, scale, -mean, inv_std, dim);
-        QNNNorm(dim, normed_ptr + s*dim, src + s*dim, scale)
+        QNNNorm(dim, normed + s*dim, src + s*dim, scale)
     end;
 
     (* Linear projection: dim -> out_dim *)
@@ -2257,7 +2411,7 @@ begin
     for s := 0 to seq-1 do
         //for i = 0 to out_dim-1 do
         //    dst[s*out_dim + i] := dst[s*out_dim + i] + linear_bias[i];
-        QNNAdd(dst + s*out_dim, final_layer.linear_bias, out_dim);
+        QNNAddInplace(dst + s*out_dim, final_layer.linear_bias, out_dim);
     scale.free;
     normed.free;
 end;
@@ -2332,11 +2486,11 @@ function TTransformerZI.forward(const latent: TMemoryBlock; const latent_h,
 var patch_feat, H_tokens, W_tokens, img_seq, refiner_total
     , img_pad, cap_pad, img_padded, cap_padded, unified_seq, needed, i, s, h, w, out_ch : longint;
   t_emb : array[0..255] of QNNFloat;
-  img_patches, img_emb, cap_emb, cap_normed, cap_padded_feats, img_out, final_out : TMemoryBlock;
+  img_patches, img_emb, cap_emb, cap_normed, cap_padded_feats, img_out, final_out, t_embMem : TMemoryBlock;
   cap_pos, img_pos, unified_pos : TArray<longint>;
   img_patches_ptr, cap_padded_feats_ptr, img_emb_ptr, cap_emb_ptr, unified : PQNNFloat;
 begin
-
+    t_embMem.assignPtr(PQNNFloat(@t_emb[0]), [length(t_emb)]);
     patch_feat := patch_size * patch_size * in_channels;  (* 64 *)
 
     H_tokens      := latent_h div patch_size;
@@ -2371,7 +2525,7 @@ begin
 
     (* 1. Timestep embedding *)
 
-    timeStepEmbed(@t_emb[0], timestep);
+    timeStepEmbed(t_embMem, timestep);
 
     (* 2. Patchify image -> [img_seq, patch_feat] *)
     img_patches := TMemoryBlock.Create(img_padded * patch_feat);
@@ -2388,7 +2542,7 @@ begin
     img_emb_ptr := img_emb;
     QNNMatMulNT(img_emb, img_patches, x_emb_weight, img_padded, patch_feat, dim);
     for s := 0 to img_padded-1 do
-        QNNAdd(img_emb_ptr + s*dim, x_emb_bias, dim);
+        QNNAddInplace(img_emb_ptr + s*dim, x_emb_bias, dim);
         //for i := 0 to dim-1 do
         //    img_emb[s * dim + i] := img_emb[s * dim + i] + x_emb_bias[i];
     img_patches.free;
@@ -2412,7 +2566,7 @@ begin
                cap_feats + (cap_seq_len - 1) * cap_feat_dim,
                cap_feat_dim );
 
-    QNNRMSNorm(cap_normed, cap_padded_feats, cap_emb_norm, cap_padded, cap_feat_dim);
+    QNNRMSNormRows(cap_normed, cap_padded_feats, cap_emb_norm, cap_padded, cap_feat_dim);
     QNNMatMulNT(cap_emb, cap_normed, cap_emb_linear_w, cap_padded, cap_feat_dim, dim);
 
     cap_padded_feats.free;
@@ -2421,7 +2575,7 @@ begin
     for s := 0 to cap_seq_len-1 do //cap_padded-1 do  // todo should be to cap_seq_len-1, see the next fot to know why
         //for (int i = 0; i < dim; i++)
         //    cap_emb[s * dim + i] += tf->cap_emb_linear_b[i];
-        QNNAdd(cap_emb_ptr + s*dim, cap_emb_linear_b, dim);
+        QNNAddInplace(cap_emb_ptr + s*dim, cap_emb_linear_b, dim);
 
     (* Apply pad token to caption padding positions *)
     for s := cap_seq_len to cap_padded-1 do
@@ -2453,14 +2607,14 @@ begin
 
     (* 5. Noise refiner: image-only self-attention with modulation *)
     for i := 0 to n_refiner-1 do begin
-        blockForward(img_emb, noise_refiner[i], pointer(img_pos), nil, @t_emb[0], img_padded);
+        blockForward(img_emb, noise_refiner[i], pointer(img_pos), nil, t_embMem, img_padded);
         if assigned(substep_callback) then
             substep_callback(SUBSTEP_DOUBLE_BLOCK, i, refiner_total);
     end;
 
     (* 6. Context refiner: caption-only self-attention without modulation *)
     for i := 0 to n_refiner-1 do begin
-        blockForward(cap_emb, context_refiner[i], pointer(cap_pos), nil, nil, cap_padded);
+        blockForward(cap_emb, context_refiner[i], pointer(cap_pos), nil, TArray<QNNFLoat>(nil), cap_padded);
         if assigned(substep_callback) then
             substep_callback(SUBSTEP_DOUBLE_BLOCK, n_refiner + i, refiner_total);
     end;
@@ -2479,7 +2633,7 @@ begin
 
     (* 8. Main transformer layers *)
     for i := 0 to n_layers-1 do begin
-        blockForward(unified, layers[i], pointer(unified_pos), nil, @t_emb[0], unified_seq);
+        blockForward(unified, layers[i], pointer(unified_pos), nil, t_embMem, unified_seq);
         if assigned(substep_callback) then
             substep_callback(SUBSTEP_SINGLE_BLOCK, i, n_layers);
     end;
@@ -2549,25 +2703,26 @@ procedure TTransformerZI.timeStepEmbed(const dst: TMemoryBlock;
   const t: QNNFloat);
 var
   sin_emb : array[0..255] of QNNFloat;
-  hidden : TMemoryBlock;
+  hidden, sinEmbMem : TMemoryBlock;
 begin
-    sinusoidalEmbeddingZi(@sin_emb[0], t*1000.0, 256);
+    sinEmbMem.assignPtr(@sin_emb[0], [length(sin_emb)]);
+    sinusoidalEmbeddingZi(PQNNFloat(@sin_emb[0]), t*1000.0, 256);
 
     (* MLP: Linear(256 -> t_emb_mid_size) + SiLU + Linear(t_emb_mid_size -> adaln_dim) *)
     hidden := TMemoryBlock.Create(t_emb_mid_size);
 
     (* Linear 0 *)
-    QNNMatMulNT(hidden, @sin_emb[0], t_emb_mlp0_weight, 1, 256, t_emb_mid_size);
-    QNNAdd(hidden, t_emb_mlp0_bias, t_emb_mid_size);
+    QNNMatMulNT(hidden, sinEmbMem, t_emb_mlp0_weight, 1, 256, t_emb_mid_size);
+    QNNAddInplace(hidden, t_emb_mlp0_bias, t_emb_mid_size);
     //for i := 0 to t_emb_mid_size-1 do
     //    hidden[i] := hidden[i] + t_emb_mlp0_bias[i];
 
     (* SiLU *)
-    QNNSilu(hidden, t_emb_mid_size);
+    QNNSiluInplace(hidden, t_emb_mid_size);
 
     (* Linear 2 *)
     QNNMatMulNT(dst, hidden, t_emb_mlp2_weight, 1, t_emb_mid_size, adaln_dim);
-    QNNAdd(dst, t_emb_mlp2_bias, adaln_dim);
+    QNNAddInplace(dst, t_emb_mlp2_bias, adaln_dim);
     //for i := 0 to adaln_dim-1 do
     //    dst[i] := dst[i] + t_emb_mlp2_bias[i];
 

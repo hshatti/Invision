@@ -370,7 +370,8 @@ function TSafeTensor.asSingle: TArray<single>;
 begin
   assert(dtype in [stBF16, stF16, stF32], 'ERROR : unsupported tensor type!');
   if use_mmap and (dType=stf32) then begin
-    result := DataF32;
+    result.DataType := dtF32;
+    result.DataPtr  := DataF32;
     result.shape := shape;
     result.size:=count();
     exit;
@@ -409,11 +410,13 @@ function TSafeTensor.asBF16(const use_mmap: boolean): TMemoryBlock;
 begin
   assert(dtype = stBF16, 'ERROR : Tensor type is not BF16!');
   if use_mmap then begin
-    result := DataBF16;
+    result.DataType := dtBf16;
+    result.DataPtr  := DataBF16;
     result.shape := shape;
     result.size := count();
+    result.name := name
   end else
-    result := TMemoryBlock.Create(shape, dtBF16, DataBF16);
+    result := TMemoryBlock.Create(shape, name, dtBF16, DataBF16);
   //move(data^, result[0], sizeof(BF16)*length(result))
 end;
 
@@ -427,11 +430,13 @@ function TSafeTensor.asFP16(const use_mmap: boolean): TMemoryBlock;
 begin
   assert(dtype = stF16, 'ERROR : Tensor type is not F16!');
   if use_mmap then begin
-    result := DataF16;
+    result.DataType := dtF16;
+    result.DataPtr  := DataF16;
     result.shape := shape;
     result.size := count();
+    result.name := name
   end else
-    result := TMemoryBlock.Create(shape, dtF16, DataF16);
+    result := TMemoryBlock.Create(shape, name, dtF16, DataF16);
 end;
 
 function TSafeTensor.count(): int64;
@@ -494,7 +499,7 @@ begin
     tensors[i].shape := t['shape'];
     //assert(assigned(tensors[i].shape), 'ERROR : tensor['+intToStr(i)+']['+tensors[i].name+'] has no shape!');
     if not(assigned(tensors[i].shape)) then
-      tensors[i].shape := [tensors[i].data_size div (tensors[i].dtype.bits div 8)];
+      tensors[i].shape := [tensors[i].data_size * 8 div tensors[i].dtype.bits()];// + 4 means incase of single 4 bit align to one byte
     tensors[i].ndim := length(tensors[i].shape);
     inc(o, tensors[i].data_size);
     if (o<offset) or (file_size < o) then begin
@@ -524,27 +529,29 @@ begin
 end;
 
 function TSafeTensorFile.getData(const safeTensor: PSafeTensor; const useMMap: boolean): TMemoryBlock;
+var shp : TArray<int64>;
 begin
+  if assigned(safetensor.shape) then
+    shp := safetensor.shape
+  else
+    shp := [safeTensor.count()];
   if useMMAp then begin
+    result.name := safeTensor.name;
     case safetensor.dtype of
-      stF32  : result := PSingle(PByte(data) + safeTensor.data_offset);
-      stF16  : result := PFP16(PByte(data) + safeTensor.data_offset);
-      stBF16 : result := PBF16(PByte(data) + safeTensor.data_offset);
-      sti32  : result := PLongint(PByte(data) + safeTensor.data_offset);
-      sti16  : result := PSmallInt(PByte(data) + safeTensor.data_offset);
-      sti8   : result := PShortInt(PByte(data) + safeTensor.data_offset);
+      stF32  : result.assignPtr(PSingle(PByte(data) + safeTensor.data_offset  ), shp);
+      stF16  : result.assignPtr(PFP16(PByte(data) + safeTensor.data_offset    ), shp);
+      stBF16 : result.assignPtr(PBF16(PByte(data) + safeTensor.data_offset    ), shp);
+      sti32  : result.assignPtr(PLongint(PByte(data) + safeTensor.data_offset ), shp);
+      sti16  : result.assignPtr(PSmallInt(PByte(data) + safeTensor.data_offset), shp);
+      sti8   : result.assignPtr(PShortInt(PByte(data) + safeTensor.data_offset), shp);
       //sti4   : result := PINT4(PByte(data) + safeTensor.data_offset);
     else
       assert(false, 'ERROR : tensor DataType '+safetensor.dtype.toString()+' is not implemented.')
     end;
   end
   else begin
-    result := TMemoryBlock.Create(safeTensor.count(), safeTensor.dtype.toDataType(), PByte(data) + safeTensor.data_offset);
+    result := TMemoryBlock.Create(safeTensor.count(), safeTensor.name, safeTensor.dtype.toDataType(), PByte(data) + safeTensor.data_offset);
   end;
-  if assigned(safetensor.shape) then
-    result.shape := safetensor.shape
-  else
-    result.shape := [safeTensor.count()];
 end;
 
 function TSafeTensorFile.getData(const tensorName: string; const useMMap: boolean): TMemoryBlock;
@@ -584,18 +591,17 @@ begin
           case d.dtype of
             stBF16:
               begin
-                result := TMemoryBlock.Create(d.shape, dtF32);
+                result := TMemoryBlock.Create(d.shape, d.name, dtF32);
                 BF16ToSingle(d.count(), d.data, result);
               end;
             stF16:
               begin
-                result := TMemoryBlock.Create(d.shape, dtF32);
+                result := TMemoryBlock.Create(d.shape, d.name, dtF32);
                 FP16ToSingle(d.count(), d.data, result);
               end;
             stF32: begin
-              result.DataType := dtF32;
-              result.DataPtr := d.data;
-              result.shape := d.shape;
+              result.assignPtr(d.DataF32, d.shape);
+              result.name := d.name;
             end
           else
             assert(false, 'ERROR [getTnsorData] : Unimplemented data type conversion : '+ name);
@@ -606,17 +612,17 @@ begin
           case d.dtype of
             stBF16:
               begin
-                result := TMemoryBlock.Create(d.shape, dtF32);
+                result := TMemoryBlock.Create(d.shape, d.name, dtF32);
                 BF16ToSingle(d.count(), d.data, result);
               end;
             stF16:
               begin
-                result := TMemoryBlock.Create(d.shape, dtF32);
+                result := TMemoryBlock.Create(d.shape, d.name, dtF32);
                 FP16ToSingle(d.count(), d.data, result);
               end;
             stF32:
               begin
-                result := TMemoryBlock.Create(d.shape, dtF32);
+                result := TMemoryBlock.Create(d.shape, d.name, dtF32);
                 move(d.data^, psingle(result)^, d.count*sizeOf(Single));
               end;
           else
@@ -644,12 +650,11 @@ begin
         if useMMap then begin
           assert(d.dtype = stBF16, 'ERROR [getTnsorDataB16] : Cannot convert data type in mmap mode : '+name);
           result := default(TMemoryBlock);
-          result.DataType:=dtBf16;
-          result.DataPtr := d.data;
-          result.shape := d.shape;
+          result.assignPtr(d.DataBF16, d.shape);
+          result.name := d.name;
         end else begin
           sz := d.count() * sizeOf(BF16);
-          result := TMemoryBlock.create(d.shape, dtBF16);
+          result := TMemoryBlock.create(d.shape, d.name, dtBF16);
           assert(assigned(result.Data16), 'ERROR [getTnsorDataB16] : not enough memory to allocate for : '+name);
           if d.dtype=stBf16 then
             move(d.data^, PBF16(result)^, sz)
