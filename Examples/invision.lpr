@@ -113,7 +113,7 @@ begin
   //img := flux.generate('a cute pink raccoon holding a "I''m Sad" signboard', params);
   //img := flux.generate('a young lady with sunglasses, red hair and little frickles', params);
   //img := flux.generate('A mechanical dog made of brass gears and copper pipes, steampunk style, highly detailed.', params);
-  img := flux.generate('Make donald trump wear a headset', params);
+  img := flux.generate('Make donald trump take a dump', params);
   //setLength(imgs, 2);
   //imgs[0] := TQNNImage.loadFromFile('c:\development\flux2.c\car.jpg');
   //imgs[1] := TQNNImage.loadFromFile('c:\development\flux2.c\beach.jpg');
