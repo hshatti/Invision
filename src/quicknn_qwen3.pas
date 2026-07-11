@@ -1,4 +1,4 @@
-﻿unit quicknn_qwen3;
+unit quicknn_qwen3;
 
 {$ifdef FPC}
   {$PackRecords C}
@@ -20,7 +20,7 @@
 interface
 
 uses
-  SysUtils, quicknn_common, quicknn_kernels, safetensor, quickjson;
+  SysUtils, quicknn_common, {$if defined(USE_CPU)} quicknn_cpu {$else} quicknn_kernels{$endif}, safetensor, quickjson;
 
 (* ========================================================================
  * Architecture Constants
@@ -219,7 +219,7 @@ var
 var
   byteEncoderInitializd : boolean = false;
 
-procedure QNNHeadRSMNorm(const dst, src, weight: PQNNFloat; const seqLen, numHeads, headDim:longint);
+procedure QNNHeadRSMNorm(const dst, src, weight: TMemoryBlock; const seqLen, numHeads, headDim:longint);
 var i , off:longint;
 begin
   for i:=0 to seqLen-1 do begin
@@ -228,10 +228,10 @@ begin
   end;
 end;
 
-procedure QWEN3ApplyRoPE(const Q, K, cosCache, sinCache: PQNNFloat; const seqLen, numQHeads, numKHeads, headDim:longint);
+procedure QWEN3ApplyRoPE(const Q, K, cosCache, sinCache: TMemoryBlock; const seqLen, numQHeads, numKHeads, headDim:longint);
 begin
-  QNNApplyRoPE(Q, cosCache, sinCache, seqLen, numQHeads, headDim);
-  QNNApplyRoPE(K, cosCache, sinCache, seqLen, numKHeads, headDim);
+  QNNApplyRoPE3(Q, cosCache, sinCache, seqLen, numQHeads, headDim);
+  QNNApplyRoPE3(K, cosCache, sinCache, seqLen, numKHeads, headDim);
 end;
 
 procedure initByteEncoder();
@@ -701,7 +701,7 @@ procedure TQWEN3Attention.forward(const seq_len: longint; const attention_mask: 
 var scale :QNNFloat;
     kv_dim, q_dim, heads_per_kv, kv_h, h, i, j : longint;
     q_strided, k_strided, v_strided, out_strided : TMemoryBlock;
-    scores_ptr : PQNNFloat;
+    scores : TMemoryBlock;
 begin
   assert(assigned(model) and assigned(layer),'ERROR : failed attention forward, no model loaded!');
   kv_dim := model.num_kv_heads * model.head_dim;
@@ -718,14 +718,14 @@ begin
   QNNHeadRSMNorm(model.k_buf, model.k_buf, layer.attn.k_norm_weight, seq_len, model.num_kv_heads, model.head_dim);
 
   (* Apply RoPE *)
-  QNNApplyRoPE(model.q_buf, model.rope_cos, model.rope_sin, seq_len, model.num_heads   , model.head_dim);
-  QNNApplyRoPE(model.k_buf, model.rope_cos, model.rope_sin, seq_len, model.num_kv_heads, model.head_dim);
+  QNNApplyRoPE3(model.q_buf, model.rope_cos, model.rope_sin, seq_len, model.num_heads   , model.head_dim);
+  QNNApplyRoPE3(model.k_buf, model.rope_cos, model.rope_sin, seq_len, model.num_kv_heads, model.head_dim);
 
   heads_per_kv := model.num_heads div model.num_kv_heads;
 
   for h := 0 to model.num_heads-1 do begin
     kv_h := h div heads_per_kv;  (* Which KV head to use *)
-    scores_ptr := model.attn_scores + h*seq_len*seq_len;
+    scores := model.attn_scores + h*seq_len*seq_len;
 
     (* Q accessed directly with strided lda (avoids copy)
      * Q[s,d] = q_buf[s * q_dim + h * head_dim + d] *)
@@ -738,17 +738,19 @@ begin
     cblas_gemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                         seq_len, seq_len, model.head_dim,
                         scale, q_strided, q_dim, k_strided, kv_dim,
-                        0.0, scores_ptr, seq_len);
+                        0.0, scores, seq_len);
 
     (* Apply causal mask and attention mask, then softmax *)
-    for i := 0 to seq_len-1 do begin          // todo [QWEN3Attention.Forward] optimize for GPU?
-        for j := 0 to seq_len-1 do begin
-            if (j > i) or assigned(attention_mask) and (attention_mask[j] = 0) then begin
-                scores_ptr[i*seq_len + j] := Single.NegativeInfinity;//-1e9;
-            end;
-        end;
-        QNNSoftmax(scores_ptr + i*seq_len, seq_len);
-    end;
+    //for i := 0 to seq_len-1 do begin          // todo [QWEN3Attention.Forward] optimize for GPU?
+    //    for j := 0 to seq_len-1 do begin
+    //        if (j > i) or assigned(attention_mask) and (attention_mask[j] = 0) then begin
+    //            scores_ptr[i*seq_len + j] := Single.NegativeInfinity;//-1e9;
+    //        end;
+    //    end;
+    //    QNNSoftmax(scores_ptr + i*seq_len, seq_len);
+    //end;
+    QNNMatTriangularFill(seq_len, scores, QNNFloat.NegativeInfinity, pointer(attention_mask));
+    QNNSoftmaxRows(scores, seq_len, seq_len);
     (* V can be accessed directly with strided lda (avoids copy)
      * V[s,d] = v_buf[s * kv_dim + kv_h * head_dim + d] *)
     v_strided := model.v_buf + kv_h*model.head_dim;
@@ -761,7 +763,7 @@ begin
      * scores: [seq_len, seq_len], V: [seq_len, head_dim] with ldb=kv_dim *)
      cblas_gemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
                  seq_len, model.head_dim, seq_len,
-                 1.0, scores_ptr, seq_len, v_strided, kv_dim,
+                 1.0, scores, seq_len, v_strided, kv_dim,
                  0.0, out_strided, q_dim);
   end;
 
@@ -892,9 +894,9 @@ begin
   half_dim := head_dim div 2;
   max_seq := QWEN3_MAX_SEQ_LEN;
 
-  rope_cos     := TMemoryBlock.Create([max_seq, half_dim]);
-  rope_sin     := TMemoryBlock.Create([max_seq, half_dim]);
-  QNNComputeRoPE(rope_cos, rope_sin, max_seq, head_dim, rope_theta);
+  rope_cos     := TMemoryBlock.Create([max_seq, half_dim], 'QWEN3_LOAD_ROPE_COS' );
+  rope_sin     := TMemoryBlock.Create([max_seq, half_dim], 'QWEN3_LOAD_ROPE_SIN');
+  QNNComputeRoPE2(rope_cos, rope_sin, max_seq, head_dim, rope_theta);
   reInitialize();
 
 
@@ -984,24 +986,24 @@ var i, seq_len:longint;
 begin
   extraction_mode:=0;
   seq_len := QWEN3_MAX_SEQ_LEN;
-  hidden_state  := TMemoryBlock.Create([seq_len , hidden_size]);
-  residual      := TMemoryBlock.Create([seq_len , hidden_size]);
-  q_buf         := TMemoryBlock.Create([seq_len , num_heads , head_dim]);
-  k_buf         := TMemoryBlock.Create([seq_len , num_kv_heads , head_dim]);
-  v_buf         := TMemoryBlock.Create([seq_len , num_kv_heads , head_dim]);
-  attn_scores   := TMemoryBlock.Create([num_heads , seq_len , seq_len]);
-  attn_out      := TMemoryBlock.Create([seq_len , num_heads , head_dim]);
-  mlp_gate      := TMemoryBlock.Create([seq_len , intermediate_size]);
-  mlp_up        := TMemoryBlock.Create([seq_len , intermediate_size]);
-  mlp_out       := TMemoryBlock.Create([seq_len , hidden_size]);
-  norm_buf      := TMemoryBlock.Create([seq_len , hidden_size]);
+  hidden_state  := TMemoryBlock.Create([seq_len , hidden_size],             'QWEN3_INIT_hidden_state' );
+  residual      := TMemoryBlock.Create([seq_len , hidden_size],             'QWEN3_INIT_residual'     );
+  q_buf         := TMemoryBlock.Create([seq_len , num_heads , head_dim],    'QWEN3_INIT_q_buf'        );
+  k_buf         := TMemoryBlock.Create([seq_len , num_kv_heads , head_dim], 'QWEN3_INIT_k_buf'        );
+  v_buf         := TMemoryBlock.Create([seq_len , num_kv_heads , head_dim], 'QWEN3_INIT_v_buf'        );
+  attn_scores   := TMemoryBlock.Create([num_heads , seq_len , seq_len],     'QWEN3_INIT_attn_scores'  );
+  attn_out      := TMemoryBlock.Create([seq_len , num_heads , head_dim],    'QWEN3_INIT_attn_out'     );
+  mlp_gate      := TMemoryBlock.Create([seq_len , intermediate_size],       'QWEN3_INIT_mlp_gate'     );
+  mlp_up        := TMemoryBlock.Create([seq_len , intermediate_size],       'QWEN3_INIT_mlp_up'       );
+  mlp_out       := TMemoryBlock.Create([seq_len , hidden_size],             'QWEN3_INIT_mlp_out'      );
+  norm_buf      := TMemoryBlock.Create([seq_len , hidden_size],             'QWEN3_INIT_norm_buf'     );
 
-  attn_q_head   := TMemoryBlock.Create([seq_len , head_dim]);
-  attn_v_head   := TMemoryBlock.Create([seq_len , head_dim]);
-  attn_out_head := TMemoryBlock.Create([seq_len , head_dim]);
+  attn_q_head   := TMemoryBlock.Create([seq_len , head_dim],                'QWEN3_INIT_attn_q_head'  );
+  attn_v_head   := TMemoryBlock.Create([seq_len , head_dim],                'QWEN3_INIT_attn_v_head'  );
+  attn_out_head := TMemoryBlock.Create([seq_len , head_dim],                'QWEN3_INIT_attn_out_head');
 
   for i := 0 to high(layer_outputs) do
-      layer_outputs[i] := TMemoryBlock .Create([seq_len,hidden_size]);
+      layer_outputs[i] := TMemoryBlock .Create([seq_len,hidden_size], 'QWEN3_LAYER_OUT_'+intToStr(i));
 
 end;
 
@@ -1100,7 +1102,7 @@ begin
             if assigned(text_progress_callback) then
                 text_progress_callback(layer_idx, last_layer+1)
         end;
-    result := TMemoryBlock.Create([seq_len , text_dim]);
+    result := TMemoryBlock.Create([seq_len , text_dim], 'QWEN3_RESULT');
 
     if zimage then
         QNNCopy(result, layer_outputs[0], seq_len * hidden_size)

@@ -21,7 +21,7 @@ unit quicknn_transformers;
 {.$define USE_MULTITHREADING}
 
 interface
-uses SysUtils, math, safetensor, quicknn_common, quicknn_kernels, quicknn_vae, quicknn_qwen3, quickjson
+uses SysUtils, math, safetensor, quicknn_common, {$if defined(USE_CPU)} quicknn_cpu {$else} quicknn_kernels{$endif}, quicknn_vae, quicknn_qwen3, quickjson
   {$ifdef USE_MULTITHREADING}
   , steroids
   {$endif}
@@ -139,7 +139,7 @@ type
     fc1_weight: TSingles; // [hidden, 256]
     fc2_weight: TSingles; // [hidden, hidden]
     sincos_dim: longint; // 256 for FLUX.2-klein
-    procedure forward(const dst, sinCos:TMemoryBlock; const hidden: longint; const outSilu:PQNNFloat = nil);
+    procedure forward(const dst, sinCos:TMemoryBlock; const hidden: longint; const outSilu:TMemoryBlock);
     procedure free();
   end;
 
@@ -219,7 +219,7 @@ type
     attn_v_t: TSingles;                    //  [max_seq, hidden] transposed V
     attn_out_t: TSingles;                  //  [max_seq, hidden] transposed output
     attn_scores: TSingles;                 //  [num_heads, seq, seq] attention scores (BLAS/Metal only)
-    attn_scores_alloc: size_t;            //  Currently allocated size
+    attn_scores_alloc: Int64;            //  Currently allocated size
     work_seq_alloc: longint;              //  Currently allocated sequence length for work buffers
     attn_cat_k: TSingles;                  //  [max_seq, hidden] concatenated K
     attn_cat_v: TSingles;                  //  [max_seq, hidden] concatenated V
@@ -282,7 +282,7 @@ type
     procedure getCachedImgRoPE(const patch_h, patch_w:longint; var cosOut : TSingles; var sinOut:TSingles);
     procedure getCachedTxtRoPE(const txt_seq:longint; var cosOut : TSingles; var sinOut:TSingles);
     procedure getCachedCombinedRoPE(const img_h, img_w, ref_h, ref_w, t_offset:longint; var cosOut:TSingles; var sinOut:TSingles);
-    procedure multiHeadForward(const dst, Q, K, V:PQNNFloat; const seq{, heads, head_dim}:longint);
+    procedure multiHeadForward(const dst, Q, K, V:TMemoryBlock; const seq{, heads, head_dim}:longint);
     procedure jointAttentionForward(
               const img_out, txt_out,
                     img_Q  , img_K, img_V,
@@ -474,16 +474,16 @@ type
                           const block : TBlockZi; const pos_ids : Plongint;
                           const mask : PLongint; const seq : longint);
       procedure ffnForward(const dst, src:TMemoryBlock; const block:TBlockZi; const seq:longint);
-      procedure blockForward(const dst : PQNNFloat; const block : TBlockZi;
+      procedure blockForward(const dst : TMemoryBlock; const block : TBlockZi;
                               const pos_ids:PLongint; const mask:PLongint;
                               const t_emb:TMemoryBlock; const seq:longint);
       procedure preComputeRope();
-      procedure finalComputeScale(const scale:TMemoryBlock; const t_emb:PQNNFloat);
-      procedure finalForward(const dst, src:TMemoryBlock; const t_emb:PQNNFloat; const seq: longint);
-      function forward(const latent : TMemoryBlock; const latent_h, latent_w:longint; const timestep : QNNFloat; const cap_feats: PQNNFloat; const cap_seq_len:longint):TMemoryBlock;
+      procedure finalComputeScale(const scale, t_emb:TMemoryBlock);
+      procedure finalForward(const dst, src, t_emb:TMemoryBlock; const seq: longint);
+      function forward(const latent : TMemoryBlock; const latent_h, latent_w:longint; const timestep : QNNFloat; const cap_feats: TMemoryBlock; const cap_seq_len:longint):TMemoryBlock;
       procedure applyRope(const dst:PQNNFloat; const pos_ids:PLongint; const seq, n_heads:longint);
       procedure timeStepEmbed(const dst:TMemoryBlock; const t:QNNFloat);
-      function sampleEuler(const z:PQNNFloat; const batch{, channels}, h, w, patch_size:longint; const cap_feats:PQNNFloat;const cap_seq:longint; const schedule:PQNNFloat; const num_steps:longint; const progress_callback:TStepCallback = nil):TMemoryBlock;
+      function sampleEuler(const z:TMemoryBlock; const batch{, channels}, h, w, patch_size:longint; const cap_feats:TMemoryBlock;const cap_seq:longint; const schedule:PQNNFloat; const num_steps:longint; const progress_callback:TStepCallback = nil):TMemoryBlock;
       procedure load(const modelDir: string; const adim, an_heads, an_layers, an_refiner, acap_feat_dim, ain_channels, apatch_size: longint; const arope_theta: QNNFloat; const aAxes_dims: Plongint; const useMMAP:boolean = true);
       procedure free();
   end;
@@ -688,7 +688,7 @@ end;
 { TTimeEmbed }
 
 procedure TTimeEmbed.forward(const dst, sinCos: TMemoryBlock;
-  const hidden: longint; const outSilu: PQNNFloat);
+  const hidden: longint; const outSilu: TMemoryBlock);
 begin
   //if length(workspace)< 1*hidden then
   //  setLength(workspace, hidden);
@@ -798,14 +798,14 @@ begin
   final_proj_weight := sf_files.getTensorDataMemBlock('proj_out.weight', use_mmap);
   if use_bf16 then
       final_proj_weight_bf16 := sf_files.getTensorDataMemBlockBF16('proj_out.weight', use_mmap);
-  rope_freqs := TSingles.Create([max_seq_len , head_dim]);
+  rope_freqs := TSingles.Create([max_seq_len , head_dim], 'FLUX_LOAD_ROPE_FREQS');
   if rope_freqs.isAssigned() then
       QNNComputeRoPE(rope_freqs, max_seq_len, head_dim, rope_theta);
 
   (* Small constant-size buffers - always allocate *)
-  t_emb_silu     := TSingles.Create(hidden_size);
-  double_mod_img := TSingles.Create(hidden_size * 6);
-  double_mod_txt := TSingles.Create(hidden_size * 6);
+  t_emb_silu     := TSingles.Create(hidden_size    , 'FLUX_LOAD_t_emb_silu');
+  double_mod_img := TSingles.Create(hidden_size * 6, 'FLUX_LOAD_double_mod_img');
+  double_mod_txt := TSingles.Create(hidden_size * 6, 'FLUX_LOAD_double_mod_txt');
 end;
 
 function TTransformerFlux.isLoaded(): boolean;
@@ -816,17 +816,17 @@ end;
 //{$define USE_FLASHATTENTION}
 
 procedure TTransformerFlux.reInitialize(const totalSeq: longint);
-var fused_dim, hidden, mlp:longint; attn_scores_need:size_t;
+var fused_dim, hidden, mlp:longint; attn_scores_need:TArray<int64>;
 begin
   {$ifndef USE_FLASHATTENTION}
-  attn_scores_need := num_heads*totalSeq*totalSeq;
+  attn_scores_need := [num_heads, totalSeq, totalSeq];
 
-  if attn_scores_need > attn_scores_alloc then begin
+  if product(attn_scores_need) > attn_scores_alloc then begin
       if attn_scores.isAssigned() then
         attn_scores.reSize(attn_scores_need)
       else
-        attn_scores := TMemoryBlock.Create(attn_scores_need);
-      attn_scores_alloc := attn_scores_need;
+        attn_scores := TMemoryBlock.Create(attn_scores_need, 'FLUS_INIT_ATTN_SCORES');
+      attn_scores_alloc := product(attn_scores_need);
   end;
   {$endif}
 
@@ -861,33 +861,33 @@ begin
 
 
 
-  img_hidden := TMemoryBlock.Create([totalSeq, hidden]);
-  txt_hidden := TMemoryBlock.Create([totalSeq, hidden]);
+  img_hidden := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_IMG_HIDDEN');
+  txt_hidden := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_TXT_HIDDEN');
   (* work2 needs to hold fused QKV+MLP output: seq * (hidden*3 + mlp*2) + mod_params (hidden*3)
   * fused_dim = hidden*3 + mlp*2 = 3072*3 + 9216*2 = 27648 *)
   fused_dim := hidden * 3 + mlp * 2;
 
   work_size           := totalSeq*fused_dim + hidden*3 ;
 
-  work1               := TMemoryBlock.Create([totalSeq, hidden]);
-  work2               := TMemoryBlock.Create(work_size);
-  attn_q_t            := TMemoryBlock.Create([totalSeq, hidden]);
-  attn_k_t            := TMemoryBlock.Create([totalSeq, hidden]);
-  attn_v_t            := TMemoryBlock.Create([totalSeq, hidden]);
-  attn_out_t          := TMemoryBlock.Create([totalSeq, hidden]);
-  attn_cat_k          := TMemoryBlock.Create([totalSeq, hidden]);
-  attn_cat_v          := TMemoryBlock.Create([totalSeq, hidden]);
-  single_q            := TMemoryBlock.Create([totalSeq, hidden]);
-  single_k            := TMemoryBlock.Create([totalSeq, hidden]);
-  single_v            := TMemoryBlock.Create([totalSeq, hidden]);
-  single_mlp_gate     := TMemoryBlock.Create([totalSeq, mlp]);
-  single_mlp_up       := TMemoryBlock.Create([totalSeq, mlp]);
-  single_attn_out     := TMemoryBlock.Create([totalSeq, hidden] );
-  single_concat       := TMemoryBlock.Create([totalSeq, (hidden + mlp)]);
-  ffn_gate            := TMemoryBlock.Create([totalSeq, mlp   ]);
-  ffn_up              := TMemoryBlock.Create([totalSeq, mlp   ]);
-  double_img_attn_out := TMemoryBlock.Create([totalSeq, hidden]);
-  double_txt_attn_out := TMemoryBlock.Create([totalSeq, hidden]);
+  work1               := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_work1          ');
+  work2               := TMemoryBlock.Create(work_size         , 'FLUX_INIT_work2          ');
+  attn_q_t            := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_attn_q_t       ');
+  attn_k_t            := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_attn_k_t       ');
+  attn_v_t            := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_attn_v_t       ');
+  attn_out_t          := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_attn_out_t     ');
+  attn_cat_k          := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_attn_cat_k     ');
+  attn_cat_v          := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_attn_cat_v     ');
+  single_q            := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_single_q       ');
+  single_k            := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_single_k       ');
+  single_v            := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_single_v       ');
+  single_mlp_gate     := TMemoryBlock.Create([totalSeq, mlp]   , 'FLUX_INIT_single_mlp_gate');
+  single_mlp_up       := TMemoryBlock.Create([totalSeq, mlp]   , 'FLUX_INIT_single_mlp_up  ');
+  single_attn_out     := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_single_attn_out');
+  single_concat       := TMemoryBlock.Create([totalSeq, (hidden + mlp)], 'FLUX_INIT_single_concat');
+  ffn_gate            := TMemoryBlock.Create([totalSeq, mlp   ], 'FLUX_INIT_ffn_gate');
+  ffn_up              := TMemoryBlock.Create([totalSeq, mlp   ], 'FLUX_INIT_ffn_up');
+  double_img_attn_out := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_double_img_attn_out');
+  double_txt_attn_out := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_double_txt_attn_out');
   work_seq_alloc := totalSeq;
 
 
@@ -988,8 +988,8 @@ begin
     if cached_ref_rope_cos.isAssigned() then cached_ref_rope_cos.free();
     if cached_ref_rope_sin.isAssigned() then cached_ref_rope_sin.free();
     size := seq * axisDim * 4 ;
-    cached_ref_rope_cos := TMemoryBlock.Create([seq, axisDim * 4]);
-    cached_ref_rope_sin := TMemoryBlock.Create([seq, axisDim * 4]);
+    cached_ref_rope_cos := TMemoryBlock.Create([seq, axisDim * 4], 'FLUX_GET_CACHED_ROPE_COS');
+    cached_ref_rope_sin := TMemoryBlock.Create([seq, axisDim * 4], 'FLUX_GET_CACHED_ROPE_SIN');
     cached_ref_h := patch_h;
     cached_ref_w := patch_w;
     cached_ref_t_offset := t_offset;
@@ -1020,8 +1020,8 @@ begin
     if cached_img_rope_cos.isAssigned() then cached_img_rope_cos.free;
     if cached_img_rope_sin.isAssigned() then cached_img_rope_sin.free;
 
-    cached_img_rope_cos := TMemoryBlock.Create([seq, axisDim, 4]);
-    cached_img_rope_sin := TMemoryBlock.Create([seq, axisDim, 4]);
+    cached_img_rope_cos := TMemoryBlock.Create([seq, axisDim, 4], 'FLUX_GET_CACHED_IMG_ROPE_COS');
+    cached_img_rope_sin := TMemoryBlock.Create([seq, axisDim, 4], 'FLUX_GET_CACHED_IMG_ROPE_SIN');
     cached_img_h := patch_h;
     cached_img_w := patch_w;
     QNNComputeRoPE2D(cached_img_rope_cos, cached_img_rope_sin, patch_h, patch_w, axisDim, rope_theta);
@@ -1047,8 +1047,8 @@ begin
       end;
     if cached_txt_rope_cos.isAssigned() then cached_txt_rope_cos.free();
     if cached_txt_rope_sin.isAssigned() then cached_txt_rope_sin.free();
-    cached_txt_rope_cos := TMemoryBlock.Create([txt_seq, headDim]);
-    cached_txt_rope_sin := TMemoryBlock.Create([txt_seq, headDim]);
+    cached_txt_rope_cos := TMemoryBlock.Create([txt_seq, headDim], 'FLUX_GET_CACHED_TXT_ROPE_COS');
+    cached_txt_rope_sin := TMemoryBlock.Create([txt_seq, headDim], 'FLUX_GET_CACHED_TXT_ROPE_SIN');
     cached_txt_seq := txt_seq;
     QNNComputeRoPEText(cached_txt_rope_cos, cached_txt_rope_sin, txt_seq, axis_dim, rope_theta);
     cosOut := cached_txt_rope_cos;
@@ -1082,8 +1082,8 @@ begin
         end;
     if cached_combined_rope_cos.isAssigned() then cached_combined_rope_cos.free();
     if cached_combined_rope_sin.isAssigned() then cached_combined_rope_sin.free();
-    cached_combined_rope_cos := TMemoryBlock.Create([combined_seq, axisDim, 4]);
-    cached_combined_rope_sin := TMemoryBlock.Create([combined_seq, axisDim, 4]);
+    cached_combined_rope_cos := TMemoryBlock.Create([combined_seq, axisDim, 4], 'FLUX_GET_CACHED_COMBINED_ROPE_COS');
+    cached_combined_rope_sin := TMemoryBlock.Create([combined_seq, axisDim, 4], 'FLUX_GET_CACHED_COMBINED_ROPE_SIN');
     cached_combined_img_h := img_h;
     cached_combined_img_w := img_w;
     cached_combined_ref_h := ref_h;
@@ -1107,11 +1107,12 @@ end;
 
 
 
-procedure TTransformerFlux.multiHeadForward(const dst, Q, K, V: PQNNFloat; const seq{, heads, head_dim}: longint);
+procedure TTransformerFlux.multiHeadForward(const dst, Q, K, V: TMemoryBlock;
+  const seq: longint);
 var
   hidden, headDim : longint;
   scale : QNNFloat;
-  scores : PQNNFloat;
+  scores : TMemoryBlock;
 
 {$ifdef FPC}
 procedure worker(const start, finish:IntPtr; const data:pointer);
@@ -1122,7 +1123,7 @@ begin
 {$endif}
 var
   i  : longint;
-  qh, kh, vh, oh, sh : PQNNFloat;
+  qh, kh, vh, oh, sh : TMemoryBlock;
 begin
     for i := start to finish do begin
         qh := Q      + i*headDim;
@@ -1162,7 +1163,7 @@ begin
   QNNFlashAttention(dst, Q, K, V, seq, seq, num_heads, head_dim, 1/sqrt(head_dim));
 {$else}
   scores := attn_scores;
-  {$ifdef USE_MULTITHREADING}
+  {$ifdef _USE_MULTITHREADING}
   mp.&for(worker, 0, num_heads-1) ;
   {$else}
   worker(0, num_heads-1, nil);
@@ -1178,7 +1179,7 @@ procedure TTransformerFlux.jointAttentionForward(const img_out, txt_out, img_Q,
 var
   totalSeq, hidden, headDim:longint;
   scale : QNNFloat;
-  cat_k, cat_v, scores : PQNNFloat;
+  cat_k, cat_v, scores : TMemoryBlock;
   {$ifdef fpc}
   procedure worker(const start, finish:IntPtr; const data:pointer);
 {$else}
@@ -1190,7 +1191,7 @@ begin
     i: longint;
     imgQh, imgSh, imgOh,
     txtQh, txtSh, txtOh,
-    kh, vh : PQNNFloat;
+    kh, vh : TMemoryBlock;
   begin
     for i:= start to finish do begin
             imgQh := img_Q   + i*headDim;
@@ -1261,7 +1262,7 @@ begin
   QNNFlashAttention(txt_out, txt_q, cat_k, cat_v, txt_seq, totalSeq, num_heads, head_dim, scale);
 {$else}
   scores := attn_scores;
-  {$ifdef USE_MULTITHREADING}
+  {$ifdef _USE_MULTITHREADING}
   mp.&for(worker, 0, num_heads-1);
   {$else}
   worker(0, num_heads-1, nil)
@@ -1504,7 +1505,7 @@ begin
     total_seq := img_seq+txt_seq;
     reInitialize(total_seq);
 
-    t_emb := TMemoryBlock.Create(hidden_size);
+    t_emb := TMemoryBlock.Create(hidden_size, 'FLUX_FW_TIME_EMB');
     t_sincos := QNNTimestepEmbedding(timestep * 1000.0, time_embed.sincos_dim, 10000.0);
 
     time_embed.forward(t_emb, t_sincos,  hidden_size, t_emb_silu);
@@ -1514,7 +1515,7 @@ begin
 
     getCachedTxtRoPE(txt_seq, txt_rope_cos, txt_rope_sin);
 
-    img_transposed := TMemoryBlock.Create([img_seq, latent_channels]);
+    img_transposed := TMemoryBlock.Create([img_seq, latent_channels], 'FLUX_FW_IMG_TRANSPOSED');
     //for pos := 0 to img_seq -1 do
     //    for c := 0 to latent_channels -1 do
     //        img_transposed[pos*latent_channels + c] := img_latent[c*img_seq + pos];
@@ -1551,7 +1552,7 @@ begin
       if assigned(substep_callback) then
           substep_callback(SUBSTEP_DOUBLE_BLOCK, i, num_double_layers);
     end;
-    concat_hidden := TMemoryBlock.Create([total_seq, hidden_size]);
+    concat_hidden := TMemoryBlock.Create([total_seq, hidden_size], 'FLUX_FW_CONCAT_HIDDEN');
     QNNCopy(concat_hidden                                 , txt_hidden, txt_seq*hidden_size);
     QNNCopy(concat_hidden + txt_seq*hidden_size, img_hidden, img_seq*hidden_size);
     for i := 0 to num_single_layers -1 {high(single_blocks)} do begin
@@ -1580,9 +1581,9 @@ begin
     final_shift := final_mod + hidden_size;
     final_norm := work1;
     QNNAdaLN(final_norm, img_hidden, final_shift, final_scale, img_seq, hidden_size, -6);
-    output_nlc := TMemoryBlock.create([img_seq, latent_channels]);
+    output_nlc := TMemoryBlock.create([img_seq, latent_channels], 'FLUX_FW_OUT_NLC');
     QNNLINEAR_BF16_OR_F32(output_nlc, final_norm, final_proj_weight, final_proj_weight_bf16, img_seq, hidden_size, latent_channels);
-    result := TMemoryBlock.Create([img_seq, latent_channels]);
+    result := TMemoryBlock.Create([img_seq, latent_channels], 'FLUX_FW_RESULT');
     //for pos := 0 to img_seq -1 do
     //    for c := 0 to latent_channels -1 do
     //        result[c * img_seq+pos] := output_nlc[pos * latent_channels+c];
@@ -1614,14 +1615,14 @@ begin
     combined_img_seq := img_seq + ref_seq;
     total_seq := combined_img_seq + txt_seq;
     reInitialize(total_seq);
-    t_emb := TMemoryBlock.Create(hidden_size);
+    t_emb := TMemoryBlock.Create(hidden_size, 'FLUX_FW_TIME_EMBED');
     t_sincos := QNNTimeStepEmbedding(timestep * 1000.0, time_embed.sincos_dim, 10000.0);
     time_embed.forward(t_emb, t_sincos, hidden_size, t_emb_silu);
     t_sincos.free;
     getCachedCombinedRoPE(img_h, img_w, ref_h, ref_w, t_offset, combined_rope_cos,  combined_rope_sin);
 
     getCachedTxtRoPE(txt_seq, txt_rope_cos, txt_rope_sin);
-    combined_transposed := TMemoryBlock.Create([combined_img_seq, latent_channels]);
+    combined_transposed := TMemoryBlock.Create([combined_img_seq, latent_channels], 'FLUX_FW_COMBINED_TRANSPOSED');
     //combined_transposed_ptr := combined_transposed;
     //img_latent_ptr := img_latent;
     //ref_latent_ptr := ref_latent;
@@ -1637,7 +1638,7 @@ begin
     QNNMatTranspose(combined_transposed + img_seq*latent_channels, ref_latent, latent_channels, img_seq);
 
 
-    combined_hidden := TMemoryBlock.Create([combined_img_seq, hidden_size]);
+    combined_hidden := TMemoryBlock.Create([combined_img_seq, hidden_size], 'FLUX_FW_COMBINED_HIDDEN');
     QNNLINEAR_BF16_OR_F32(combined_hidden, combined_transposed, img_in_weight, img_in_weight_bf16, combined_img_seq, latent_channels, hidden_size);
     combined_transposed.free;
     QNNLINEAR_BF16_OR_F32(txt_hidden, txt_emb, txt_in_weight, txt_in_weight_bf16, txt_seq, text_dim, hidden_size);
@@ -1660,7 +1661,7 @@ begin
         if assigned(substep_callback) then
             substep_callback(SUBSTEP_DOUBLE_BLOCK, i, num_double_layers)
     end;
-    concat_hidden := TMemoryBlock.Create([total_seq, hidden_size]);
+    concat_hidden := TMemoryBlock.Create([total_seq, hidden_size], 'FLUX_FW_CONACT_HIDDEN');
     QNNCopy(concat_hidden, txt_hidden, txt_seq * hidden_size);
     QNNCopy(concat_hidden + txt_seq*hidden_size, combined_hidden, combined_img_seq*hidden_size);
     for i := 0 to num_single_layers -1 do begin
@@ -1670,7 +1671,7 @@ begin
         if assigned(substep_callback) then
             substep_callback(SUBSTEP_SINGLE_BLOCK, i, num_single_layers)
     end;
-    img_hidden :=  TMemoryBlock.Create([img_seq, hidden_size]);
+    img_hidden :=  TMemoryBlock.Create([img_seq, hidden_size], 'FLUX_FW_IMG_HIDDEN');
     QNNCopy(img_hidden, concat_hidden + txt_seq*hidden_size, img_seq * hidden_size);
     concat_hidden.free;
     QNNSilu(t_emb_silu, t_emb, hidden_size);
@@ -1686,9 +1687,9 @@ begin
     final_norm := work1;
     QNNAdaLN(final_norm, img_hidden, final_shift, final_scale, img_seq, hidden_size, -6);
     img_hidden.free;
-    output_nlc := TMemoryBlock.create([img_seq, latent_channels]);
+    output_nlc := TMemoryBlock.create([img_seq, latent_channels], 'FLUX_FW_OUTPUT_NLC');
     QNNLINEAR_BF16_OR_F32(output_nlc, final_norm, final_proj_weight, final_proj_weight_bf16, img_seq, hidden_size, latent_channels);
-    result := TMemoryBlock.create([img_seq, latent_channels]);
+    result := TMemoryBlock.create([img_seq, latent_channels], 'FLUX_FW_RESULT');
     //output_nlc_ptr := output_nlc;
     //result_ptr := result;
     //for pos := 0 to img_seq -1 do
@@ -1727,13 +1728,13 @@ begin
     combined_img_seq := img_seq+total_ref_seq;
     total_seq := combined_img_seq+txt_seq;
     reInitialize(total_seq);
-    t_emb := TMemoryBlock.Create(hidden_size);
+    t_emb := TMemoryBlock.Create(hidden_size, 'FLUX_FW_TIME_EMB');
 
     t_sincos := QNNTimestepEmbedding(timestep * 1000.0, time_embed.sincos_dim, 10000.0);
     time_embed.forward(t_emb, t_sincos,  hidden_size, t_emb_silu);
     t_sincos.free;
-    combined_rope_cos := TMemoryblock.Create([combined_img_seq, axis_dim, 4]);
-    combined_rope_sin := TMemoryblock.Create([combined_img_seq, axis_dim, 4]);
+    combined_rope_cos := TMemoryblock.Create([combined_img_seq, axis_dim, 4], 'FLUX_FW_COMBINED_ROPE_COS');
+    combined_rope_sin := TMemoryblock.Create([combined_img_seq, axis_dim, 4], 'FLUX_FW_COMBINED_ROPE_SIN');
     QNNComputeRoPE2D(combined_rope_cos, combined_rope_sin, img_h, img_w, axis_dim, rope_theta);
     rope_offset := img_seq * axis_dim * 4;
     for r := 0 to high(refs) do begin
@@ -1742,7 +1743,7 @@ begin
     end;
 
     getCachedTxtRoPE(txt_seq, txt_rope_cos, txt_rope_sin);
-    combined_transposed := TMemoryBlock.Create([combined_img_seq, latent_channels]);
+    combined_transposed := TMemoryBlock.Create([combined_img_seq, latent_channels], 'FLUX_FW_COMBINED_TRANSPOSED');
     //combined_transposed_ptr := combined_transposed;
     //img_latent_ptr := img_latent;
     //for pos := 0 to img_seq -1 do
@@ -1760,7 +1761,7 @@ begin
             QNNMatTranspose(combined_transposed + r*img_seq*latent_channels, refs[r].latent, latent_channels, refs[r].h*refs[r].w);
             //trans_offset := trans_offset + ref_seq
         end;
-    combined_hidden := TMemoryBlock.Create([combined_img_seq, hidden_size]);
+    combined_hidden := TMemoryBlock.Create([combined_img_seq, hidden_size], 'FLUX_FW_COMBINED_HIDDEN');
     QNNLINEAR_BF16_OR_F32(combined_hidden, combined_transposed, img_in_weight, img_in_weight_bf16, combined_img_seq, latent_channels, hidden_size);
     combined_transposed.free;
     QNNLINEAR_BF16_OR_F32(txt_hidden, txt_emb, txt_in_weight, txt_in_weight_bf16, txt_seq, text_dim, hidden_size);
@@ -1781,7 +1782,7 @@ begin
             if assigned(substep_callback) then
                 substep_callback(SUBSTEP_DOUBLE_BLOCK, i, num_double_layers)
         end;
-    concat_hidden := TMemoryBlock.Create([total_seq, hidden_size]);
+    concat_hidden := TMemoryBlock.Create([total_seq, hidden_size], 'FLUX_FW_CONCAT)HIDDEN');
     QNNCopy(concat_hidden, txt_hidden, txt_seq*hidden_size);
     QNNCopy(concat_hidden + txt_seq*hidden_size, combined_hidden, combined_img_seq*hidden_size);
     combined_hidden.free;
@@ -1795,7 +1796,7 @@ begin
     end;
     combined_rope_cos.free;
     combined_rope_sin.free;
-    img_hidden := TMemoryBlock.Create([img_seq, hidden_size]);
+    img_hidden := TMemoryBlock.Create([img_seq, hidden_size], 'FLUX_FW_IMG_HIDDEN');
     QNNCopy(img_hidden, concat_hidden + txt_seq*hidden_size, img_seq*hidden_size);
     concat_hidden.free;
     QNNSilu(t_emb_silu, t_emb, hidden_size);
@@ -1811,9 +1812,9 @@ begin
     final_norm := work1;
     QNNAdaLN(final_norm, img_hidden, final_shift, final_scale, img_seq, hidden_size);
     img_hidden.free;
-    output_nlc := TMemoryBlock.Create([img_seq, latent_channels]);
+    output_nlc := TMemoryBlock.Create([img_seq, latent_channels], 'FLUX_FW_OUTPUT_NLC');
     QNNLINEAR_BF16_OR_F32(output_nlc, final_norm, final_proj_weight, final_proj_weight_bf16, img_seq, hidden_size, latent_channels);
-    result := TMemoryBlock.Create([img_seq, latent_channels]);
+    result := TMemoryBlock.Create([img_seq, latent_channels], 'FLUX_FW_RESULT');
     //result_ptr := result;
     //output_nlc_ptr := output_nlc;
     //for pos := 0 to img_seq -1 do
@@ -1838,7 +1839,7 @@ var
     schedule_ptr : PQNNFloat;
 begin
     latent_size := batch * channels * h * w;
-    result := TMemoryBlock.Create([batch, channels, h, w]);
+    result := TMemoryBlock.Create([batch, channels, h, w], 'FLUX_SAMPLE_EULER_RESULT');
 
     QNNcopy(result, z, latent_size);
     schedule_ptr := schedule;
@@ -1879,7 +1880,7 @@ begin
   latent_size := batch * channels * h * w;
 
   (* Working buffer *)
-  result := TMemoryBlock.Create([batch, channels, h, w]);
+  result := TMemoryBlock.Create([batch, channels, h, w], 'FLUX_SAMPLE_EULER_RESULT');
   QNNcopy(result, z, latent_size);
   schedule_ptr := schedule;
   for step := 0 to num_steps -1 do begin
@@ -1931,7 +1932,7 @@ var
     img: TQNNImage;
 begin
     latent_size := batch * channels * h * w;
-    result := TMemoryblock.create([batch, channels, h, w]);
+    result := TMemoryblock.create([batch, channels, h, w], 'FLUX_SAMPLE_EULER_RESULT');
     resultPtr := result;
     QNNCopy(result, z, latent_size);
     schedule_ptr := schedule;
@@ -1981,7 +1982,7 @@ var
     img:TQNNImage;
 begin
     latent_size := batch * channels * h * w;
-    result := TMemoryBlock.Create([batch, channels, h, w]);
+    result := TMemoryBlock.Create([batch, channels, h, w], 'FLUX_SAMPLE_EULER_RESULT');
     resultPtr := result;
     QNNcopy(result, z, latent_size);
     schedule_ptr := schedule;
@@ -2029,7 +2030,7 @@ var
 begin
   latent_size := batch * channels * h * w;
 
-  result := TMemoryBlock.create([batch, channels, h, w]);
+  result := TMemoryBlock.create([batch, channels, h, w], 'FLUX_SAMPLE_EULER_RESULT');
   QNNCopy(result, z, latent_size);
   schedule_ptr := schedule;
   for step := 0 to num_steps -1 do begin
@@ -2161,7 +2162,7 @@ procedure TTransformerZI.attentionForward(const dst, src: TMemoryBlock;
 var
   Q, K, V, attn_out
     {, qi, kj, oi, vj}: TMemoryBlock;
-  scores : PQNNFloat;
+  scores : TMemoryBlock;
   d, h, i, j: longint;
   scale, dot, s : QNNFloat;
   dd:TArray<single>;
@@ -2177,8 +2178,8 @@ begin
     QNNMatMulNT(V, src, block.attn_v_weight, seq, dim, dim);
 
     (* QK normalization *)
-    QNNQKRMSNorm(Q, block.attn_norm_q, seq, n_heads, head_dim);
-    QNNQKRMSNorm(K, block.attn_norm_k, seq, n_heads, head_dim);
+    QNNRMSNormSeq(Q, block.attn_norm_q, seq, n_heads, head_dim);
+    QNNRMSNormSeq(K, block.attn_norm_k, seq, n_heads, head_dim);
 
 
     (* Apply RoPE *)
@@ -2207,10 +2208,11 @@ begin
 
         (* Apply mask: set padding positions to -inf *)
         if assigned(mask) then
-            for i := 0 to seq-1 do
-                for j := 0 to seq-1 do
-                    if mask[j]=0 then
-                        scores[i*seq + j] := -1e9;
+            QNNMaskFill(scores, mask, Single.NegativeInfinity, seq, seq);
+            //for i := 0 to seq-1 do
+            //    for j := 0 to seq-1 do
+            //        if mask[j]=0 then
+            //            scores[i*seq + j] := -1e9;
 
         (* Softmax *)
         QNNSoftmaxRows(scores, seq, seq);
@@ -2254,14 +2256,14 @@ begin
     QNNMatMulNT(dst, gate, block.ffn_w2, seq, ffn_dim, dim);
 end;
 
-procedure TTransformerZI.blockForward(const dst: PQNNFloat;
+procedure TTransformerZI.blockForward(const dst: TMemoryBlock;
   const block: TBlockZi; const pos_ids: PLongint; const mask: PLongint;
   const t_emb: TMemoryBlock; const seq: longint);
 var
     _mod: array[0..4 * {dim}3840-1 ] of QNNFloat;
     modMem: TMemoryBlock;
     n, i, s: longint;
-    scale_msa, gate_msa, scale_mlp, gate_mlp: PQNNFloat;
+    scale_msa, gate_msa, scale_mlp, gate_mlp: TMemoryBlock;
     norm_out, attn_out, ffn_out, scaled : TMemoryBlock;
 begin
     n := seq * dim;
@@ -2278,11 +2280,11 @@ begin
             QNNMatMulNT(modMem, t_emb, block.adaln_weight, 1, adaln_dim, 4 * dim);
             //for i := 0 to 4 * dim -1 do
             //    _mod[i] := _mod[i] + block.adaln_bias[i];
-            QNNAddInplace(@_mod[0], block.adaln_bias, 4*dim);
-            scale_msa := @_mod[0];
-            gate_msa  := @_mod[dim];
-            scale_mlp := @_mod[2 * dim];
-            gate_mlp  := @_mod[3 * dim];
+            QNNAddInplace(modMem, block.adaln_bias, 4*dim);
+            scale_msa := modMem;
+            gate_msa  := modMem + dim;
+            scale_mlp := modMem + 2 * dim;
+            gate_mlp  := modMem + 3 * dim;
             //for i := 0 to dim -1 do
             //    begin
             //        scale_msa[i] := 1.0+scale_msa[i];
@@ -2348,8 +2350,8 @@ begin
         half_d  := d div 2;
         max_pos := axes_lens[ax];
 
-        rope_cos[ax] := TMemoryBlock.create(max_pos*half_d);
-        rope_sin[ax] := TMemoryBlock.create(max_pos*half_d);
+        rope_cos[ax] := TMemoryBlock.create(max_pos*half_d, 'ZI_PRECOMPUTE_ROPE_COS_'+IntToStr(ax));
+        rope_sin[ax] := TMemoryBlock.create(max_pos*half_d, 'ZI_PRECOMPUTE_ROPE_SIN_'+IntToStr(ax));
         ropeCos := rope_cos[ax];
         ropeSin := rope_sin[ax];
         for pos := 0 to max_pos-1 do begin
@@ -2363,15 +2365,14 @@ begin
     end
 end;
 
-procedure TTransformerZI.finalComputeScale(const scale: TMemoryBlock;
-  const t_emb: PQNNFloat);
+procedure TTransformerZI.finalComputeScale(const scale, t_emb: TMemoryBlock);
 var
   silu_emb : array[0..255] of QNNFLoat;
   siluEmbMem : TMemoryBlock;
 begin
     siluEmbMem.assignPtr(PQNNFloat(@silu_emb[0]), [length(silu_emb)]);
-    QNNCopy(@silu_emb[0], t_emb, adaln_dim);
-    QNNSiluInplace(@silu_emb[0], adaln_dim);
+    QNNCopy(siluEmbMem, t_emb, adaln_dim);
+    QNNSiluInplace(siluEmbMem, adaln_dim);
 
     QNNMatMulNT(scale, siluEmbMem, final_layer.adaln_weight, 1, adaln_dim, dim);
     //for (int i = 0; i < dim; i++)
@@ -2379,8 +2380,8 @@ begin
     QNNFusedBiasAdd(scale, final_layer.adaln_bias, scale, 1.0, dim);
 end;
 
-procedure TTransformerZI.finalForward(const dst, src: TMemoryBlock;
-  const t_emb: PQNNFloat; const seq: longint);
+procedure TTransformerZI.finalForward(const dst, src, t_emb: TMemoryBlock;
+  const seq: longint);
 var
   out_dim, s : longint;
   scale, normed : TMemoryBlock;
@@ -2389,11 +2390,11 @@ var
 begin
     out_dim := patch_size * patch_size * in_channels;
 
-    scale := TMemoryBlock.Create(dim);
+    scale := TMemoryBlock.Create(dim, 'ZI_FINAL_SCALE');
     finalComputeScale(scale, t_emb);
 
     (* LayerNorm (no affine) -> scale *)
-    normed := TMemoryBlock.Create(seq * dim);
+    normed := TMemoryBlock.Create([seq, dim], 'ZI_FINAL_NORMED');
     for s := 0 to seq-1 do begin
         //xr := src + s * dim;
         //nr := normed + s * dim;
@@ -2481,14 +2482,14 @@ end;
 
 
 function TTransformerZI.forward(const latent: TMemoryBlock; const latent_h,
-  latent_w: longint; const timestep: QNNFloat; const cap_feats: PQNNFloat;
+  latent_w: longint; const timestep: QNNFloat; const cap_feats: TMemoryBlock;
   const cap_seq_len: longint): TMemoryBlock;
 var patch_feat, H_tokens, W_tokens, img_seq, refiner_total
     , img_pad, cap_pad, img_padded, cap_padded, unified_seq, needed, i, s, h, w, out_ch : longint;
   t_emb : array[0..255] of QNNFloat;
   img_patches, img_emb, cap_emb, cap_normed, cap_padded_feats, img_out, final_out, t_embMem : TMemoryBlock;
   cap_pos, img_pos, unified_pos : TArray<longint>;
-  img_patches_ptr, cap_padded_feats_ptr, img_emb_ptr, cap_emb_ptr, unified : PQNNFloat;
+  unified : TMemoryBlock;
 begin
     t_embMem.assignPtr(PQNNFloat(@t_emb[0]), [length(t_emb)]);
     patch_feat := patch_size * patch_size * in_channels;  (* 64 *)
@@ -2514,11 +2515,11 @@ begin
         work_attn.free;
         work_ffn .free;
 
-        work_x     := TMemoryBlock.Create(unified_seq * dim);
-        work_tmp   := TMemoryBlock.Create(unified_seq * dim * 4);
-        work_qkv   := TMemoryBlock.Create(unified_seq * dim * 3);
-        work_attn  := TMemoryBlock.Create(unified_seq * unified_seq);
-        work_ffn   := TMemoryBlock.Create(unified_seq * ffn_dim * 2);
+        work_x     := TMemoryBlock.Create([unified_seq, dim]        , 'ZI_FW_work_x');
+        work_tmp   := TMemoryBlock.Create([unified_seq, dim, 4]     , 'ZI_FW_work_tmp');
+        work_qkv   := TMemoryBlock.Create([unified_seq, dim, 3]     , 'ZI_FW_work_qkv');
+        work_attn  := TMemoryBlock.Create([unified_seq, unified_seq], 'ZI_FW_work_attn');
+        work_ffn   := TMemoryBlock.Create([unified_seq, ffn_dim, 2] , 'ZI_FW_work_ffn');
         work_alloc := needed;
         max_seq := unified_seq;
     end;
@@ -2528,41 +2529,45 @@ begin
     timeStepEmbed(t_embMem, timestep);
 
     (* 2. Patchify image -> [img_seq, patch_feat] *)
-    img_patches := TMemoryBlock.Create(img_padded * patch_feat);
-    img_patches_ptr := img_patches;
+    img_patches := TMemoryBlock.Create([img_padded, patch_feat], 'ZI_FW_IMG_PATCHES');
+    //img_patches_ptr := img_patches;
 
     patchifyZi(img_patches, latent, in_channels, latent_h, latent_w, patch_size);
 
     (* Pad image patches (repeat last token) *)
+    // todo ZI.Forward  use QNNBroadcast instead of copy loop
     for i := img_seq to img_padded-1 do
-        QNNCopy(img_patches_ptr + i * patch_feat, img_patches_ptr + (img_seq - 1) * patch_feat, patch_feat);
+        QNNCopy(img_patches + i * patch_feat, img_patches + (img_seq - 1) * patch_feat, patch_feat);
 
     (* Embed image: [img_padded, patch_feat] -> [img_padded, dim] *)
-    img_emb := TMemoryBlock.Create(img_padded * dim);
-    img_emb_ptr := img_emb;
+    img_emb := TMemoryBlock.Create([img_padded, dim], 'ZI_FW_IMG_EMB');
+    //img_emb_ptr := img_emb;
     QNNMatMulNT(img_emb, img_patches, x_emb_weight, img_padded, patch_feat, dim);
     for s := 0 to img_padded-1 do
-        QNNAddInplace(img_emb_ptr + s*dim, x_emb_bias, dim);
+        QNNAddInplace(img_emb + s*dim, x_emb_bias, dim);
         //for i := 0 to dim-1 do
         //    img_emb[s * dim + i] := img_emb[s * dim + i] + x_emb_bias[i];
     img_patches.free;
 
 
     (* Apply pad token to image padding positions *)
+    // todo ZI.Forward  use QNNBroadcast instead of copy loop
     for s := img_seq to img_padded-1 do
-        QNNCopy(img_emb_ptr + s*dim, x_pad_token, dim);
+        QNNCopy(img_emb + s*dim, x_pad_token, dim);
 
     (* 3. Caption embedding: RMSNorm -> Linear *)
-    cap_emb := TMemoryBlock.Create(cap_padded * dim);
-    cap_emb_ptr := cap_emb;
-    cap_normed := TMemoryBlock.Create(cap_padded * cap_feat_dim);
+    cap_emb := TMemoryBlock.Create([cap_padded, dim], 'ZI_FW_CAP_EMB');
+    //cap_emb_ptr := cap_emb;
+    cap_normed := TMemoryBlock.Create([cap_padded, cap_feat_dim], 'ZI_FW_CAP_NORMED');
 
     (* Pad caption features (repeat last token) *)
-    cap_padded_feats := TMemoryBlock.Create(cap_padded * cap_feat_dim);
-    cap_padded_feats_ptr := cap_padded_feats;
+    cap_padded_feats := TMemoryBlock.Create([cap_padded, cap_feat_dim], 'ZI_FW_CAP_PADDED_FEATS');
+    //cap_padded_feats_ptr := cap_padded_feats;
     QNNCopy(cap_padded_feats, cap_feats, cap_seq_len * cap_feat_dim);
+    (* Apply pad token to image padding positions *)
+       // todo ZI.Forward  use QNNBroadcast instead of copy loop
     for s := cap_seq_len to cap_padded-1 do
-        QNNCopy(cap_padded_feats_ptr + s * cap_feat_dim,
+        QNNCopy(cap_padded_feats + s * cap_feat_dim,
                cap_feats + (cap_seq_len - 1) * cap_feat_dim,
                cap_feat_dim );
 
@@ -2575,11 +2580,11 @@ begin
     for s := 0 to cap_seq_len-1 do //cap_padded-1 do  // todo should be to cap_seq_len-1, see the next fot to know why
         //for (int i = 0; i < dim; i++)
         //    cap_emb[s * dim + i] += tf->cap_emb_linear_b[i];
-        QNNAddInplace(cap_emb_ptr + s*dim, cap_emb_linear_b, dim);
+        QNNAddInplace(cap_emb + s*dim, cap_emb_linear_b, dim);
 
     (* Apply pad token to caption padding positions *)
     for s := cap_seq_len to cap_padded-1 do
-        QNNCopy(cap_emb_ptr + s*dim, cap_pad_token, dim);
+        QNNCopy(cap_emb + s*dim, cap_pad_token, dim);
 
     (* 4. Build position IDs *)
 
@@ -2641,17 +2646,17 @@ begin
     setLength(unified_pos, 0);
 
     (* 9. Final layer: extract image tokens only, then project *)
-    img_out := TMemoryBlock.Create(img_seq * dim);
+    img_out := TMemoryBlock.Create([img_seq, dim], 'ZI_FW_IMG_OUT');
     QNNCopy(img_out, unified, img_seq * dim);
 
     out_ch := patch_size * patch_size * in_channels;  (* 64 *)
-    final_out := TMemoryBlock.Create(img_seq * out_ch);
-    finalForward(final_out, img_out, @t_emb[0], img_seq);
+    final_out := TMemoryBlock.Create([img_seq * out_ch], 'ZI_FW_FINALE_OUT');
+    finalForward(final_out, img_out, t_embMem, img_seq);
     img_out.free();
     if assigned(substep_callback) then
         substep_callback(SUBSTEP_FINAL_LAYER, 0, 1);
     (* 10. Unpatchify: [n_patches, 64] -> [16, latent_h, latent_w] *)
-    result := TMemoryBlock.Create(in_channels * latent_h * latent_w);
+    result := TMemoryBlock.Create([in_channels, latent_h, latent_w], 'ZI_FW_RESULT');
     UnpatchifyZi(result, final_out, in_channels, latent_h, latent_w, patch_size);
     final_out.free();
 end;
@@ -2709,7 +2714,7 @@ begin
     sinusoidalEmbeddingZi(PQNNFloat(@sin_emb[0]), t*1000.0, 256);
 
     (* MLP: Linear(256 -> t_emb_mid_size) + SiLU + Linear(t_emb_mid_size -> adaln_dim) *)
-    hidden := TMemoryBlock.Create(t_emb_mid_size);
+    hidden := TMemoryBlock.Create(t_emb_mid_size, 'ZI_TIMESTEP_EMBED');
 
     (* Linear 0 *)
     QNNMatMulNT(hidden, sinEmbMem, t_emb_mlp0_weight, 1, 256, t_emb_mid_size);
@@ -2729,9 +2734,9 @@ begin
     hidden.free();
 end;
 
-function TTransformerZI.sampleEuler(const z: PQNNFloat; const batch{, channels},
-  h, w, patch_size: longint; const cap_feats: PQNNFloat;
-  const cap_seq: longint; const schedule: PQNNFloat; const num_steps: longint;
+function TTransformerZI.sampleEuler(const z: TMemoryBlock; const batch, h, w,
+  patch_size: longint; const cap_feats: TMemoryBlock; const cap_seq: longint;
+  const schedule: PQNNFloat; const num_steps: longint;
   const progress_callback: TStepCallback): TMemoryBlock;
 var
     latent_size, step_h, step_w, step_ch, step_latent_size, step, i, decode_h, decode_w: longint;
@@ -2740,7 +2745,7 @@ var
     img: TQNNImage;
 begin
     latent_size := batch * in_channels{channels} * h * w;
-    result := TMemoryBlock.Create([batch, in_channels{channels}, h, w]);
+    result := TMemoryBlock.Create([batch, in_channels{channels}, h, w], 'ZI_SAMPLE_EULER_RESULT');
     QNNCopy(result, z, latent_size);
 //    step_latent := nil;
     step_h := h;
@@ -2751,7 +2756,7 @@ begin
         step_h := h div patch_size;
         step_w := w div patch_size;
         step_latent_size := batch * step_ch * step_h * step_w;
-        step_latent := TMemoryBlock.create([batch, step_ch, step_h, step_w])
+        step_latent := TMemoryBlock.create([batch, step_ch, step_h, step_w], 'ZI_SAMPEL_EULER_STEP_LATENT')
       end
     end;
     for step := 0 to num_steps -1 do
@@ -2768,7 +2773,6 @@ begin
             //    result[i] := result[i] + (dt * (-model_out[i]));
             QNNFusedScaleAdd(result, model_out, result, -dt, latent_size);
             model_out.free;
-
             if assigned(progress_callback) then
                 progress_callback(step+1, num_steps);
             if assigned(step_image_callback) and assigned(step_image_vae) and (step+1 < num_steps) then begin
@@ -2900,7 +2904,7 @@ end;
 procedure TTransformerZI.free;
 var i:longint;
 begin
-  if not mmap_f32_weights then begin
+  //if not mmap_f32_weights then begin
       t_emb_mlp0_weight.free;
       t_emb_mlp0_bias.free;
       t_emb_mlp2_weight.free;
@@ -2912,7 +2916,7 @@ begin
       x_emb_bias.free;
       x_pad_token.free;
       cap_pad_token.free;
-  end;
+  //end;
 
   if assigned(noise_refiner) then begin
       for i := 0 to high(noise_refiner) do

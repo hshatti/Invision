@@ -458,7 +458,7 @@ void sgemm_nn_naive(
                     C[m*ldc + n] *= BETA;
         }
 #endif
-        #pragma omp parallel for
+//        #pragma omp parallel for
         for (long m=ithread ; m<nthreads; m++)  {   // M
             float* CC = C + m*ldc;
             const float* AA = A + m*lda;
@@ -546,6 +546,7 @@ __declspec(dllexport) void cpp_sgemm(const CBLAS_TRANSPOSE transA, const CBLAS_T
     //prn("done\n");
 }
 
+/*
 __declspec(dllexport) void cblas_sgemm(const CBLAS_ORDER order, const CBLAS_TRANSPOSE transA, const CBLAS_TRANSPOSE transB,
            const int M, const int N, const int K,
            const float alpha, const float *A, const int lda,
@@ -565,6 +566,7 @@ __declspec(dllexport) void cblas_sgemm(const CBLAS_ORDER order, const CBLAS_TRAN
    cpp_sgemm(transA, transB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc, 0, M);
 
 }
+*/
 } // for C
 
 #ifdef EXEC
@@ -669,7 +671,12 @@ int main(int argc, const char** argv){
     for (long i=0; i<REPEAT; i++)
         blas::sgemm_nn(M, N, K, 1.0f, A.data(), K, B.data(), N, 0.0f, C.data(), N);
 //        blas::sgemm_nn_naive(M, N, K, 1.0f, A.data(), K, B.data(), N, 0.0f, C.data(), N);
+    #ifdef MKL
     end = chrono::steady_clock::now();
+    #else
+    auto end = chrono::steady_clock::now();
+    #endif
+
     auto time_blas = chrono::duration_cast<chrono::microseconds>(end - begin).count();
     printf("C [n, n]:\n");
     print_means_and_vars(M*N, C.data());
@@ -689,7 +696,7 @@ int main(int argc, const char** argv){
 
     begin = chrono::steady_clock::now();
     for (long i=0; i<REPEAT; i++)
-        blas::sgemm_tn_naive(M, N, K, 1.0f, A.data(), M, B.data(), N, 0.0f, C.data(), N);
+        blas::sgemm_tn_naive(M, N, K, 1.0f, A.data(), M, B.data(), N, 0.0f, C.data(), N, 0, M - 1);
     end = chrono::steady_clock::now();
     time_blas = chrono::duration_cast<chrono::microseconds>(end - begin).count();
     printf("C [t, n]:\n");

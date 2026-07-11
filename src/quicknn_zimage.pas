@@ -76,7 +76,7 @@ type
 
 implementation
 uses
-  sysutils, quickjson, quicknn_kernels, quicknn_sample
+  sysutils, quickjson, {$if defined(USE_CPU)} quicknn_cpu {$else} quicknn_kernels{$endif}, quicknn_sample
   {$ifdef MSWINDOWS}
   , windows
   {$endif}
@@ -282,7 +282,7 @@ begin
    * [1, in_channels, H/8, W/8] -> [1, latent_ch, H/16, W/16]
    * where latent_ch = in_channels * zi_patch_size * zi_patch_size = 64 *)
   latent_ch := zi_in_channels * zi_patch_size * zi_patch_size;
-  latent := TMemoryBlock.Create([latent_ch, post_h, post_w ]);
+  latent := TMemoryBlock.Create([latent_ch, post_h, post_w ], 'ZI_GENERATE_FROM_EMBEDDINGS_LATENT');
 //printCompare(latent_ch*post_h*post_w, denoised, readTensor());
   QNNPatchify(latent, denoised, 1, zi_in_channels, pre_h, pre_w, zi_patch_size);
 //printCompare(latent_ch*post_h*post_w, latent, readTensor());

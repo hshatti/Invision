@@ -8,6 +8,7 @@ unit nVulkanHelper;
 {$C+} // or {$ASSERTIONS ON} override to compile with assertion routine for SAFE_CALL
 {$pointermath on}
 {$Z4}
+{$T+}
 interface
 uses SysUtils, generics.Collections, math, typinfo, vulkan_api;
 
@@ -34,7 +35,10 @@ const
   GL_COMPUTE_WORK_GROUP_SIZE        = $8267;
   GL_PROGRAM_BINARY_RETRIEVABLE_HINT = $8257 ;
   GL_PROGRAM_BINARY_LENGTH          = $8741 ;
+
 {$endif}
+const
+  MAX_COMMAND_BUFFER_COUNT = $10;
 
 type
   phalf = ^half;
@@ -60,56 +64,15 @@ type
     function getMemoryIndex(const memType:longword; const memPropertyFlags:VkMemoryPropertyFlags): longword;
   end;
 
+  { TVulkanMemory }
+
   TVulkanMemory = record
     buffer : VkBuffer;
     memory : VkDeviceMemory;
     size   : VkDeviceSize;
-    isStaging : boolean
+    isStaging : boolean;
+    class operator initialize({$ifdef FPC}var{$else}out{$endif} mem:TVulkanMemory);
   end;
-
-  TNNOperation = (
-        opActivate
-      , opActivate_swish
-      , opAdd
-      , opAxpy
-      , opBackward_bias
-      , opBackward_dropout
-      , opBackward_maxpool
-      , opBackward_scale
-      , opClamp
-      , opCol2im
-      , opCopy
-      , opCost_l2
-      , opCross_entropy
-      , opFill
-      , opFma
-      , opFma_scalar
-      , opForward_bias
-      , opForward_dropout
-      , opForward_fma
-      , opForward_maxpool
-      , opForward_scale
-      , opGemm_nn
-      , opGemm_nt
-      , opGemm_tn
-      , opGemm_nn_WrapTiling
-      , opGemm_nt_WrapTiling
-      , opGemm_tn_WrapTiling
-      , opGradient
-      , opIm2col
-      , opInverse_sqrt
-      , opMean
-      , opMean_var_gradient
-      , opMul
-      , opNorm
-      , opNorm_gradient
-      , opPower
-      , opScale
-      , opSoftmax
-      , opSub
-      , opUpsample
-      , opVariance
-    );
 
   {$if not defined(Int4)}
   Int4 = -8..7;
@@ -127,6 +90,8 @@ type
     class operator implicit(const src:Half    ):TVulkanArg;
     class operator implicit(const src:Single  ):TVulkanArg;
     class operator implicit(const src:double  ):TVulkanArg;
+    class operator implicit(const src:TVulkanMemory  ):TVulkanArg;
+
 
     class operator implicit(const src:TVulkanArg):pointer ;
     class operator implicit(const src:TVulkanArg):shortint;
@@ -140,6 +105,7 @@ type
   public
     //argType : TVulkanArgType;
     //value   : uint64;
+    Size      : uint64;
     case argType: TVulkanArgType of
       atPointer :(vPointer: pointer );
       atInt4    :(vInt4   : int4);
@@ -167,6 +133,11 @@ type
     procedure free();
   end;
 
+  TVulkanCommand = record
+    Buffers : array [0..MAX_COMMAND_BUFFER_COUNT-1] of VkCommandBuffer;
+    Fences  : array [0..MAX_COMMAND_BUFFER_COUNT-1] of VkFence;
+  end;
+
   TVulkanArgs = TArray<TVulkanArg>;
 
   const
@@ -174,23 +145,22 @@ type
     VULKAN_ARGS_MAX_CONSTANTS_COUNT = $10;
 
   type
+    TKernelHandle = type longint;
   { TVulkanCompute }
 
   TVulkanCompute = class
   type
     //TVulkanOperations = TDictionary<TNNOperation, TVulkanPipeline>;
     TVulkanConstants = array [0..VULKAN_ARGS_MAX_CONSTANTS_COUNT-1] of longint;
+    //TSPIVTDictionary = TDictionary<rawbytestring, TKernelHandle>;
   const
-    VK_BUFFER_USAGE_STORAGE = longword(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or longword(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or longword(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    VK_BUFFER_USAGE_STAGING = longword(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or longword(VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    VK_BUFFER_USAGE_STORAGE = longword(VK_BUFFER_USAGE_TRANSFER_DST_BIT) {or longword(VK_BUFFER_USAGE_TRANSFER_SRC_BIT) }or longword(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    VK_BUFFER_USAGE_STAGING = longword(VK_BUFFER_USAGE_TRANSFER_DST_BIT) {or longword(VK_BUFFER_USAGE_TRANSFER_SRC_BIT)};
     VK_MEMORY_PROPERTY_STORAGE  = longword(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     VK_MEMORY_PROPERTY_STAGING  = longword(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or longword(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
   private
     class function loadFile(const fileName: TFileName): RawByteString; static;
-  class var
-    instance               : VkInstance;
-    VulkanDevices          : TArray<TVulkanDevice>;
     //queueFlags             : TArray<VkQueueFlags>;
     class procedure CreateInstance(const appName:ansistring);   static;
     class procedure DestroyInstance();                          static;
@@ -202,15 +172,20 @@ type
     device                : VkDevice;
     queue                 : vkQueue;
     cmdPool               : VkCommandPool;
-    cmdBuffer             : VkCommandBuffer;
+    cmd                   : TVulkanCommand;
+
     //shaders               : TArray<VkShaderModule>;
 
     //Ops                   : TVulkanOperations;
+
+  protected
     vulkanPipelines       : TArray<TVulkanPipeline>;
     CommandBufferStarted  : boolean;
-
   public
-    constructor Create(const deviceIndex:longint = 0; const queuePriority:single =1.0);
+    class var
+      instance               : VkInstance;
+      VulkanDevices          : TArray<TVulkanDevice>;
+    constructor Create(const deviceIndex: longint = 0; const queuePriority: single = 1.0);
     destructor Destroy; override;
     //function CompileSPIRV(const sourcefile:TFileName):RawByteString;
     function createBuffer(const byteSize:VkDeviceSize ; const usage: vkBufferUsageFlags = VK_BUFFER_USAGE_STORAGE):VkBuffer;
@@ -224,17 +199,53 @@ type
     procedure pullFromDevice(const aData:pointer; const mem:TVulkanMemory; N:NativeInt=-1);
     procedure copyBuffer(const src, dst: TVulkanMemory; const N:VkDeviceSize = VK_WHOLE_SIZE; const srcOffset:VkDeviceSize=0; const dstOffset:VkDeviceSize=0);
     function loadShader(const fileNameSpirV: RawByteString):VkShaderModule;
-    procedure preparePipeline(const Op:TNNOperation; const localThreads:TWorkloadSizes); overload;
-    procedure preparePipeline(const Op:TNNOperation); overload;
-    procedure dispatchPipeline(const Op: TNNOperation; const args: TVulkanArgs; const x:longword; const y:longword = 1; const z:longword =1);
+    procedure preparePipeline(const Op: TKernelHandle; const shader: VkShaderModule; const localThreads:TWorkloadSizes); overload;
+    procedure preparePipeline(const Op: TKernelHandle; const shader : VkShaderModule ); overload;
+    procedure dispatchPipeline(const Op: TkernelHandle; const args: TVulkanArgs; const x:longword; const y:longword = 1; const z:longword =1);
     procedure beginCommadBuffer;
     procedure endCommandBuffer;
     procedure finish;
   end;
-
-
+type
+  nfloat = single;
+  Pnfloat = ^nfloat;
 
 procedure SAFE_CALL(const res:VkResult); overload;// inline;
+function CEIL_DIV(const M, N:longword):longword; inline;
+
+function array_sum(const N:longword; const a:Pnfloat):single; overload;
+function array_sum(const a:TArray<nfloat>):single; overload;
+function array_max(const N:longword; const a:Pnfloat):nfloat;overload;
+function array_max(const a:TArray<nfloat>):nfloat;overload;
+function array_min(const N:longword; const a:Pnfloat):nfloat;overload;
+function array_min(const a:TArray<nfloat>):nfloat;overload;
+procedure array_min_max(const N:longword; const a:pnfloat; const _min, _max: Pnfloat); overload;
+procedure array_min_max(const a:TArray<nfloat>; var _min, _max: nfloat);overload;
+function array_sum_sqr_diff(const N:longword; const a:Pnfloat; const b:single):single;overload;
+function array_sum_sqr_diff(const a:TArray<nfloat>; const b:single):single;overload;
+function array_variance(const N:longword; const mean:single; const a:Pnfloat):single; overload;
+function array_variance(const N:longword; const a:Pnfloat):single; overload;
+function array_variace(const a:TArray<nfloat>):single; overload;
+procedure array_rand(const N:longword; const start, finish:nfloat; const a:Pnfloat);overload;
+function array_rand(const N:longword; const start:single = -1;const finish:single = 1):TArray<nfloat>;  overload;
+procedure array_linSpace(const N:longword; const start, finish:nfloat; const a:Pnfloat);overload;
+function array_linSpace(const N:longword; const start:single = -1;const finish:single = 1):TArray<nfloat>;  overload;
+procedure array_add(const N:longword; const a, b, c:Pnfloat); overload;
+procedure array_add(const a, b, c:TArray<nfloat>);  overload;
+procedure array_axpy(const N:longword; const a: nfloat; const x, y:Pnfloat);
+procedure array_print(const N:longword; const a:Pnfloat; const decimals: word=2);overload;
+procedure array_print(const a:TArray<nfloat>; const decimals: word=2);overload;
+procedure array_stat(const N:longword; const a:Pnfloat; const decimals: word=2); overload;
+procedure array_stat(const a:TArray<nfloat>; const decimals: word=2); overload;
+function array_sum_sqr_diff(const N:longword; const a,b:Pnfloat):single; overload;
+function array_sum_sqr_diff(const a,b:TArray<nfloat>):single; overload;
+procedure array_print_diff(const N:longword; const a,b:Pnfloat; const Eps: single=0.000001); overload;
+procedure array_print_diff(const a,b:TArray<nfloat>; const Eps: single=0.000001); overload;
+procedure array_fma(const N:longword; const a,b :nfloat; const x, y:Pnfloat); overload;
+procedure array_gemm_nn(const M,N,K : longword; const ALPHA:single; const A:TArray<nfloat>; const lda:longword; const B:TArray<nfloat>; const ldb:longword; const BETA:single; const C:TArray<nfloat>; const ldc:longword); overload;
+procedure array_gemm_tn(const M,N,K : longword; const ALPHA:single; const A:TArray<nfloat>; const lda:longword; const B:TArray<nfloat>; const ldb:longword; const BETA:single; const C:TArray<nfloat>; const ldc:longword); overload;
+procedure array_gemm_nt(const M,N,K : longword; const ALPHA:single; const A:TArray<nfloat>; const lda:longword; const B:TArray<nfloat>; const ldb:longword; const BETA:single; const C:TArray<nfloat>; const ldc:longword); overload;
+
 
 implementation
 {$ifdef MSWINDOWS}
@@ -273,6 +284,13 @@ begin
     if (memType and (1 shl i)>0) and ((memoryProperties.memoryTypes[i].propertyFlags and memPropertyFlags) = memPropertyFlags) then
       exit(i);
   assert(false, 'Unable to find matching memory with type ['+intToStr(memType)+'] and properties ['+intToStr(memPropertyFlags)+']');
+end;
+
+{ TVulkanMemory }
+
+class operator TVulkanMemory.initialize({$ifdef FPC}var{$else}out{$endif} mem: TVulkanMemory);
+begin
+  mem := default(TVulkanMemory)
 end;
 
 { TVulkanArg }
@@ -323,6 +341,12 @@ class operator TVulkanArg.implicit(const src: double): TVulkanArg;
 begin
   result.argType  := atDouble;
   result.vDouble := src;
+end;
+
+class operator TVulkanArg.implicit(const src: TVulkanMemory): TVulkanArg;
+begin
+  result.Size := src.size;
+  result.vPointer := src.buffer;
 end;
 
 class operator TVulkanArg.implicit(const src: TVulkanArg): pointer;
@@ -411,12 +435,21 @@ var
   features                   : VkValidationFeaturesEXT ;
   enabledFeatures            : array of VkValidationFeatureEnableEXT ;
   disabledFeatures           : array of VkValidationFeatureDisableEXT ;
+  instLayerPropCount         : longword;
+  instLayerProps             : array of VkLayerProperties;
+
 begin
 
   instance                    :=    nil;
+  {$ifdef DEBUG}
+  vkEnumerateInstanceLayerProperties(@instLayerPropCount, nil) ;
+  setLength(instLayerProps, instLayerPropCount);
+  vkEnumerateInstanceLayerProperties(@instLayerPropCount, pointer(instLayerProps)) ;
+
   //extensions                  :=    ['VK_EXT_debug_printf'] ;
   //validationLyr               :=    ['VK_LAYER_KHRONOS_validation'];
   //enabledFeatures             :=    [VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT];
+  {$endif}
 
   appInfo                     :=    default(VkApplicationInfo);
   appInfo.sType               :=    VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -490,6 +523,8 @@ var
   deviceInfo : VkDeviceCreateInfo;
   poolInfo   : VkCommandPoolCreateInfo;
   allocInfo  :VkCommandBufferAllocateInfo;
+  fenceInfo : VkFenceCreateInfo;
+  i: Integer;
 begin
   VulkanDevice := VulkanDevices[deviceIndex];
   queueInfo := default(VkDeviceQueueCreateInfo);
@@ -515,12 +550,19 @@ begin
   allocInfo.sType := VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
   allocInfo.commandPool := cmdPool;
   allocInfo.level := VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-  allocInfo.commandBufferCount := 1;
-  SAFE_CALL(vkAllocateCommandBuffers(device, @allocInfo, @cmdBuffer));
+  allocInfo.commandBufferCount := MAX_COMMAND_BUFFER_COUNT;
+  SAFE_CALL(vkAllocateCommandBuffers(device, @allocInfo, @cmd.Buffers[0]));
+
+  fenceInfo := default(VkFenceCreateInfo);
+  fenceInfo.sType := VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+  for i:=0 to high(cmd.Fences) do begin
+    cmd.Fences[i] := nil;
+    SAFE_CALL(vkCreateFence(device, @fenceInfo, nil, @cmd.Fences[i]));
+  end;
+
   //Ops := TVulkanOperations.Create;
 
   //CompileSPIRV('Z:\Development\vulkan_gemm\vec_add.comp');
-
 end;
 
 destructor TVulkanCompute.Destroy;
@@ -532,7 +574,9 @@ begin
   //Ops.free;
   for i:=0 to high(vulkanPipelines) do
     if assigned(vulkanPipelines[i].device) then vulkanPipelines[i].free;
-  vkFreeCommandBuffers(device, cmdPool, 1, @cmdBuffer);
+  for i:=0 to high(cmd.Fences) do
+    vkDestroyFence(device, cmd.Fences[i], nil);
+  vkFreeCommandBuffers(device, cmdPool, MAX_COMMAND_BUFFER_COUNT, @cmd.Buffers[0]);
   vkDestroyCommandPool(device, cmdPool, nil);
   vkDestroyDevice(device, nil);
   queue := nil;
@@ -632,14 +676,15 @@ end;
 procedure TVulkanCompute.pushToDevice(const aData: pointer; const mem: TVulkanMemory; N: NativeInt);
 var
   d : pointer;
-  cmdInfo  : VkCommandBufferBeginInfo;
+  //cmdInfo  : VkCommandBufferBeginInfo;
   stagingMem : TVulkanMemory;
 begin
   assert(assigned(aData));
   if N<0 then N := mem.size;
+  Assert((not CommandBufferStarted) or (N<$10000), 'ERROR [PushtoDevice] : buffer is too big to push to device during command record state!, retry after calling EndCommandBuffer()');
 
   if CommandBufferStarted then begin
-    vkCmdUpdateBuffer(cmdBuffer, mem.buffer, 0, N, aData);
+    vkCmdUpdateBuffer(cmd.Buffers[0], mem.buffer, 0, N, aData);
     //cmdInfo:= default(VkCommandBufferBeginInfo);
     //cmdInfo.sType:= VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     //SAFE_CALL(vkBeginCommandBuffer(cmdBuffer, ))
@@ -695,10 +740,12 @@ procedure TVulkanCompute.copyBuffer(const src, dst: TVulkanMemory;
   const dstOffset: VkDeviceSize);
 var bc:VkBufferCopy;
 begin
+  assert(src.size=dst.size, 'ERROR [copyBuffer] : src and dst sizes are not equal.');
+  // [TVulkanCompute.copyBuffer] todo check offset overflow also
   bc.srcOffset := srcOffset;
   bc.dstOffset := dstOffset;
-  bc.size      := src.size;
-  vkCmdCopyBuffer(cmdBuffer, src.buffer, dst.buffer, 1, @bc);
+  bc.size      := src.size - srcOffset;
+  vkCmdCopyBuffer(cmd.Buffers[0], src.buffer, dst.buffer, 1, @bc);
 end;
 
 function TVulkanCompute.loadShader(const fileNameSpirV: RawByteString
@@ -716,7 +763,8 @@ begin
   SAFE_CALL(vkCreateShaderModule(device, @mInfo, nil, @result));
 end;
 
-procedure TVulkanCompute.preparePipeline(const Op: TNNOperation; const localThreads: TWorkloadSizes);
+procedure TVulkanCompute.preparePipeline(const Op: TKernelHandle;
+  const shader: VkShaderModule; const localThreads: TWorkloadSizes);
 type
   TVkDescriptorSetLayoutBindings = array[0..VULKAN_ARGS_MAX_BUFFERS_COUNT-1] of VkDescriptorSetLayoutBinding;
 var
@@ -749,37 +797,38 @@ begin
       //end;
     end;
 
-    if longint(Op)>high(vulkanPipelines) then
-      setLength(vulkanPipelines, longint(Op)+1)
+    if Op > high(vulkanPipelines) then
+      setLength(vulkanPipelines, Op+1)
     else
-      vulkanPipelines[longint(Op)].free() ;
+      vulkanPipelines[Op].free() ;
     descCreateInfo := default(VkDescriptorSetLayoutCreateInfo);
     descCreateInfo.sType:=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     descCreateInfo.bindingCount := VULKAN_ARGS_MAX_BUFFERS_COUNT;
-    descCreateInfo.pBindings := @descLayoutBinds;
+    descCreateInfo.pBindings := @descLayoutBinds[0];
 
 
     //pl := default(TVulkanPipeline);
     // pushSize is set to TVulkanConstants.OP size (=4) plus the number of constants in
     // args multiplied by 4 aligning to the rest of TVulkanConstants
-    vulkanPipelines[longint(Op)].device := device;
-    SAFE_CALL(vkCreateDescriptorSetLayout(device, @descCreateInfo, nil, @vulkanPipelines[ord(Op)].descSetLayout));
+    vulkanPipelines[Op].device := device;
+    SAFE_CALL(vkCreateDescriptorSetLayout(device, @descCreateInfo, nil, @vulkanPipelines[Op].descSetLayout));
 
-    vulkanPipelines[longint(Op)].constantRange.stageFlags := longword(VK_SHADER_STAGE_COMPUTE_BIT);
-    vulkanPipelines[longint(Op)].constantRange.size := VULKAN_ARGS_MAX_CONSTANTS_COUNT*4;
+    vulkanPipelines[Op].constantRange.stageFlags := longword(VK_SHADER_STAGE_COMPUTE_BIT);
+    vulkanPipelines[Op].constantRange.size := VULKAN_ARGS_MAX_CONSTANTS_COUNT*4;
     pCreateInfo := default(VkPipelineLayoutCreateInfo);
     pCreateInfo.sType := VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pCreateInfo.setLayoutCount := 1;
-    pCreateInfo.pSetLayouts := @vulkanPipelines[ord(Op)].descSetLayout;
+    pCreateInfo.pSetLayouts := @vulkanPipelines[Op].descSetLayout;
     pCreateInfo.pushConstantRangeCount:=1;
-    pCreateInfo.pPushConstantRanges := @vulkanPipelines[ord(Op)].constantRange;
+    pCreateInfo.pPushConstantRanges := @vulkanPipelines[Op].constantRange;
 
-    SAFE_CALL(vkCreatePipelineLayout(device, @pCreateInfo, nil, @vulkanPipelines[ord(Op)].pipelineLayout));
+    SAFE_CALL(vkCreatePipelineLayout(device, @pCreateInfo, nil, @vulkanPipelines[Op].pipelineLayout));
 
     pStageinfo := default(VkPipelineShaderStageCreateInfo);
     pStageInfo.sType := VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     pStageInfo.stage := VK_SHADER_STAGE_COMPUTE_BIT;
-    pStageInfo.module := loadShader('..\src\vulkan\spv\'+LowerCase(Copy(GetEnumName(TypeInfo(TNNOperation), ord(Op)), 3))+'.comp.float.spv');//shaders[ord(Op)];
+    // todo embed .spv files with in the executable resources
+    pStageInfo.module := shader;//loadShader(SPIRVFile);//shaders[ord(Op)];
     pStageInfo.pName := 'main';
 {
     for i:=low(pSpecialMap) to high(pSpecialMap) do begin
@@ -795,12 +844,12 @@ begin
 
     pStageInfo.pSpecializationInfo:= @pSpecialInfo;
 }
-    vulkanPipelines[longint(Op)].shaderId      := longint(Op);
+    vulkanPipelines[Op].shaderId      := Op;
     pComputeInfo := default(VkComputePipelineCreateInfo);
     pComputeInfo.sType := VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
     pComputeInfo.stage := pStageInfo;
-    pComputeInfo.layout:= vulkanPipelines[longint(Op)].pipelineLayout;
-    SAFE_CALL(vkCreateComputePipelines(device, nil, 1, @pComputeInfo, nil, @vulkanPipelines[longint(Op)].pipeline));
+    pComputeInfo.layout:= vulkanPipelines[Op].pipelineLayout;
+    SAFE_CALL(vkCreateComputePipelines(device, nil, 1, @pComputeInfo, nil, @vulkanPipelines[Op].pipeline));
 
     descPoolSize.&type := VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     descPoolSize.descriptorCount := VULKAN_ARGS_MAX_BUFFERS_COUNT;
@@ -810,25 +859,24 @@ begin
     descPoolInfo.maxSets := 1;
     descPoolInfo.poolSizeCount := 1;
     descPoolInfo.pPoolSizes := @descPoolSize;
-    SAFE_CALL(vkCreateDescriptorPool(device, @descPoolInfo, nil, @vulkanPipelines[longint(Op)].descPool));
+    SAFE_CALL(vkCreateDescriptorPool(device, @descPoolInfo, nil, @vulkanPipelines[Op].descPool));
 
     AllocInfo := default(VkDescriptorSetAllocateInfo);
     AllocInfo.sType := VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    AllocInfo.descriptorPool := vulkanPipelines[longint(Op)].descPool;
+    AllocInfo.descriptorPool := vulkanPipelines[Op].descPool;
     AllocInfo.descriptorSetCount := 1;
-    AllocInfo.pSetLayouts := @vulkanPipelines[longint(Op)].descSetLayout;
-    SAFE_CALL(vkAllocateDescriptorSets(device, @AllocInfo, @vulkanPipelines[longint(Op)].descSet));
-    //Ops.Add(Op, vulkanPipelines[shaderIndex]);
-  //end;
+    AllocInfo.pSetLayouts := @vulkanPipelines[Op].descSetLayout;
+    SAFE_CALL(vkAllocateDescriptorSets(device, @AllocInfo, @vulkanPipelines[Op].descSet));
 end;
 
-procedure TVulkanCompute.preparePipeline(const Op: TNNOperation);
+procedure TVulkanCompute.preparePipeline(const Op: TKernelHandle;
+  const shader: VkShaderModule);
 const DEFAULT_WORKLOAD :TWorkloadSizes = (x:$100; y:1; z:1);
 begin
-  preparePipeline(Op, DEFAULT_WORKLOAD);
+  preparePipeline(Op, shader, DEFAULT_WORKLOAD);
 end;
 
-procedure TVulkanCompute.dispatchPipeline(const Op: TNNOperation;
+procedure TVulkanCompute.dispatchPipeline(const Op: TkernelHandle;
   const args: TVulkanArgs; const x: longword; const y: longword;
   const z: longword);
 type
@@ -853,7 +901,7 @@ begin
 
 
         writes[j].sType := VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[j].dstSet := vulkanPipelines[ord(Op)].descSet;
+        writes[j].dstSet := vulkanPipelines[Op].descSet;
         writes[j].dstBinding:= j;
         writes[j].descriptorCount := 1;
         writes[j].descriptorType := VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -866,11 +914,11 @@ begin
       end;
     end;
   end;
-  vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, vulkanPipelines[longint(Op)].pipeline);
-  vkUpdateDescriptorSets(cmdBuffer, j, @writes[0], 0, nil);
-  vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, vulkanPipelines[longint(Op)].pipelineLayout, 0, 1, @vulkanPipelines[longint(Op)].descSet, 0, nil);
-  vkCmdPushConstants(cmdBuffer, vulkanPipelines[ord(Op)].pipelineLayout, longword(VK_SHADER_STAGE_COMPUTE_BIT), 0, k*sizeOf(longint), @constArgs[0] );
-  vkCmdDispatch(cmdBuffer, x, y, z);
+  vkCmdBindPipeline(cmd.Buffers[0], VK_PIPELINE_BIND_POINT_COMPUTE, vulkanPipelines[Op].pipeline);
+  vkUpdateDescriptorSets(device, j, @writes[0], 0, nil);
+  vkCmdBindDescriptorSets(cmd.Buffers[0], VK_PIPELINE_BIND_POINT_COMPUTE, vulkanPipelines[Op].pipelineLayout, 0, 1, @vulkanPipelines[Op].descSet, 0, nil);
+  vkCmdPushConstants(cmd.Buffers[0], vulkanPipelines[Op].pipelineLayout, longword(VK_SHADER_STAGE_COMPUTE_BIT), 0, k*sizeOf(longint), @constArgs[0] );
+  vkCmdDispatch(cmd.Buffers[0], x, y, z);
 end;
 
 procedure TVulkanCompute.beginCommadBuffer;
@@ -879,14 +927,14 @@ begin
   if CommandBufferStarted then exit;
   info := default(VkCommandBufferBeginInfo);
   info.sType:=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-  SAFE_CALL(vkBeginCommandBuffer(cmdBuffer, @info));
+  SAFE_CALL(vkBeginCommandBuffer(cmd.Buffers[0], @info));
   CommandBufferStarted := true
 end;
 
 procedure TVulkanCompute.endCommandBuffer;
 begin
   if not CommandBufferStarted then exit;
-  SAFE_CALL(vkEndCommandBuffer(cmdBuffer));
+  SAFE_CALL(vkEndCommandBuffer(cmd.Buffers[0]));
   CommandBufferStarted := false
 end;
 
@@ -897,20 +945,28 @@ begin
   submitInfo := default(VkSubmitInfo);
   submitInfo.sType := VK_STRUCTURE_TYPE_SUBMIT_INFO;
   submitInfo.commandBufferCount:=1;
-  submitInfo.pCommandBuffers := @cmdBuffer;
-  SAFE_CALL(vkQueueSubmit(queue, 1, @submitInfo, nil));
-  SAFE_CALL(vkQueueWaitIdle(queue));
+  submitInfo.pCommandBuffers := @cmd.Buffers[0];
+  SAFE_CALL(vkResetFences(device, 1, @cmd.Fences[0]));
+  SAFE_CALL(vkQueueSubmit(queue, 1, @submitInfo, cmd.Fences[0]));
+  SAFE_CALL(vkWaitForFences(device, 1, @cmd.Fences[0], VK_TRUE, uInt64.MaxValue));
+
+  //SAFE_CALL(vkQueueSubmit(queue, 1, @submitInfo, nil));
+  //SAFE_CALL(vkQueueWaitIdle(queue));
+  //SAFE_CALL(vkDeviceWaitIdle(device));
 end;
 
+
+function CEIL_DIV(const M, N:longword):longword; inline;
+begin
+  result := (M + N-1) div N
+end;
 
 
 //function max(const a,b:NativeInt):longword;inline; overload;
 //begin
 //  if a>=b then exit(a) else exit(b)
 //end;
-type
-  nfloat = single;
-  Pnfloat = ^nfloat;
+
 (*
 function max(const a,b:nfloat):nfloat;inline; overload;
 begin
@@ -1437,66 +1493,14 @@ type
   CBLAS_TRANSPOSE = (CblasNoTrans = 111, CblasTrans = 112, CblasConjTrans =
     113, CblasConjNoTrans = 114);
 
+{$if not defined(cblas_sgemm)}
 procedure cblas_sgemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:blasint; N:blasint; K:blasint; alpha:single; A:Psingle; lda:blasint; B:Psingle; ldb:blasint; beta:single; C:Psingle; ldc:blasint); winapi ; external 'libopenblas.dll';
-
+{$endif}
 
 {$T+}
-procedure array_gemm_nn(const M,N,K : longword; const ALPHA:single; const A:Pnfloat; const lda:longword; const B:Pnfloat; const ldb:longword; const BETA:single; const C:Pnfloat; const ldc:longword); overload;
-
-procedure proc(i:IntPtr; data:pointer);
-var
-  l, j:longword;
-  a_part: single; c_ptr, b_ptr:Pnfloat;
-begin
-  c_ptr := @C[i*ldc];
-  for l :=0 to K-1 do begin
-    a_part := ALPHA*single(A[i*lda + l]);
-    b_ptr := @B[l*ldb];
-    {$if defined(CPUX64)}
-      {$if (4=sizeof(nfloat))}
-      saxpy_avx2(N, a_part, b_ptr, c_ptr);
-      {$elseif (2=sizeof(nfloat))}
-      haxpy_avx2(N, a_part, b_ptr, c_ptr);
-      {$endif}
-    {$else}
-    for j:=0 to N-1 do
-      c_ptr[j] := single(c_ptr[j]) + a_part*single(b_ptr[j])
-    {$endif}
-  end;
-end;
-{$T-}
-
-var i:longword;
-  //j, l: longword;  a_part: nfloat; c_ptr, b_ptr:Pnfloat;
-begin
-  cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, K, ALPHA, A, lda, B, ldb, BETA, C, ldc);
-  exit;
-  for  i:=0 to M*N-1 do C[i] := C[i]*BETA;
-
-//  mp.&For(proc, 0, M);
-
-  for i:=0 to M-1 do
-     proc(i, nil);
-  //for i:=0 to M-1 do proc(i, nil)
-  //for i:=0 to M-1 do begin
-  //  proc(i, nil)
-  //  //c_ptr := @C[i*ldc];
-  //  //for l :=0 to K-1 do begin
-  //  //  a_part := ALPHA*A[i*lda + l];
-  //  //  b_ptr := @B[l*ldb];
-  //  //  {$ifdef CPUX64}
-  //  //  axpy_avx2(N, a_part, b_ptr, c_ptr);
-  //  //  {$else}
-  //  //  for j:=0 to N-1 do
-  //  //    c_ptr[j] := c_ptr[j] + a_part*b_ptr[j]
-  //  //  {$endif}
-  //  //end;
-  //end;
-end;
-
 procedure array_gemm_nn(const M,N,K : longword; const ALPHA:single; const A:TArray<nfloat>; const lda:longword; const B:TArray<nfloat>; const ldb:longword; const BETA:single; const C:TArray<nfloat>; const ldc:longword); overload;
 begin
-  array_gemm_nn(M, N, K, ALPHA, pnfloat(A), lda, pnfloat(B), ldb, BETA, pnfloat(C), ldc)
+  cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, K, ALPHA, pnfloat(A), lda, pnfloat(B), ldb, BETA, pnfloat(C), ldc);
 end;
 
 procedure array_gemm_nt(const M,N,K : longword; const ALPHA:single; const A:TArray<nfloat>; const lda:longword; const B:TArray<nfloat>; const ldb:longword; const BETA:single; const C:TArray<nfloat>; const ldc:longword); overload;
@@ -1508,42 +1512,11 @@ procedure array_gemm_tn(const M,N,K : longword; const ALPHA:single; const A:TArr
 begin
   cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, M, N, K, ALPHA, pnfloat(A), lda, pnfloat(B), ldb, BETA, pnfloat(C), ldc)
 end;
+{$T-}
 
-function CEIL_DIV(const M, N:longword):longword; inline;
-begin
-  result := (M + N-1) div N
-end;
+var FPUMask : TFPUExceptionMask;
 
-const
-  M = $4000;
-  N = $4000;
-  K = $4000;
-  WORKGROUP_SIZE_X = 8 ; // 128;
-  WORKGROUP_SIZE_Y = 32; //1;
-  WORKGROUP_SIZE_Z = 1;
-  //WORKGROUP_SIZE_X = 128;
-  //WORKGROUP_SIZE_Y = 1;
-  //WORKGROUP_SIZE_Z = 1;
-
-  BN = 128;
-  BM = 128;
-
-var
-  vk  : TVulkanCompute;
-  v   : TVulkanArgs;
-  i   : integer;
-  A, B, C, res : TArray<nfloat>;
-  AA,BB, CC: TVulkanMemory;
-  //stagingMems : TArray<TVulkanMemory>;
-  workgroups : LongWord;
-  vkd : TArray<TVulkanDevice>;
-  args : TVulkanArgs;
-  i4 : int4;
-  ms : uint64;
-  hh : half;
 initialization
-  //hh := 99;
-  //haxpy_avx2(10, hh, nil, nil);
   //assert(SetEnvironmentVariableA('VK_LAYER_PRINTF_ONLY_PRESET', '1'), 'Cannot set Vulkan ENV for debugging!');
   //assert(SetEnvironmentVariableA('VK_LAYER_PRINTF_ENABLE ', '1'), 'Cannot set Vulkan ENV for debugging!');
   //assert(SetEnvironmentVariableA('VK_LAYER_PRINTF_TO_STDOUT', '1'), 'Cannot set Vulkan ENV for debugging!');
@@ -1551,96 +1524,10 @@ initialization
 
   TVulkanCompute.CreateInstance(ExtractFileName(paramStr(0)));
   TVulkanCompute.VulkanDevices := TVulkanCompute.QueryPhysicalDevices();
-(* //
-  tesing vulkan based gemm
-  vkd := TVulkanCompute.VulkanDevices;
-  vk := TVulkanCompute.Create(1);
-  writeln(vk.VulkanDevice.deviceProperties.deviceName);
-  //setLength(stagingMems, 3);
-  //args := [3.0, 4.0, storageMems[0].buffer, storageMems[2].buffer];
-  //setLength(A, M*K);
-  //setLength(B, K*N);
-  //for i:=0 to M*K-1 do A[i] := i;
-  //for i:=0 to K*N-1 do B[i] := i;
-
-  A := array_rand(M*K, -10, 10);
-  B := array_rand(N*K, -10, 10);
-  AA := vk.createStorageMemory(M*K*sizeof(nfloat));
-  BB := vk.createStorageMemory(N*K*sizeof(nfloat));
-  setLength(C, M*N);//C := array_rand(M*N, -10, 10);
-  setLength(res, M*N);
-  CC := vk.createStorageMemory(M*N*sizeof(nfloat));  //vk.pushToDevice(C, CC);
-  //array_stat(A);
-  //array_stat(B);
-  //array_add(a, b, c);
-  //array_stat(C);
-
-  vk.preparePipeline(opGemm_nn_WrapTiling);
-  vk.preparePipeline(opGemm_nt_WrapTiling);
-  vk.preparePipeline(opGemm_tn_WrapTiling);
-
-  writeln('work groups : ',  CEIL_DIV(N, BN), ' X ', CEIL_DIV(M, BM));
-  vk.pushToDevice(B, BB);
-  vk.pushToDevice(A, AA);
-
-  ms := GetTickCount64;
-  vk.beginCommadBuffer;
-  //workgroups := (N+WORKGROUP_SIZE-1) div WORKGROUP_SIZE;
-
-  //vk.dispatchPipeline(opGemm_nn, [M, N, K, 1.0, AA.buffer, 0, K, BB.buffer, 0, N, 0.0, CC.buffer, 0, N],
-  //                               (M + WORKGROUP_SIZE_X-1) div WORKGROUP_SIZE_X,
-  //                               (N + WORKGROUP_SIZE_Y-1) div WORKGROUP_SIZE_Y,
-  //                               1 //(K+WORKGROUP_SIZE_Z-1) div WORKGROUP_SIZE_Z
-  //                    );
+  FPUMask := GetExceptionMask;
+  SetExceptionMask([exZeroDivide, exInvalidOp] + FPUMask);
 
 
-  //vk.dispatchPipeline(opGemm_nn_WrapTiling, [M, N, K, 1.0, AA.buffer, 0, K, BB.buffer, 0, N, 0.0, CC.buffer, 0, N],
-  //                               CEIL_DIV(N, BN), CEIL_DIV(M, BM)
-  //                    );
-
-  //vk.dispatchPipeline(opGemm_nt_WrapTiling, [M, N, K, 1.0, AA.buffer, 0, K, BB.buffer, 0, K, 0.0, CC.buffer, 0, N],
-  //                               CEIL_DIV(N, BN), CEIL_DIV(M, BM)
-  //                    );
-
-  vk.dispatchPipeline(opGemm_tn_WrapTiling, [M, N, K, 1.0, AA.buffer, 0, M, BB.buffer, 0, N, 0.0, CC.buffer, 0, N],
-                                 CEIL_DIV(N, BN), CEIL_DIV(M, BM)
-                      );
-
-  //vk.dispatchPipeline(NN_SGEMM1_NN, args, workgroups);
-  //vk.pullFromDevice(mems[2], storageMems[2]);
-  if vk.CommandBufferStarted then begin
-    vk.endCommandBuffer;
-    vk.finish
-  end;
-  writeln('GPU : ',GetTickCount64-ms,'ms');
-
-  vk.pullFromDevice(C, CC);
-  vk.freeMemory(AA);
-  vk.freeMemory(BB);
-  vk.freeMemory(CC);
-  vk.free;
-  //array_add(length(res), pointer(mems[0]), pointer(mems[1]), pointer(res));
-  //array_fma(3, 4, mems[0], mems[2]);
-  ms := GetTickCount64;
-  //array_gemm_nn(M, N, K, 1.0, A, K, B, N, 0.0, res, N);
-  //array_gemm_nt(M, N, K, 1.0, A, K, B, K, 0.0, res, N);
-  array_gemm_tn(M, N, K, 1.0, A, M, B, N, 0.0, res, N);
-  writeln('CPU : ',GetTickCount64-ms,'ms');
-
-  writeln('CPU/GPU Diff: ', single(array_sum_sqr_diff(C, res)):1:6);
-
-  writeln('Vulkan Compute:');
-  //array_print(C, 1);
-  array_stat(C, 2);
-
-  writeln('CPU Compute:');
-  //array_print(res, 1);
-  array_stat(res, 2);
-
-  //array_print_diff(C, res, 0.05);
-
-  readln
-*)
 finalization
   TVulkanCompute.DestroyInstance();
 

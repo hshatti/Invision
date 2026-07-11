@@ -22,7 +22,7 @@ unit quicknn_vae;
 interface
 
 uses
-  SysUtils, quicknn_kernels, safetensor, quicknn_common;
+  SysUtils, {$if defined(USE_CPU)} quicknn_cpu {$else} quicknn_kernels{$endif}, safetensor, quicknn_common;
 
 
 type
@@ -36,7 +36,7 @@ type
     conv2_weight, conv2_bias,                (* [out_ch, out_ch, 3, 3] *)
     skip_weight , skip_bias : TMemoryBlock;  (* [out_ch, in_ch, 1, 1] if in_ch != out_ch *)
     in_channels, out_channels : longint;
-    procedure forward(const dst, src, work: PQNNFloat; const batch, H, W, num_groups: longint);
+    procedure forward(const dst, src, work: TMemoryBlock; const batch, H, W, num_groups: longint);
     //procedure load(var f: file);                                     overload;
     procedure load(const sf: TSafetensorFiles; const aPrefix:string; const in_ch, out_ch:longint; const useMMap:boolean = false);    overload;
     procedure free();
@@ -51,7 +51,7 @@ type
     v_weight, v_bias,                         (* [channels, channels, 1, 1] *)
     out_weight, out_bias : TMemoryBlock;      (* [channels, channels, 1, 1] *)
     channels : longint;
-    procedure forward(const dst, src, work: PQNNFloat; const batch, H, W, num_groups: longint);
+    procedure forward(const dst, src, work: TMemoryBlock; const batch, H, W, num_groups: longint);
     //procedure load(var f:file);                                    overload;
     procedure load(const sf:TSafetensorFiles; const aPrefix:string; const aChannels:longint; const useMMap:boolean = false);   overload;
     procedure free();
@@ -134,7 +134,7 @@ type
       //procedure load(var f: file);                                    overload;
       procedure load(const sf:TSafetensorFiles; const zChannels:longint; const scalingFactor, shiftFactor:QNNFloat);  overload;
       function isLoaded():boolean;
-      class procedure padRightBottom(const dst, src: PQNNFloat; batch, channels, H, W: longint); static;
+      class procedure padRightBottom(const dst, src: TMemoryBlock; batch, channels, H, W: longint); static;
       procedure free;
   end;
 
@@ -156,10 +156,11 @@ end;
 
 { TVAEResBlock }
 
-procedure TVAEResBlock.forward(const dst, src, work: PQNNFloat; const batch, H, W, num_groups: longint);
+procedure TVAEResBlock.forward(const dst, src, work: TMemoryBlock; const batch,
+  H, W, num_groups: longint);
 var
     spatial: longint;
-    conv1_out: PQNNFloat;
+    conv1_out: TMemoryBlock;
 begin
     spatial := H * W;
     if in_channels = out_channels then
@@ -232,54 +233,69 @@ end;
 
 procedure TVAEResBlock.free();
 begin
+  norm1_weight.free;
+  norm1_bias.free;                (* [channels] *)
+  conv1_weight.free;
+  conv1_bias.free;                (* [out_ch, in_ch, 3, 3] *)
+  norm2_weight.free;
+  norm2_bias.free;                (* [channels] *)
+  conv2_weight.free;
+  conv2_bias.free;                (* [out_ch, out_ch, 3, 3] *)
   skip_weight.free;
   skip_bias.free;
 end;
 
 { TVAEAttnBlock }
 
-procedure TVAEAttnBlock.forward(const dst, src, work: PQNNFloat; const batch, H, W, num_groups: longint);
+procedure TVAEAttnBlock.forward(const dst, src, work: TMemoryBlock;
+  const batch, H, W, num_groups: longint);
 var
     ch, spatial, c, i, b: longint;
-    q, k, v, qb, kb, vb, ob, attn_out, q_ptr, k_ptr, v_ptr, o_ptr: PQNNFloat;
+    q, k, v, qb, kb, vb, ob, attn_out{, q_ptr, k_ptr, v_ptr, o_ptr}: TMemoryBlock;
     scale: QNNFloat;
     q_t, k_t, v_t, o_t, scores: TMemoryBlock;
 begin
     ch := channels;
     spatial := H * W;
     QNNGroupNorm(work, src, norm_weight, norm_bias, batch, ch, H, W, num_groups);
-    q := work + batch*ch*spatial;
-    k := q + batch*ch*spatial;
-    v := k + batch*ch*spatial;
+    Q := work + batch*ch*spatial;
+    K := Q + batch*ch*spatial;
+    V := K + batch*ch*spatial;
     QNNConv2d(q, work, q_weight, q_bias, ch, ch, H, W, 1, 1, 1, 0, batch);
     QNNConv2d(k, work, k_weight, k_bias, ch, ch, H, W, 1, 1, 1, 0, batch);
     QNNConv2d(v, work, v_weight, v_bias, ch, ch, H, W, 1, 1, 1, 0, batch);
     scale := 1.0 / sqrt(ch);
     attn_out := v + batch*ch*spatial;
-    q_t    := TMemoryBlock.Create(spatial * ch); q_ptr := q_t;
-    k_t    := TMemoryBlock.Create(spatial * ch); k_ptr := k_t;
-    v_t    := TMemoryBlock.Create(spatial * ch); v_ptr := v_t;
-    o_t    := TMemoryBlock.Create(spatial * ch); o_ptr := o_t;
-    scores := TMemoryBlock.Create(spatial * spatial);
+    q_t    := TMemoryBlock.Create(spatial * ch, 'VAE_FW_Q ' + TGUID.NewGuid.ToString()); //q_ptr := q_t;
+    k_t    := TMemoryBlock.Create(spatial * ch, 'VAE_FW_K ' + TGUID.NewGuid.ToString()); //k_ptr := k_t;
+    v_t    := TMemoryBlock.Create(spatial * ch, 'VAE_FW_V ' + TGUID.NewGuid.ToString()); //v_ptr := v_t;
+    o_t    := TMemoryBlock.Create(spatial * ch, 'VAE_FW_O ' + TGUID.NewGuid.ToString()); //o_ptr := o_t;
+    scores := TMemoryBlock.Create(spatial * spatial, 'VAE_FQ_SCORES ' + TGUID.NewGuid.ToString());
     for b := 0 to batch -1 do
         begin
-            qb := q+b * ch * spatial;
-            kb := k+b * ch * spatial;
-            vb := v+b * ch * spatial;
-            ob := attn_out+b * ch * spatial;
-            for c := 0 to ch -1 do
-                for i := 0 to spatial -1 do
-                    begin
-                        q_ptr[i * ch+c] := qb[c * spatial+i] * scale;
-                        k_ptr[i * ch+c] := kb[c * spatial+i];
-                        v_ptr[i * ch+c] := vb[c * spatial+i]
-                    end;
+            qb := Q + b * ch * spatial;
+            kb := K + b * ch * spatial;
+            vb := V + b * ch * spatial;
+            ob := attn_out + b * ch * spatial;
+            QNNMatTranspose(q_t, qb, ch, spatial);
+            QNNScale(q_t, q_t, scale, spatial);
+            QNNMatTranspose(k_t, kb, ch, spatial);
+            QNNMatTranspose(v_t, vb, ch, spatial);
+
+            //for c := 0 to ch -1 do
+            //    for i := 0 to spatial -1 do
+            //        begin
+            //            q_ptr[i * ch+c] := qb[c * spatial+i] * scale;
+            //            k_ptr[i * ch+c] := kb[c * spatial+i];
+            //            v_ptr[i * ch+c] := vb[c * spatial+i]
+            //        end;
             QNNMatMulNT(scores, q_t, k_t, spatial, ch, spatial);
             QNNSoftmaxRows(scores, spatial, spatial);
             QNNMatMulNN(o_t, scores, v_t, spatial, spatial, ch);
-            for c := 0 to ch -1 do
-                for i := 0 to spatial -1 do
-                    ob[c * spatial+i] := o_ptr[i * ch+c]
+            QNNMatTranspose(ob, o_t, spatial, ch);
+            //for c := 0 to ch -1 do
+            //    for i := 0 to spatial -1 do
+            //        ob[c * spatial+i] := o_ptr[i * ch+c]
         end;
     q_t   .free;
     k_t   .free;
@@ -328,6 +344,14 @@ end;
 
 procedure TVAEAttnBlock.free();
 begin
+  norm_weight.free;
+  norm_bias.free;                   (* [channels] *)
+  q_weight.free;
+  q_bias.free;                         (* [channels, channels, 1, 1] *)
+  k_weight.free;
+  k_bias.free;                         (* [channels, channels, 1, 1] *)
+  v_weight.free;
+  v_bias.free;                         (* [channels, channels, 1, 1] *)
   out_weight.free;
   out_bias.free;
 end;
@@ -354,9 +378,11 @@ var
    cur_h, cur_w, block_idx, down_idx
     , progress, total_blocks, level, ch_out, r, padded_h, padded_w, new_h, new_w
     , mid_ch, z_ch, latent_h, latent_w, z_spatial, b, patch_h, patch_w, lat_ch, n, i: longint;
-    x, work, padded : PQNNFloat;
+    x, work, padded : TMemoryBlock;
     mean: TMemoryBlock;
 begin
+    if assigned(phase_callback) then
+        phase_callback('VAE Encode', false);
     x := work1;
     work := work2;
     cur_h := H; cur_w := W;
@@ -420,13 +446,13 @@ begin
     latent_h := cur_h;
     latent_w := cur_w;
     z_spatial := latent_h * latent_w;
-    mean := TMemoryBlock.Create([batch, z_channels, latent_h, latent_w]);
+    mean := TMemoryBlock.Create([batch, z_channels, latent_h, latent_w], 'VAE_ENCODE_MEAN '+ TGUID.NewGuid.ToString());
     for b := 0 to batch -1 do
         QNNCopy(mean + b*z_channels*z_spatial, x + b*z_ch*z_spatial, z_channels*z_spatial);
     patch_h := latent_h div 2;
     patch_w := latent_w div 2;
     lat_ch := latent_channels;
-    result := TMemoryBlock.Create([batch, lat_ch, patch_h, patch_w]);
+    result := TMemoryBlock.Create([batch, lat_ch, patch_h, patch_w], 'VAE_ENCODE_RESULT '+ TGUID.NewGuid.ToString());
     QNNPatchify(result, mean, batch, z_channels, latent_h, latent_w, 2);
     mean.free;
     if scaling_factor <> 0.0 then begin
@@ -435,23 +461,27 @@ begin
         //for i := 0 to n -1 do
         //    latent[i] := (latent[i]-shift_factor) * scaling_factor
     end else begin
-        QNNBatchNorm(work, result, bn_mean, bn_var, nil, nil, batch, lat_ch, patch_h, patch_w);
+        QNNBatchNorm(work, result, bn_mean, bn_var, batch, lat_ch, patch_h, patch_w);
         QNNCopy(result, work, batch * lat_ch * patch_h * patch_w)
     end;
      out_h := patch_h;
      out_w := patch_w;
+    if assigned(phase_callback) then
+        phase_callback('VAE Encode', true);
 end;
 
 function TVAE.decode(const latent: TMemoryBlock; const batch, latent_h,
   latent_w: longint): TQNNImage;
 //const ch_mult : array[0..3] of integer = (1, 2, 4, 4);
 var
-    x, work, mean_ptr, var_ptr: PQNNFloat;
+    x, work:TMemoryBlock; mean_ptr, var_ptr: PQNNFloat;
     lat_ch, z_spatial, n, i, b, c, idx, unpatch_h, unpatch_w, cur_w, cur_h, mid_ch, progress,
      total_blocks, block_idx, up_idx, level, ch_out, r, new_h, new_w, out_ch, H, W, y, ch: longint;
     mean, std, val: single;
 
 begin
+    if assigned(phase_callback) then
+        phase_callback('VAE Decode', false);
     x := work1;
     work := work2;
     lat_ch := latent_channels;
@@ -469,6 +499,7 @@ begin
         //QNNBatchNorm(x, x, bn_mean, bn_var, nil, nil, batch, lat_ch, latent_h, latent_w);
         mean_ptr := bn_mean;
         var_ptr := bn_var;
+
         for c := 0 to lat_ch -1 do begin
             mean := mean_ptr[c];
             std := sqrt(var_ptr[c]+eps);
@@ -567,6 +598,8 @@ begin
     //          val := 255;
     //      result.data[(y*W + c)*3 + ch] := round(val)
     //    end;
+    if assigned(phase_callback) then
+        phase_callback('VAE Decode', true);
 
 end;
 
@@ -574,11 +607,13 @@ procedure TVAE.decode(const dst, latent: TMemoryBlock; const batch, latent_h,
   latent_w: longint);
 const ch_mult : array[0..3] of integer = (1, 2, 4, 4);
 var
-    x, work, mean_ptr, var_ptr: PQNNFloat;
+    x, work:TMemoryBlock; mean_ptr, var_ptr: PQNNFloat;
     lat_ch, z_spatial, b, c, unpatch_h, unpatch_w, cur_w, cur_h, mid_ch, progress,
      total_blocks, block_idx, up_idx, level, ch_out, r, new_h, new_w, out_ch: longint;
     mean, std: single;
 begin
+    if assigned(phase_callback) then
+        phase_callback('VAE Decode', false);
     x := work1;
     work := work2;
     lat_ch := latent_channels;
@@ -669,7 +704,9 @@ begin
     QNNGroupNorm(work, x, dec_norm_out_weight, dec_norm_out_bias, batch, out_ch, cur_h, cur_w, num_groups);
     QNNSiluInplace(work, batch * out_ch * cur_h * cur_w);
     QNNConv2d(x, work, dec_conv_out_weight, dec_conv_out_bias, out_ch, 3, cur_h, cur_w, 3, 3, 1, 1, batch);
-    QNNCopy(dst, x, 4*cur_w*cur_h)
+    QNNCopy(dst, x, 4*cur_w*cur_h);
+    if assigned(phase_callback) then
+        phase_callback('VAE Decode', true);
 end;
 
 //procedure TVAE.load(var f: file);
@@ -875,24 +912,25 @@ begin
     end;
     if not boolean(bn_mean) and (scaling_factor = 0.0) then begin
         lc := latent_channels;
-        bn_mean := TMemoryBlock.Create(lc);
-        bn_var := TMemoryBlock.Create(lc);
+        bn_mean := TMemoryBlock.Create(lc, 'VAE_LOAD_BN_MEAN');
+        bn_var := TMemoryBlock.Create(lc, 'VAE_LOAD_BN_VAR');
         QNNFill(bn_var, 1.0, lc);
     end;
     max_spatial := max_h * max_w;
     max_channels := base_channels;
     work_size := 4 * max_channels * max_spatial;
 
-    work1 := TMemoryBlock.Create(work_size);//calloc(work_size, sizeof(single));//;
-    work2 := TMemoryBlock.Create(work_size);//calloc(work_size, sizeof(single));//;
-    work3 := TMemoryBlock.Create(work_size);//calloc(work_size, sizeof(single));//
+    work1 := TMemoryBlock.Create(work_size, 'VAE_WORK1');//calloc(work_size, sizeof(single));//;
+    work2 := TMemoryBlock.Create(work_size, 'VAE_WORK2');//calloc(work_size, sizeof(single));//;
+    work3 := TMemoryBlock.Create(work_size, 'VAE_WORK3');//calloc(work_size, sizeof(single));//
 end;
 
-class procedure TVAE.padRightBottom(const dst, src: PQNNFloat; batch, channels, H, W: longint);
+class procedure TVAE.padRightBottom(const dst, src: TMemoryBlock; batch,
+  channels, H, W: longint);
 var
     Hp, Wp, b, c: longint;
     in_plane, out_plane: IntPtr;
-    s, d: PQNNFloat;
+    s, d: TMemoryBlock;
     y: longint;
 begin
     Hp := H+1;

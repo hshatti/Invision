@@ -37,7 +37,7 @@
           <CodeGeneration>
             <SmartLinkUnit Value="True"/>
             <Optimizations>
-              <OptimizationLevel Value="3"/>
+              <OptimizationLevel Value="4"/>
             </Optimizations>
           </CodeGeneration>
           <Linking>
@@ -49,10 +49,11 @@
             <LinkSmart Value="True"/>
           </Linking>
           <Other>
-            <CustomOptions Value="-dUSE_MULTITHREADING"/>
-            <OtherDefines Count="2">
+            <OtherDefines Count="4">
               <Define0 Value="USE_MULTITHREADING"/>
               <Define1 Value="DEBUG"/>
+              <Define2 Value="USE_FLASHATTENTION"/>
+              <Define3 Value="USE_CPP_GEMM"/>
             </OtherDefines>
           </Other>
         </CompilerOptions>
@@ -84,7 +85,7 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
-        <Filename Value="..\src\quicknn_kernels.pas"/>
+        <Filename Value="..\src\quicknn_cpu.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
@@ -93,10 +94,6 @@
       </Unit>
       <Unit>
         <Filename Value="..\src\quicknn_tokenizer.pas"/>
-        <IsPartOfProject Value="True"/>
-      </Unit>
-      <Unit>
-        <Filename Value="qwen3_tokenizer.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
@@ -132,12 +129,8 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
-        <Filename Value="unit1.pas"/>
+        <Filename Value="..\src\quicknn_vulkan.pas"/>
         <IsPartOfProject Value="True"/>
-        <ComponentName Value="Form1"/>
-        <HasResources Value="True"/>
-        <ResourceBaseClass Value="Form"/>
-        <UnitName Value="Unit1"/>
       </Unit>
     </Units>
   </ProjectOptions>
@@ -178,10 +171,12 @@
     <Other>
       <CustomOptions Value="-dUSE_MULTITHREADING
 -dDEBUG"/>
-      <OtherDefines Count="3">
+      <OtherDefines Count="5">
         <Define0 Value="USE_MULTITHREADING"/>
         <Define1 Value="DEBUG"/>
         <Define2 Value="USE_FLASHATTENTION"/>
+        <Define3 Value="USE_CPP_GEMM"/>
+        <Define4 Value="USE_CPU"/>
       </OtherDefines>
     </Other>
   </CompilerOptions>

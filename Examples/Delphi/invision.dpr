@@ -1,4 +1,4 @@
-ï»¿program invision;
+program invision;
 
 {$APPTYPE CONSOLE}
 
@@ -7,7 +7,7 @@
 uses
   safetensor, quicknn_kernels, quicknn_common, quicknn_tokenizer,
   quicknn_transformers, quicknn_vae, quicknn_sample,
-  quicknn_qwen3, quicknn_flux, quicknn_zimage, sixel;
+  quicknn_qwen3, quicknn_flux, quicknn_zimage, sixel, quicknn_downloader;
 
 var
   flux:TQNNFLux;
@@ -68,9 +68,9 @@ begin
   //img := zimage.generate('a cute pink raccoon holding a "I''m Sad" signboard', params);
   //img := zimage.generate('A mechanical dog made of brass gears and copper pipes, steampunk style, highly detailed.', params);
   //img := flux.generate('een robotkonijn dat zingt in de ruimte', params);
-  //img := flux.generate('Ø£Ø±Ù†Ø¨ Ø±ÙˆØ¨ÙˆØªÙŠ ÙŠØºÙ†ÙŠ ÙÙŠ Ø§Ù„ÙØ¶Ø§Ø¡', params);
-  //img := flux.generate('Ø£Ø±Ù†Ø¨ Ø±ÙˆØ¨ÙˆØªÙŠ ÙŠØªÙ†Ø§ÙˆÙ„ Ø§Ù„Ø¹Ø´Ø§Ø¡ Ù…Ø¹ Ù‚Ø·Ø©', params);
-  //img := flux.generate('ØªÙØ§Ø­Ø©', params);
+  //img := flux.generate('ÃÑäÈ ÑæÈæÊí íÛäí İí ÇáİÖÇÁ', params);
+  //img := flux.generate('ÃÑäÈ ÑæÈæÊí íÊäÇæá ÇáÚÔÇÁ ãÚ ŞØÉ', params);
+  //img := flux.generate('ÊİÇÍÉ', params);
   zimage.free;
   {$else}
   src := TQNNImage.loadFromFile('c:\development\flux2.c\bear.png');
@@ -91,9 +91,9 @@ begin
 //  img := flux.generate('A pink grizly bear wearing a blue fedora in a cozy room with green furniture and holding a sign with "I will code for  food!" signboard.', params);
 //  img := flux.generate('Latters has eyes, noses and mouths, The letter "A" dancing and singling with the letter "Z" in the party of letters', params);
   //img := flux.generate('een robotkonijn dat zingt in de ruimte', params);
-//  img := flux.generate(UTF8String('Ø£Ø±Ù†Ø¨ Ø±ÙˆØ¨ÙˆØªÙŠ ÙŠØºÙ†ÙŠ ÙÙŠ Ø§Ù„ÙØ¶Ø§Ø¡'), params);
-//  img := flux.generate(UTF8String('Ø£Ø±Ù†Ø¨ Ø±ÙˆØ¨ÙˆØªÙŠ ÙŠØªÙ†Ø§ÙˆÙ„ Ø§Ù„Ø¹Ø´Ø§Ø¡ Ù…Ø¹ Ù‚Ø·Ø©'), params);
-//  img := flux.generate(UTF8String('ØªÙØ§Ø­Ø©'), params);
+//  img := flux.generate(UTF8String('ÃÑäÈ ÑæÈæÊí íÛäí İí ÇáİÖÇÁ'), params);
+//  img := flux.generate(UTF8String('ÃÑäÈ ÑæÈæÊí íÊäÇæá ÇáÚÔÇÁ ãÚ ŞØÉ'), params);
+//  img := flux.generate(UTF8String('ÊİÇÍÉ'), params);
   flux.free;
   {$endif}
   writeln('');

@@ -1,4 +1,3 @@
-
 unit vulkan_api;
 {$ifdef fpc}
   {$mode delphi}
@@ -50,36 +49,36 @@ type
   Psize_t  = ^size_t;
   size_t   = nativeInt;
 
-  VkBool32 = uint32_t;
-  VkDeviceAddress = uint64_t;
-  VkDeviceSize = uint64_t;
-  VkFlags = uint32_t;
-  VkSampleMask = uint32_t;
-  VkBuffer = pointer;
-  VkImage = pointer;
-  VkInstance = pointer;
-  VkPhysicalDevice = pointer;
-  VkDevice = pointer;
-  VkQueue = pointer;
-  VkSemaphore = pointer;
-  VkCommandBuffer = pointer;
-  VkFence = pointer;
-  VkDeviceMemory = pointer;
-  VkQueryPool = pointer;
-  VkImageView = pointer;
-  VkCommandPool = pointer;
-  VkRenderPass = pointer;
-  VkFramebuffer = pointer;
-  VkEvent = pointer;
-  VkBufferView = pointer;
-  VkShaderModule = pointer;
-  VkPipelineCache = pointer;
-  VkPipelineLayout = pointer;
-  VkPipeline = pointer;
-  VkDescriptorSetLayout = pointer;
-  VkSampler = pointer;
-  VkDescriptorSet = pointer;
-  VkDescriptorPool = pointer;
+  VkBool32        = type uint32_t;
+  VkDeviceAddress = type uint64_t;
+  VkDeviceSize    = type uint64_t;
+  VkFlags         = type uint32_t;
+  VkSampleMask    = type uint32_t;
+  VkBuffer         = type pointer;
+  VkImage          = type pointer;
+  VkInstance       = type pointer;
+  VkPhysicalDevice = type pointer;
+  VkDevice         = type pointer;
+  VkQueue          = type pointer;
+  VkSemaphore      = type pointer;
+  VkCommandBuffer  = type pointer;
+  VkFence          = type pointer;
+  VkDeviceMemory   = type pointer;
+  VkQueryPool      = type pointer;
+  VkImageView      = type pointer;
+  VkCommandPool    = type pointer;
+  VkRenderPass     = type pointer;
+  VkFramebuffer    = type pointer;
+  VkEvent          = type pointer;
+  VkBufferView     = type pointer;
+  VkShaderModule   = type pointer;
+  VkPipelineCache  = type pointer;
+  VkPipelineLayout = type pointer;
+  VkPipeline       = type pointer;
+  VkDescriptorSetLayout = type pointer;
+  VkSampler             = type pointer;
+  VkDescriptorSet       = type pointer;
+  VkDescriptorPool      = type pointer;
 
   PVkBool32              = VkBool32         ;
   PVkDeviceAddress       = VkDeviceAddress  ;

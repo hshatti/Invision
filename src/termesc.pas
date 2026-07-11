@@ -96,23 +96,26 @@ const
   colorWhite   = 15;
 
 
-function cursorMove(const direction:TCursorDirection; const count:integer=1):ansistring; overload;
-function cursorMove(const relativeCol, relativeRow:integer):ansistring; overload;
+function cursorMove(const direction:TCursorDirection; const count:integer=1):rawbytestring; overload;
+function cursorMove(const relativeCol, relativeRow:integer):rawbytestring; overload;
+procedure cursorShow(const visible:boolean);
+procedure saveScreen();
+procedure restorScreen();
 
-function setColor4(const color:integer):ansistring;
-function setBackColor4(const color:integer):ansistring;
-function setColor5(const r,g,b:byte):ansistring;
-function setBackColor5(const r,g,b:byte):ansistring;
-function setColor(const r,g,b:byte):ansistring;
-function setBackColor(const r,g,b:byte):ansistring;
-function setGray(const brightness:byte):ansistring;
-function setBackGray(const brightness:byte):ansistring;
-function setCursorPos(const x, y:integer):ansistring;
-function setCursorScrollDown(const count: integer =1):ansistring;
-function setCursorScrollUp(const count: integer =1):ansistring;
+function setColor4(const color:integer):rawbytestring;
+function setBackColor4(const color:integer):rawbytestring;
+function setColor5(const r,g,b:byte):rawbytestring;
+function setBackColor5(const r,g,b:byte):rawbytestring;
+function setColor(const r,g,b:byte):rawbytestring;
+function setBackColor(const r,g,b:byte):rawbytestring;
+function setGray(const brightness:byte):rawbytestring;
+function setBackGray(const brightness:byte):rawbytestring;
+function setCursorPos(const x, y:integer):rawbytestring;
+function setCursorScrollDown(const count: integer =1):rawbytestring;
+function setCursorScrollUp(const count: integer =1):rawbytestring;
 
 procedure resetModes();
-function setFont(font : byte):ansistring;
+function setFont(font : byte):rawbytestring;
 
 procedure cursorUp(const count: integer=1);
 procedure cursorDown(const count: integer=1);
@@ -127,15 +130,16 @@ procedure cursorClearScreen();
 procedure cursorHome();
 procedure saveCursorPos();
 procedure restorCursorPos();
+procedure setUTF8Console();
 
 implementation
 
-function intToStr(const i:integer):ansistring;
+function intToStr(const i:integer):rawbytestring;
 begin
   str(i, result)
 end;
 
-function cursorMove(const direction: TCursorDirection; const count: integer): ansistring;
+function cursorMove(const direction: TCursorDirection; const count: integer): rawbytestring;
 begin
   case direction of
     cmUp:
@@ -149,7 +153,7 @@ begin
   end;
 end;
 
-function cursorMove(const relativeCol, relativeRow: integer): ansistring;
+function cursorMove(const relativeCol, relativeRow: integer): rawbytestring;
 var cm:TCursorDirection;
 begin
   result :='';
@@ -164,8 +168,26 @@ begin
   end;
 end;
 
+procedure cursorShow(const visible: boolean);
+begin
+  if visible then
+    write(#$1B'[?25h')
+  else
+    write(#$1B'[?25l')
+end;
 
-function setColor4(const color: integer): ansistring;
+procedure saveScreen();
+begin
+  write(#$1B'[?47h');
+end;
+
+procedure restorScreen();
+begin
+  write(#$1B'[?47l');
+end;
+
+
+function setColor4(const color: integer): rawbytestring;
 begin
   if color div 8>0 then
     result := #$1B'[9'+intToStr(color mod 8)+'m'
@@ -173,7 +195,7 @@ begin
     result := #$1B'[3'+intToStr(color)+'m';
 end;
 
-function setBackColor4(const color: integer): ansistring;
+function setBackColor4(const color: integer): rawbytestring;
 begin
   if color div 8>0 then
     result := #$1B'[10'+intToStr(color mod 8)+'m'
@@ -181,26 +203,26 @@ begin
     result := #$1B'[4'+intToStr(color)+'m';
 end;
 
-function setColor5(const r, g, b: byte): ansistring;
+function setColor5(const r, g, b: byte): rawbytestring;
 var c: byte;
 begin
   c := 16 + round(b) + 6 * round(g) + 36 * round(r);
   result := #$1B'[38;5;'+intToStr(c)+'m';
 end;
 
-function setBackColor5(const r, g, b: byte): ansistring;
+function setBackColor5(const r, g, b: byte): rawbytestring;
 var c: byte;
 begin
   c := 16 + round(b) + 6 * round(g) + 36 * round(r);
   result := #$1B'[48;5;'+intToStr(c)+'m';
 end;
 
-function setColor(const r, g, b: byte): ansistring;
+function setColor(const r, g, b: byte): rawbytestring;
 begin
   result := #$1B'[38;2;'+intToStr(r)+';'+intToStr(g)+';'+intToStr(b)+'m';
 end;
 
-function setGray(const brightness: byte): ansistring;
+function setGray(const brightness: byte): rawbytestring;
 begin
   case brightness of
     0 : result := #$1B'[30m';
@@ -209,7 +231,7 @@ begin
   end;
 end;
 
-function setBackGray(const brightness: byte): ansistring;
+function setBackGray(const brightness: byte): rawbytestring;
 begin
   case brightness of
     0 : result := #$1B'[40m';
@@ -218,22 +240,22 @@ begin
   end;
 end;
 
-function setCursorPos(const x, y: integer): ansistring;
+function setCursorPos(const x, y: integer): rawbytestring;
 begin
   result := #$1B'[' + intTostr(y) + ';' + intToStr(x) + 'H'
 end;
 
-function setCursorScrollDown(const count: integer):ansistring;
+function setCursorScrollDown(const count: integer):rawbytestring;
 begin
   result := #$1B'['+intToStr(count)+'T'
 end;
 
-function setCursorScrollUp(const count: integer):ansistring;
+function setCursorScrollUp(const count: integer):rawbytestring;
 begin
   result := #$1B'['+intToStr(count)+'S'
 end;
 
-function setBackColor(const r, g, b: byte): ansistring;
+function setBackColor(const r, g, b: byte): rawbytestring;
 begin
   result := #$1B'[48;2;'+intToStr(r)+';'+intToStr(g)+';'+intToStr(b)+'m';
 end;
@@ -243,7 +265,7 @@ begin
   write(resetAllModes);
 end;
 
-function setFont(font: byte): ansistring;
+function setFont(font: byte): rawbytestring;
 begin
   result := #$1B'[1'+intToStr(font)+'m';
 end;
@@ -311,6 +333,11 @@ end;
 procedure restorCursorPos();
 begin
   write(#$1B'8')
+end;
+
+procedure setUTF8Console();
+begin
+  writeln(#$1B'%G'); // set console UTF8;
 end;
 
 end.

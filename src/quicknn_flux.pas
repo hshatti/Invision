@@ -87,7 +87,7 @@ type
   end;
 
 implementation
-uses quicknn_sample, quicknn_kernels, sixel;
+uses quicknn_sample, {$if defined(USE_CPU)} quicknn_cpu {$else} quicknn_kernels{$endif}, sixel;
 
 { TQNNFlux }
 

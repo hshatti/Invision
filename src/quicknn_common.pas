@@ -1,4 +1,4 @@
-﻿unit quicknn_common;
+unit quicknn_common;
 
 {$ifdef FPC}
   {$PackRecords C}
@@ -46,7 +46,18 @@ type
   TGroupProc    = procedure(const _start,_end:IntPtr;const params:Pointer);
 {$endif}
 
+const EPSILON = 1e-6;
+
 type
+  blasint = longint;
+  CBLAS_Layout = (CblasRowMajor = 101, CblasColMajor = 102);
+  CBLAS_ORDER = CBLAS_Layout;
+  CBLAS_TRANSPOSE = (CblasNoTrans = 111, CblasTrans = 112, CblasConjTrans = 113, CblasConjNoTrans = 114);
+
+  TSingleArray = TArray<Single>;
+  PFloatarray = ^TFloatArray;
+  TFloatArray = array[0..MaxLongint div 32] of single;
+  TInterpolation = ( iNearest, iLinear, iCubic, iLanczos);
 
   INT4 = -8..7;
   TINT4Array = packed array[0..MaxInt-1] of INT4;
@@ -131,7 +142,7 @@ type
 // todo link TMemoryBlock to IMemoryArena for allocations
 
   { TMemoryBlock }
-
+  PMemoryBlock = ^TMemoryBlock;
   TMemoryBlock = record
       DataType : TQNNDataType;
       shape    : TArray<Int64>;
@@ -155,9 +166,10 @@ type
       ERRSTR_CAST_ARRAY = 'MemoryBlock with non zero offset cannot be casted to an Array';
       ERRSTR_CAST_TYPE = 'ERROR : Data is not of ';
   public
-      constructor Create(const aSize:NativeInt; const aName:string = ''; const dType:TQNNDataType = QNN_DATATYPE; const src : pointer =nil);           overload;
-      constructor Create(const aShape : TArray<Int64>; const aName:string = ''; const dType:TQNNDataType = QNN_DATATYPE; const aData : pointer =nil);  overload;
-      procedure reSize(const aSize:NativeInt);
+      constructor Create(const aSize:NativeInt; const aName:string; const dType:TQNNDataType = QNN_DATATYPE; const src : pointer =nil);           overload;
+      constructor Create(const aShape : TArray<Int64>; const aName:string ; const dType:TQNNDataType = QNN_DATATYPE; const aData : pointer =nil);  overload;
+      procedure reSize(const aSize:NativeInt);  overload;
+      procedure reSize(const aShape:TArray<Int64>);  overload;
       procedure free();
       function count:NativeInt;
       function isAssigned():boolean;
@@ -216,7 +228,7 @@ type
       function print(const consolePixel: TTensorPrintStyle = psGray; tile: Integer = 1; minVal: double = 0; maxVal: double = 0): TArray<NativeInt>; overload;
       class operator Initialize({$ifdef FPC}var{$else}out{$endif} val:TMemoryBlock);
   end;
-
+  // old and new are memory sizes in bytes
   TOnMemoryUpdate = procedure(const status:string; const old, New:IntPtr; const mem:TMemoryBlock);
 
   TQNNPixelOrder = (poHWC, poCHW);
@@ -371,15 +383,40 @@ function readInt(var f:file):longint;
 function readSingles(var f:file; const count:longint):TMemoryBlock;
 
 {$if defined(MSWINDOWS)}
-function calloc(count, size:UIntPtr):pointer;WINAPI;external 'msvcrt.dll';
-function malloc(size:UIntPtr):pointer;WINAPI;external 'msvcrt.dll';
-function realloc(mem:pointer; size:UIntPtr):pointer;WINAPI;external 'msvcrt.dll';
-procedure free(mem:pointer);WINAPI;external 'msvcrt.dll';
+function calloc(count, size:UIntPtr):pointer;WINAPI;                external 'msvcrt.dll';
+function malloc(size:UIntPtr):pointer;WINAPI;                       external 'msvcrt.dll';
+function realloc(mem:pointer; size:UIntPtr):pointer;WINAPI;         external 'msvcrt.dll';
+procedure free(mem:pointer);WINAPI;                                 external 'msvcrt.dll';
+//procedure printf(const fmt:ansistring);winapi;varargs;              external 'msvcrt.dll';
+//procedure sprintf(out a; const fmt:ansistring);winapi;varargs; external 'msvcrt.dll';
 {$else}
 function calloc(count, size:UIntPtr):pointer;WINAPI;external;
 function malloc(size:UIntPtr):pointer;WINAPI;external;
 function realloc(mem:pointer; size:UIntPtr):pointer;WINAPI;external;
 procedure free(mem:pointer);WINAPI;external;
+function mmap(addr:pointer; len:UintPtr; prot, flag, fd:longint; offset: IntPtr):pointer;WINAPI;external;
+function munmap(addr:pointer; len:UIntPtr):longint;WINAPI;external;
+procedure printf(const fmt:ansistring);winapi;varargs;
+
+const
+  PROT_NONE   = $00;
+  PROT_READ   = $01;
+  PROT_WRITE  = $02;
+  PROT_EXEC   = $04;
+
+  MAP_SHARED  = 0001;
+  MAP_PRIVATE = 0002;
+  MAP_COPY    = MAP_PRIVATE;
+
+  MAP_FIXED   = $0010;
+  MAP_RENAME  = $0020;
+
+  MAP_NOCACHE = $0400;
+  MAP_FAILED  = pointer(-1);
+
+  MAP_FILE      = $0000;
+  MAP_ANON      = $1000;
+  MAP_ANONYMOUS = MAP_ANON ;
 {$endif}
 
 type
@@ -466,7 +503,7 @@ uses SysUtils, Math
   {$else}
   ,UITypes, fmx.Types, fmx.Graphics
   {$endif}
-  , quicknn_kernels, termesc, sixel;
+  , quicknn_cpu, termesc, sixel;
 
 type
   PSingle = System.PSingle; // fix delphi incompatible PSingle between System and Windows units
@@ -502,7 +539,7 @@ end;
 
 function readSingles(var f:file; const count:longint):TMemoryBlock;
 begin
-    result := TMemoryBlock.Create(count);
+    result := TMemoryBlock.Create(count, 'readSingles '+ TGUID.NewGuid.ToString());
     blockread(f, PSingle(result)^, count*sizeof(single))
 end;
 
@@ -720,11 +757,6 @@ begin
   end;
 end;
 
-procedure TQNNImage.print;
-begin
-  printSixel(Data, width, height, true);
-end;
-
 {$else}
 var
   img:TBitmap;
@@ -765,6 +797,11 @@ begin
 end;
 {$endif}
 
+procedure TQNNImage.print;
+begin
+  printSixel(Data, width, height, true);
+end;
+
 procedure TQNNImage.free();
 begin
   if assigned(data) then setLength(Data, 0);
@@ -775,9 +812,15 @@ end;
 
 constructor TMemoryBlock.Create(const aSize: NativeInt;
   const aName:string; const dType: TQNNDataType; const src: pointer);
+
 begin
   self := default(TMemoryBlock);
   DataType := dType;
+  name := aName;
+  if name='' then begin
+
+    name := TGUID.NewGuid().ToString();
+  end;
   case DATATYPE_BITS[dType] of
     //1 : setlength(Data1, aSize);
     4  : begin
@@ -843,7 +886,7 @@ begin
   else
     assert(false, 'ERROR : TMemoryBlock.create, Unsupported data type ')
   end;
-  name := aName
+
 end;
 
 constructor TMemoryBlock.Create(const aShape : TArray<Int64>; const aName:string; const dType:TQNNDataType; const aData:pointer);
@@ -909,9 +952,16 @@ begin
   end;
 end;
 
+procedure TMemoryBlock.reSize(const aShape:TArray<int64>);
+begin
+  resize(product(aShape));
+  shape := aShape;
+end;
+
 procedure TMemoryBlock.free();
 var m:pointer;
 begin
+  if offset>0 then exit;
  if assigned(onMemoryUpdate) and isAllocated() then
    if DATATYPE_BITS[DataType]=4 then
      onMemoryUpdate('free', (Size*DATATYPE_BITS[DataType]+4) div 8, 0, self)
@@ -970,12 +1020,14 @@ end;
 function TMemoryBlock.isAllocated():boolean;
 begin
   result := assigned(Data4) or assigned(Data8)or assigned(Data16) or assigned(Data32);
+  if result then
+    assert(not assigned(DataPtr), 'ERROR [TMemoryBlock.isAllocated()] : Overlapping assigned memory and allocated memory were found! while one should exist!');
 end;
 procedure TMemoryBlock.printStat;
 begin
   case DataType of
     dtF32:
-      quicknn_kernels.printStat(self);
+      quicknn_cpu.printStat(self);
   else
     assert(false, 'ERROR : Datatype '+ GetEnumName(TypeInfo(TQNNDataType), ord(DataType))+' not implemented!')
   end;
@@ -1054,42 +1106,63 @@ class operator TMemoryBlock.implicit(const val:TArray<longint> ):TMemoryBlock;
 begin
   result.DataType := dts32;
   result.Data32 := TArray<longword>(val);
+  result.size := length(val);
+  //if assigned(onMemoryUpdate) then
+  //  onMemoryUpdate('new', 0, result.Size*DATATYPE_BITS[result.DataType] div 8, result);
 end;
 
 class operator TMemoryBlock.implicit(const val:TArray<single>  ):TMemoryBlock;
 begin
   result.DataType := dtF32;
   result.Data32 := TArray<longword>(val);
+  result.size := length(val);
+  //if assigned(onMemoryUpdate) then
+  //  onMemoryUpdate('new', 0, result.Size*DATATYPE_BITS[result.DataType] div 8, result);
 end;
 
 class operator TMemoryBlock.implicit(const val:TArray<BF16>    ):TMemoryBlock;
 begin
   result.DataType := dtBF16;
   result.Data16 := TArray<word>(val);
+  result.size := length(val);
+  //if assigned(onMemoryUpdate) then
+  //  onMemoryUpdate('new', 0, result.Size*DATATYPE_BITS[result.DataType] div 8, result);
 end;
 
 class operator TMemoryBlock.implicit(const val:TArray<FP16>    ):TMemoryBlock;
 begin
   result.DataType := dtF16;
   result.Data16 := TArray<word>(val);
+  result.size := length(val);
+  //if assigned(onMemoryUpdate) then
+  //  onMemoryUpdate('new', 0, result.Size*DATATYPE_BITS[result.DataType] div 8, result);
 end;
 
 class operator TMemoryBlock.implicit(const val:TArray<smallint>):TMemoryBlock;
 begin
   result.DataType := dtS16;
   result.Data16 := TArray<word>(val);
+  result.size := length(val);
+  //if assigned(onMemoryUpdate) then
+  //  onMemoryUpdate('new', 0, result.Size*DATATYPE_BITS[result.DataType] div 8, result);
 end;
 
 class operator TMemoryBlock.implicit(const val:TArray<shortint>):TMemoryBlock;
 begin
   result.DataType := dtS8;
   result.Data8 := TArray<Byte>(val);
+  result.size := length(val);
+  //if assigned(onMemoryUpdate) then
+  //  onMemoryUpdate('new', 0, result.Size*DATATYPE_BITS[result.DataType] div 8, result);
 end;
 
 class operator TMemoryBlock.implicit(const val: TArray<INT4>):TMemoryBlock;
 begin
   result.DataType := dtS4;
   result.Data4 := val;
+  result.size := length(val);
+  //if assigned(onMemoryUpdate) then
+  //  onMemoryUpdate('new', 0, (result.Size*DATATYPE_BITS[result.DataType]+4) div 8, result);
 end;
 
 class operator TMemoryBlock.implicit(const val:TMemoryBlock):TArray<longint>  ;
@@ -1271,19 +1344,25 @@ end;
 procedure TMemoryBlock.printCompare(const src:TMemoryBlock; const isSumSqrDiff:boolean =false);
 var md,src1,src2: single;
 begin
-  assert(count = src.count, 'Tensor sizes do not match! '+IntToStr(count())+'<>'+IntToStr(src.Count()));
+  assert((count = src.count) and( datatype=src.DataType), 'Tensor sizes do not match! '+IntToStr(count())+'<>'+IntToStr(src.Count()));
   printStat;
   src.printStat;
-  if isSumSqrDiff then begin
-    md := QNNSqrDistance(count, self, src);
-    writeln('SqrDistance :', md:1:5);
-  end else begin
-    md := QNNMaxAbsDiff(count, self, src, src1, src2);
-    if md<>0 then begin
-      src.print(psSIXELDithered, 3);
-      readln;
-    end;
-    writeln('MaxAbsDiff :', md:1:5, ' max src1 :', src1:1:6, ' max src2:', src2:1:6);
+  case DataType of
+    dtF32: begin
+      if isSumSqrDiff then begin
+        md := TQNNSingleOPS.QNNSqrDistance(count, self, src);
+        writeln('SqrDistance :', md:1:5);
+      end else begin
+        md := TQNNSingleOPS.QNNMaxAbsDiff2(count, self, src, src1, src2);
+        if md<>0 then begin
+          src.print(psSIXELDithered, 3);
+          readln;
+        end;
+        writeln('MaxAbsDiff :', md:1:5, ' max src1 :', src1:1:6, ' max src2:', src2:1:6);
+      end;
+    end
+    else
+      assert(false, 'printCompare : datatype not implemented!')
   end;
 end;
 
@@ -1351,6 +1430,8 @@ const
   halfChar :ansistring= '▀';   // this will fail to compile on delphi - android
   {$endif}
 begin
+  assert(DataType = dtF32 , 'print : Tensor visualization is not impelemted for this type!');
+
   if not isAssigned() then exit;
   _size:=count();
   S := TypeName() + ' Tensor (';
@@ -1363,7 +1444,6 @@ begin
       S := S + ToStr(Shape[i]);
     end;
   S := S + ')';
-  if DataType <> dtF32 then begin writeln('WARNING : Tensor visualization is not impelemted for this type!'); exit(); end;
   _Data := Self;
   ow := length(S);
   oh := 1;
@@ -1378,7 +1458,7 @@ begin
   begin
     if minVal = maxVal then
     begin
-      QNNMinMax(Count, PQNNFloat(Self), amin, amax, @outArgMin, @outArgMax);
+      TQNNSingleOPS.QNNMinMax(Count, PQNNFloat(Self), amin, amax, @outArgMin, @outArgMax);
       minVal := aMin; maxVal := aMax;
       S := '[min : ' + toStr(amin) + '@' + toStr(outArgMin) +
         ', max : ' + toStr(amax) + '@' + toStr(outArgMax) + ']';
@@ -1909,7 +1989,6 @@ var arena : IMemoryArena;
     hConsole : THandle;
     cMode : longword;
   {$endif}
-
 initialization
   {$ifdef MSWINDOWS}
   if IsConsole then

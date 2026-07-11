@@ -22,7 +22,8 @@ uses
   SysUtils
   {$if defined(MSWINDOWS)}
   , Windows
-  {$else} // POSIX
+  {$elseif defined(DARWIN)} // POSIX
+  {$else}
   , unixbase
   {$endif}
   , quicknn_common
@@ -268,7 +269,7 @@ type
 const IsLoadVerbose:boolean = false;
 
 implementation
-uses quicknn_kernels;
+uses {$if defined(USE_CPU)} quicknn_cpu {$else} quicknn_kernels{$endif};
 {$if defined(MSWINDOWS)}
 function mmapFile(var f:file; const size:uint64=0; const offset:uint64=0):pointer;
 var mapped_handle:THandle;
@@ -310,7 +311,7 @@ var
 begin
   assert(ff.mode<>fmClosed, 'ERROR : File is not opened!');
   if size>0 then sz := size else sz := _FileSize(f);
-  result := mmap(nil, size, PROT_READ, MAP_PRIVATE, ff.handle, offset);
+  result := mmap(nil, sz, PROT_READ, MAP_PRIVATE, ff.handle, offset);
   assert(result<>MAP_FAILD, 'ERROR : Unable to map file to memory!');
 end;
 
@@ -376,7 +377,7 @@ begin
     result.size:=count();
     exit;
   end else
-    result := TMemoryBlock.Create(shape{count});
+    result := TMemoryBlock.Create(shape{count}, 'asSingles'+ TGUID.NewGuid.ToString());
 
   case dtype of
     stF32:
