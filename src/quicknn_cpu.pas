@@ -12,7 +12,7 @@ unit quicknn_cpu;
   {$modeswitch nestedprocvars}
   {$ifdef CPUX64}
     {$asmmode intel}
-    {$FPUType AVX2}
+    //{$FPUType AVX2}
   {$endif}
   {$if defined(darwin)}
     {$LinkFramework accelerate}
@@ -305,27 +305,27 @@ begin
 end;
 
 class procedure TQNNSingleOPS.cblas_gemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:longint; N:longint; K:longint;
-                      alpha:single; A:PSingle; lda:longint; B:PSingle; ldb:longint; beta:single; C:PSingle; ldc:longint); winapi ;
+                      alpha:single; A:PSingle; lda:longint; B:PSingle; ldb:longint; beta:single; C:PSingle; ldc:longint);
 begin
   cblas_sgemm(Order, TransA, TransB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc)
 end;
 
-class procedure TQNNSingleOPS.cblas_axpy(n:longint; alpha:single; x:PSingle; incx:longint; y:PSingle; incy:longint); winapi ;
+class procedure TQNNSingleOPS.cblas_axpy(n:longint; alpha:single; x:PSingle; incx:longint; y:PSingle; incy:longint);
 begin
   cblas_saxpy(n, alpha, x, incx, y, incy)
 end;
 
-class procedure TQNNSingleOPS.cblas_scal(N:longint; alpha:Single; X:PSingle; incX:longint); winapi ;
+class procedure TQNNSingleOPS.cblas_scal(N:longint; alpha:Single; X:PSingle; incX:longint);
 begin
   cblas_sscal(N, alpha, X, incX)
 end;
 
-class function TQNNSingleOPS.cblas_dot(n:longint; x:PSingle; incx:longint; y:PSingle; incy:longint):single; winapi ;
+class function TQNNSingleOPS.cblas_dot(n:longint; x:PSingle; incx:longint; y:PSingle; incy:longint):single;
 begin
   cblas_sdot(n, x, incx, y, incy)
 end;
 
-class function TQNNSingleOPS.cblas_asum(n:longint; x:PSingle; incx:longint):Single; winapi ;
+class function TQNNSingleOPS.cblas_asum(n:longint; x:PSingle; incx:longint):Single;
 begin
   cblas_sasum(n, x, incx)
 end;
@@ -2077,7 +2077,7 @@ end;
  * Flash Attention - Memory-Efficient Tiled Attention
  *
  * Uses online softmax algorithm to compute attention without materializing
- * the full [seq_q, seq_k] attention matrix. Reduces memory from O(nÂ²) to O(n).
+ * the full [seq_q, seq_k] attention matrix. Reduces memory from O(n²) to O(n).
  *
  * Algorithm (for each query position):
  * 1. Initialize: max_score = -inf, sum = 0, output = 0
@@ -2252,7 +2252,7 @@ end;
  * V: [seq_k, heads * head_dim]
  * out: [seq_q, heads * head_dim]
  *
- * Memory usage: O(seq_q + tile_sizeÂ²) instead of O(seq_q * seq_k)
+ * Memory usage: O(seq_q + tile_size²) instead of O(seq_q * seq_k)
  *)
 class procedure TQNNSingleOPS.QNNFlashAttention(const dst, Q, K, V: PSingle; const seq_q, seq_k, heads, head_dim: longint; const scale: Single);
 const
@@ -3019,11 +3019,11 @@ initialization
   hBLASLib :=0;
 
   {$if defined(MACOS) or defined(darwin) or defined(USE_STATIC_LINK)}
-        TQNNSingleOPS.cblas_gemm := cblas_sgemm  ;
-        TQNNSingleOPS.cblas_axpy := cblas_saxpy  ;
-        TQNNSingleOPS.cblas_dot  := cblas_sdot   ;
-        TQNNSingleOPS.cblas_asum := cblas_sasum  ;
-        TQNNSingleOPS.cblas_scal := cblas_sscal  ;
+        TQNNSingleOPS.cblas_sgemm := cblas_sgemm  ;
+        TQNNSingleOPS.cblas_saxpy := cblas_saxpy  ;
+        TQNNSingleOPS.cblas_sdot  := cblas_sdot   ;
+        TQNNSingleOPS.cblas_sasum := cblas_sasum  ;
+        TQNNSingleOPS.cblas_sscal := cblas_sscal  ;
   {$else}
   hBLASLib := LoadLibrary(blaslib);
   {$ifdef MSWINDOWS}

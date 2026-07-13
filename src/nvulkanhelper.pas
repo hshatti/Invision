@@ -2,7 +2,9 @@ unit nVulkanHelper;
 {$ifdef fpc}
   {$mode Delphi}
   {$modeswitch advancedrecords}
-  {$asmmode intel}
+  {$ifdef CPUX64}
+    {$asmmode intel}
+  {$endif}
   {$modeSwitch nestedprocvars}
 {$endif}
 {$C+} // or {$ASSERTIONS ON} override to compile with assertion routine for SAFE_CALL
@@ -290,7 +292,7 @@ end;
 
 class operator TVulkanMemory.initialize({$ifdef FPC}var{$else}out{$endif} mem: TVulkanMemory);
 begin
-  mem := default(TVulkanMemory)
+  FillChar(mem, sizeOf(TVulkanMemory), #0)
 end;
 
 { TVulkanArg }

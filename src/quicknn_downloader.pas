@@ -8,7 +8,9 @@ unit quicknn_downloader;
 interface
 
 uses
-  Classes, SysUtils;
+  Classes, SysUtils
+
+  ;
 
 type
 
@@ -16,14 +18,15 @@ type
 
   TFLUX4B= record
     const
-      ENCODER_DIR    = 'text_encoder';
-      TOKENIZER_DIR  = 'tokenizer';
+      ENCODER_DIR     = 'text_encoder';
+      TOKENIZER_DIR   = 'tokenizer';
       TRANSFORMER_DIR = 'transformer';
-      VAE_DIR        = 'vae';
-      HTTP_ROOT      = 'https://huggingface.co/black-forest-labs/FLUX.2-klein-4B/resolve/main/';
+      VAE_DIR         = 'vae';
+      DST_PATH        = 'FLUX.2-klein-4B';
+      HTTP_ROOT       = 'https://huggingface.co/black-forest-labs/FLUX.2-klein-4B/resolve/main/';
       HF_DOWNLOAD_ARG = '?download=true';
     public
-      class procedure download(const srcPath:string=''; dstPath:string='models');static;
+      class procedure download(const modelsPath: string = 'models'; srcPath: string=''); static;
   end;
 
 implementation
@@ -33,7 +36,7 @@ const
   ERROR_CREATE_DIR = 'Cannot create model folder';
 
 
-procedure MakeDir(const dirName:RawByteString);
+procedure MakeDir(const dirName:string);
 begin
   if not DirectoryExists(dirName) then
     assert(CreateDir(dirName), ERROR_CREATE_DIR+ ' ['+dirName+']');
@@ -41,7 +44,7 @@ end;
 
 { TFLUX4B }
 
-class procedure TFLUX4B.download(const srcPath: string; dstPath: string);
+class procedure TFLUX4B.download(const modelsPath: string; srcPath: string);
 const
   ENCODER_FILES : array of string = [
     'generation_config.json' ,
@@ -62,50 +65,61 @@ const
 
   TRANSFORMER_FILES : array of string = [
     'config.json',
-    'diffusion_pytorch_model.safetensor'
+    'diffusion_pytorch_model.safetensors'
   ];
 
   VAE_FILES : array of string = [
     'config.json',
-    'diffusion_pytorch_model.safetensor'
+    'diffusion_pytorch_model.safetensors'
   ];
 
 
 var curDir, fn :string;
     i : integer;
 begin
-  curDir := dstPath+PathDelim;
-  MakeDir(dstPath);
+
+  curDir := modelsPath + PathDelim + DST_PATH + PathDelim;
+  if modelsPath<>'' then begin
+    curDir := modelsPath + PathDelim + DST_PATH + PathDelim;
+    MakeDir(modelsPath);
+  end else begin
+    curDir := DST_PATH + PathDelim;
+  end;
+  makeDir(curDir);
   MakeDir(curDir + ENCODER_DIR);
   MakeDir(curDir + TOKENIZER_DIR);
   MakeDir(curDir + TRANSFORMER_DIR);
   MakeDir(curDir + VAE_DIR);
   cursorShow(false);
   for i := 0 to high(ENCODER_FILES) do begin
+    fn := ENCODER_FILES[i];
+    if fileExists(curDir+ENCODER_DIR+PathDelim + fn) then continue;
     if isConsole then
       writeln('Downloading ... ', ENCODER_FILES[i]);
-    fn := ENCODER_FILES[i];
     http.Download(HTTP_ROOT+ENCODER_DIR+ '/' + fn + HF_DOWNLOAD_ARG, curDir+ENCODER_DIR + '/' + fn);
   end;
 
   for i := 0 to high(TOKENIZER_FILES) do begin
+    fn := TOKENIZER_FILES[i];
+    if fileExists(curDir+TOKENIZER_DIR+PathDelim + fn) then continue;
     if isConsole then
       writeln('Downloading ... ', TOKENIZER_FILES[i]);
-    fn := TOKENIZER_FILES[i];
     http.Download(HTTP_ROOT+TOKENIZER_DIR+ '/' + fn + HF_DOWNLOAD_ARG, curDir+TOKENIZER_DIR+'/' + fn);
   end;
 
   for i := 0 to high(TRANSFORMER_FILES) do begin
+    fn := TRANSFORMER_FILES[i];
+    if fileExists(curDir+TRANSFORMER_DIR+PathDelim + fn) then continue;
     if isConsole then
       writeln('Downloading ... ', TRANSFORMER_FILES[i]);
-    fn := TRANSFORMER_FILES[i];
     http.Download(HTTP_ROOT+TRANSFORMER_DIR+ '/' + fn + HF_DOWNLOAD_ARG, curDir+TRANSFORMER_DIR+'/' + fn);
   end;
 
-  for i := 0 to high(ENCODER_FILES) do begin
+  for i := 0 to high(VAE_FILES) do begin
+    fn := VAE_FILES[i];
+    if fileExists(curDir+VAE_DIR+PathDelim + fn) then continue;
     if isConsole then
-      writeln('Downloading ... ', ENCODER_FILES[i]);
-    fn := ENCODER_FILES[i];
+      writeln('Downloading ... ', VAE_FILES[i]);
     http.Download(HTTP_ROOT+VAE_DIR+ '/' + fn + HF_DOWNLOAD_ARG, curDir+VAE_DIR+'/' + fn);
   end;
   cursorShow(True);

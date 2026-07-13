@@ -12,7 +12,7 @@ uses
   , quicknn_zimage
   , sixel
   , termesc
-  , nchrono, quicknn_vulkan;
+  , nchrono, quicknn_downloader, quicknn_vulkan;
 
 const memAllocated:IntPtr = 0;
 
@@ -73,7 +73,7 @@ begin
   end;
   writeln('SUM MEM =', sum,' ALLOCATED =', memAllocated);
   if sum<>memAllocated then begin
-    beep;
+    SysUtils.beep;
     readln;
   end;
 end;
@@ -124,7 +124,7 @@ begin
   text_progress_callback:=afterstep;
   vae_progress_callback := afterstep;
   PROMPT := 'a cute realistic panda holding a "I will code for food!" signboard';
-  {$define ZIMAGE}
+  {$define _ZIMAGE}
   {$ifdef ZIMAGE}
   zimage := TQNNZImage.load('c:\development\flux2.c\Z-Image-Turbo', afterphase);
   zimage.use_mmap:=true;
@@ -139,11 +139,13 @@ begin
   //img := flux.generate('تفاحة', params);
   zimage.free;
   {$else}
-  src := TQNNImage.loadFromFile('C:\development\flux2.c\bear.png');
+
+  TFLUX4B.download();
+  //src := TQNNImage.loadFromFile('C:\development\flux2.c\bear.png');
   //src.print();
   //printSixel(pointer(src.data), src.width, src.height, true);
   //flux := TQNNFLux.load('c:\development\flux2.c\FLUX.2-klein-9B');
-  flux := TQNNFlux.load('c:\development\flux2.c\flux-klein-model', afterphase);
+  flux := TQNNFlux.load('models/'+TFLUX4B.DST_PATH, afterphase);
   flux.use_mmap := true;
   //flux.loadVAE('c:\development\flux2.c\flux-klein-model');
   //l := flux.vae.encode(src.asMemoryBlock(), 1, src.height, src.width, l_h, l_w);
@@ -174,7 +176,7 @@ begin
   printSixel(pointer(img.data), img.width, img.height, true);
 
   img.free;
-  DEBUGAllMems();
+  //DEBUGAllMems();
   freeAndNil(dict);
   readln;
 end.

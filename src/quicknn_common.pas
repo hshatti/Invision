@@ -387,7 +387,7 @@ function calloc(count, size:UIntPtr):pointer;WINAPI;                external 'ms
 function malloc(size:UIntPtr):pointer;WINAPI;                       external 'msvcrt.dll';
 function realloc(mem:pointer; size:UIntPtr):pointer;WINAPI;         external 'msvcrt.dll';
 procedure free(mem:pointer);WINAPI;                                 external 'msvcrt.dll';
-//procedure printf(const fmt:ansistring);winapi;varargs;              external 'msvcrt.dll';
+procedure printf(const fmt:ansistring);winapi;varargs;              external 'msvcrt.dll';
 //procedure sprintf(out a; const fmt:ansistring);winapi;varargs; external 'msvcrt.dll';
 {$else}
 function calloc(count, size:UIntPtr):pointer;WINAPI;external;

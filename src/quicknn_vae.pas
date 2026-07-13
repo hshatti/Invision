@@ -627,29 +627,32 @@ begin
         //        x[i] := x[i]/scaling_factor + shift_factor
         //end
     else begin
-        //QNNBatchNorm(x, x, bn_mean, bn_var, nil, nil, batch, lat_ch, latent_h, latent_w);
-        mean_ptr := bn_mean;
-        var_ptr := bn_var;
-        for c := 0 to lat_ch -1 do begin
-            mean := mean_ptr[c];
-            std := sqrt(var_ptr[c]+eps);
-            for b := 0 to batch -1 do
-                QNNFusedScaleBias(x+(b*lat_ch + c)*z_spatial, x+(b*lat_ch + c)*z_spatial, std, mean, z_spatial);
-                //for i := 0 to z_spatial -1 do
-                //    begin
-                //        idx := b * lat_ch * z_spatial+c * z_spatial+i;
-                //        x[idx] := x[idx] * std + mean
-                //    end
-        end;
+        QNNBatchNorm(x, x, bn_mean, bn_var, batch, lat_ch, latent_h, latent_w);
+        // x is [batch, latent_channels, latent_h, latent_w]
+        //mean_ptr := bn_mean;
+        //var_ptr := bn_var;
+        //for c := 0 to lat_ch -1 do begin
+        //    mean := mean_ptr[c];
+        //    std := sqrt(var_ptr[c]+eps);
+        //    for b := 0 to batch -1 do
+        //        QNNFusedScaleBias(x+(b*lat_ch + c)*z_spatial, x+(b*lat_ch + c)*z_spatial, std, mean, z_spatial);// x is [batch, latent_channels, latent_h, latent_w]
+        //        //for i := 0 to z_spatial -1 do
+        //        //    begin
+        //        //        idx := b * lat_ch * z_spatial+c * z_spatial+i;
+        //        //        x[idx] := x[idx] * std + mean
+        //        //    end
+        //end;
     end;
     unpatch_h := latent_h * 2;
     unpatch_w := latent_w * 2;
     QNNUnpatchify(work, x, batch, z_channels, latent_h, latent_w, 2);
     QNNCopy(x, work, batch * z_channels * unpatch_h * unpatch_w);
+    // x and work is [batch, z_channels, unpatch_h, unpatch_w]
     cur_h := unpatch_h; cur_w := unpatch_w;
     if boolean(post_quant_conv_weight) then begin
       QNNConv2d(work, x, post_quant_conv_weight, post_quant_conv_bias, z_channels, z_channels, cur_h, cur_w, 1, 1, 1, 0, batch);
       QNNCopy(x, work, batch*z_channels*cur_h*cur_w)
+      // x and work is [batch, z_channel, latent_h*2, latent_w*2]
     end;
     mid_ch := base_channels * ch_mult[3];
     QNNConv2d(work, x, dec_conv_in_weight, dec_conv_in_bias, z_channels, mid_ch, cur_h, cur_w, 3, 3, 1, 1, batch);

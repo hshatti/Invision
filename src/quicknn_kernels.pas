@@ -8,7 +8,7 @@ unit quicknn_kernels;
   {$modeswitch nestedprocvars}
   {$ifdef CPUX64}
     {$asmmode intel}
-    {$FPUType AVX2}
+    //{$FPUType AVX2}
   {$endif}
   //{$if defined(darwin)}
   //  {$LinkFramework accelerate}
