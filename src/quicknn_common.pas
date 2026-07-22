@@ -26,6 +26,7 @@ uses typinfo, generics.Collections
 
 //{$if not declared(FP16)}
 type
+  PPSingle = ^PSingle;
   BF16 = type word;
   PBF16 = ^BF16;
 
@@ -233,20 +234,31 @@ type
 
   TQNNPixelOrder = (poHWC, poCHW);
 
+
   PQNNImage = ^TQNNImage;
 
   { TQNNImage }
 
   TQNNImage = record
+  type
+      TPngChunk = record
+        tag : array[0..3] of ansichar;
+        data : TArray<Byte>;
+        crc : longword;
+      end;
+  var
       width : longint;
       height : longint;
       channels : longint;// RGB
       data : TArray<byte>;      (* Row-major, channel-interleaved *)
+      class function loadFromFile(const fileName : string; resizeWidth: longint =0; resizeHeight: longint=0):TQNNImage;static;
+      class procedure addPngMeta(const filename:string; const keyword, meta:ansistring);static;
+      class procedure computePngCRCTable(); static;
+      class function calcPngCRC(const buf :PByte; const len : NativeInt; const initCRC : longword = $ffffffff): longword;static;
       function resize(const w, h:longint):TQNNImage;
       constructor Create(const aWidth, aHeight:longint; const aChannels : longint =3; const aData:PQNNFloat =nil);
       function asMemoryBlock(const aDataType:TQNNDataType=QNN_DATATYPE; const aPixelOrder: TQNNPixelOrder= poCHW):TMemoryBlock;
-      procedure saveToFile(const filename:string);
-      class function loadFromFile(const fileName : string; resizeWidth: longint =0; resizeHeight: longint=0):TQNNImage;static;
+      procedure saveToFile(const filename:string; const tagKey:string = ''; const tagDesc :string ='');
       procedure print;
       procedure free();
   end;
@@ -503,10 +515,13 @@ uses SysUtils, Math
   {$else}
   ,UITypes, fmx.Types, fmx.Graphics
   {$endif}
-  , quicknn_cpu, termesc, sixel;
+  , quicknncpu, termesc, sixel;
 
 type
   PSingle = System.PSingle; // fix delphi incompatible PSingle between System and Windows units
+
+var
+  PNG_CRC_TABLE : array[0..255] of longword;
 
 function LCase(const c:ansichar):ansichar;
 begin
@@ -666,7 +681,7 @@ begin
 
 end;
 
-procedure TQNNImage.saveToFile(const filename: string);
+procedure TQNNImage.saveToFile(const filename: string; const tagKey: string; const tagDesc: string);
 var
   y, x, w, h : longint;
   {$if defined(fpc)}
@@ -677,6 +692,7 @@ var
   bmpData : TBitmapData;
   {$endif}
   D : PByte;
+  ext : string;
 begin
   w := width;
   h := height;
@@ -693,7 +709,7 @@ begin
         bmp.Colors[x, y] := clr;
     end;
   bmp.SaveToFile(fileName);
-  bmp.free
+  bmp.free;
   {$else}
   bmp := TBitmap.Create();
   bmp.setSize(width, height);
@@ -718,8 +734,12 @@ begin
   end;
   bmp.Unmap(bmpData);
   bmp.SaveToFile(fileName);
-  bmp.free
+  bmp.free;
   {$endif}
+  ext := LowerCase(ExtractFileExt(filename));
+  if (ext='.png') and (tagKey<>'') then begin
+    addPngMeta(filename, tagKey, tagDesc);
+  end;
 end;
 
 class function TQNNImage.loadFromFile(const fileName: string;
@@ -755,6 +775,105 @@ begin
   finally
     freeAndNil(img)
   end;
+end;
+
+function _FileSize(var f:file):Int64; // a work around Delphi FileSize function returning incorrect file size on large files
+var fl :longword;
+begin
+{$if defined(FPC)}
+  result := FileSize(f);
+{$elseif defined(MSWINDOWS)}
+  result :=0;
+  fl := GetFileSize(TFileRec(f).handle, @result);
+  result := fl or (result shl 32)
+{$else}
+  result := FileSize(f); // fallback to default
+{$endif}
+end;
+
+class procedure TQNNImage.addPngMeta(const filename: string; const keyword, meta: ansistring);
+const PNG_SIGNATURE :Uint64 = $0A1A0A0D474E5089;
+var
+  f:File;
+  content:rawbytestring;
+  fsize, fpos: NativeInt;
+  pngSig: uint64;
+  chunkSize, r, i:longword;
+  pngChunk : ^TPngChunk;
+  pngchunks : TArray<TPngChunk>;
+  strData : ansistring;
+  tag : array[0..3] of ansichar;
+begin
+  if (keyword='') or (meta='') then exit;
+  try
+    AssignFile(f, filename);
+    reset(f, 1);
+    _FileSize(f);
+    fSize := _FileSize(f);
+    setLength(content, fSize);
+    blockread(f, pngSig, sizeof(pngSig));
+    if pngSig=PNG_SIGNATURE then begin
+      while not EOF(f) do begin
+        blockRead(f, chunkSize, sizeOf(chunkSize), r);
+        chunkSize := SwapEndian(chunkSize);
+        blockread(f, tag, sizeof(tag));
+        //if (FilePos(f)=fSize) or (tag='IEND') then break;
+        //fpos := FilePos(f);
+        //Seek(f, fpos + chunksize); // move to the next Chunk (data + CRC value)
+        setLength(pngChunks, length(pngChunks)+1);
+        pngChunk := @pngchunks[high(pngchunks)];
+        move(tag, pngChunk.tag, sizeof(tag));
+        setLength(pngChunk.data, chunkSize);
+        if assigned(pngChunk.data) then
+          BlockRead(f, pngChunk.data[0], chunkSize);
+        blockRead(f, pngChunk.crc, sizeOf(pngChunk.crc));
+        pngChunk.crc := SwapEndian(pngChunk.crc);
+      end;
+      insert(default(TPngChunk), pngChunks, 1);
+      pngChunk := @pngchunks[1];
+      pngChunk.tag := 'tEXt';
+      setLength(pngChunk.data, length(keyword)+length(meta)+1);
+      move(keyword[1], pngChunk.data[0], length(keyword));
+      move(meta[1], pngChunk.data[length(keyword)+1], length(meta));
+      strData := pngChunk.tag + keyword+#0+meta;
+      pngChunk.crc := calcPngCRC(Pointer(strData), length(strData));
+      reWrite(f, 1);
+      blockWrite(f, PNG_SIGNATURE, sizeof(PNG_SIGNATURE));
+      for i:= 0 to high(pngChunks) do begin
+        BlockWrite(f, swapEndian(longword(length(pngChunks[i].data))), sizeof(longword));
+        blockWrite(f, pngChunks[i].tag, sizeof(tag));
+        if assigned(pngChunks[i].data) then begin
+          blockWrite(f, pngChunks[i].data[0], length(pngchunks[i].data));
+        end;
+        blockWrite(f, swapEndian(pngChunks[i].crc), sizeOf(pngchunks[i].crc));
+      end;
+    end;
+  finally
+    closeFile(f)
+  end;
+end;
+
+class procedure TQNNImage.computePngCRCTable();
+var n, k:longint; c: longword;
+begin
+  for n := 0 to high(PNG_CRC_TABLE) do begin
+      c := n;
+      for k := 0 to 7 do
+          if boolean(c and 1) then
+              c := $edb88320 xor (c shr 1)
+          else
+              c := c shr 1;
+      PNG_CRC_TABLE[n] := c;
+  end;
+end;
+
+class function TQNNImage.calcPngCRC(const buf: PByte; const len: NativeInt; const initCRC: longword): longword;
+var i:NativeInt;
+begin
+  result := initCRC;
+  for i := 0 to len-1 do
+      result := PNG_CRC_TABLE[(result xor buf[i]) and $ff] xor (result shr 8);
+  result := result xor $ffffffff; // isn't this the same as not()?
 end;
 
 {$else}
@@ -1027,7 +1146,7 @@ procedure TMemoryBlock.printStat;
 begin
   case DataType of
     dtF32:
-      quicknn_cpu.printStat(self);
+      quicknncpu.printStat(self);
   else
     assert(false, 'ERROR : Datatype '+ GetEnumName(TypeInfo(TQNNDataType), ord(DataType))+' not implemented!')
   end;
@@ -2000,7 +2119,7 @@ initialization
   end;
   //write(#$1B'[?1049h'); // set Console Alternative Buffer
   {$endif}
-
+  TQNNImage.computePngCRCTable();
   //arena := TMemoryArena.create($ff);
 
 end.

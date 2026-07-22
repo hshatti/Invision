@@ -37,7 +37,7 @@
           <CodeGeneration>
             <SmartLinkUnit Value="True"/>
             <Optimizations>
-              <OptimizationLevel Value="3"/>
+              <OptimizationLevel Value="4"/>
             </Optimizations>
           </CodeGeneration>
           <Linking>
@@ -88,7 +88,7 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
-        <Filename Value="..\src\quicknn_cpu.pas"/>
+        <Filename Value="..\src\quicknncpu.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>

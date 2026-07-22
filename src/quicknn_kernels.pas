@@ -334,7 +334,7 @@ procedure qgemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOS
 *)
 
 implementation
-uses quicknn_cpu;
+uses quicknncpu;
 
 const OP_NOT_IMPL= 'Operation is not implemented for this datatype!';
 

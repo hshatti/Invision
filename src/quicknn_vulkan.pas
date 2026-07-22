@@ -19,7 +19,7 @@ unit quicknn_vulkan;
 
 
 interface
-uses Sysutils, math, TypInfo, nVulkanHelper, quicknn_common;
+uses Sysutils, math, TypInfo, nVulkanHelper;
 
 type
   TQNNOperation = (
@@ -73,13 +73,12 @@ type
   { TQNNVulkan }
 
   TQNNVulkan = class(TVulkanCompute)
-  private
-    vkA, vkB, vkC : TVulkanMemory;
-  public
 
     procedure preparePipeline(const op:TQNNOperation);overload;
     procedure dispatchPipeline(const Op: TQNNOperation; const args: TVulkanArgs; const x:longword; const y:longword = 1; const z:longword =1); overload;
     procedure sgemm(const tranA, tranB:boolean; M, N, K :longint; const ALPHA :single; const A :PSingle; const lda :longint; const B:PSingle; const ldb :longint; const BETA :single; const C :PSingle; const ldc :longint);
+    // always raw major
+    procedure gemm(const tranA, tranB: boolean; const M, N, K: longint; const ALPHA: single; const A: TVulkanMemory; const lda: longint; const B: TVulkanMemory; const ldb: longint; const BETA: single; const C: TVulkanMemory; const ldc: longint; const offsetA: longint; const offsetB: longint; const offsetC: longint);
 
   end;
 
@@ -109,6 +108,8 @@ const
   WORKGROUP_SIZE_Y = 8; //1;
   WORKGROUP_SIZE_Z = 1;
 var aSize, bSize,cSize : int64;
+    vkA, vkB, vkC : TVulkanMemory;
+
 begin
   assert(not tranA , 'TVulknCompte.sgemm : not implemrnted with the current arguments!');
 
@@ -195,8 +196,50 @@ begin
 
 end;
 
+procedure TQNNVulkan.gemm(const tranA, tranB: boolean; const M, N, K: longint; const ALPHA: single; const A: TVulkanMemory; const lda: longint; const B: TVulkanMemory; const ldb: longint; const BETA: single; const C: TVulkanMemory; const ldc: longint; const offsetA: longint; const offsetB: longint; const offsetC: longint);
+const
+  BN = 128;
+  BM = 128;
+var cmdBufStarted:boolean;
+begin
+  assert(not tranA , 'TVulknCompte.sgemm : not implemrnted with the current arguments!');
 
 
+
+  if not(
+      (high(vulkanPipelines) > max(longint(opGemm_nn_WrapTiling), longint(opGemm_nt))) and
+      assigned(vulkanPipelines[longint(opGemm_nn_WrapTiling)].pipeline) and
+      assigned(vulkanPipelines[longint(opGemm_nt_WrapTiling)].pipeline)
+    ) then begin
+      preparePipeline(opGemm_nn_WrapTiling);
+      preparePipeline(opGemm_nn);
+      preparePipeline(opGemm_nt_WrapTiling);
+  end;
+
+  cmdBufStarted := CommandBufferStarted;
+  if not cmdBufStarted then beginCommadBuffer;
+
+  if (not tranA) and (not tranB) then
+    dispatchPipeline(opGemm_nn_WrapTiling, [M, N, K, ALPHA, A.buffer, offsetA, lda, B.buffer, offsetB, ldb, BETA, C.buffer, offsetC, ldc],
+                                   CEIL_DIV(N, BN), CEIL_DIV(M, BM)
+                        )
+    //dispatchPipeline(opGemm_nn, [M, N, K, 1.0, vkA.buffer, 0, lda, vkB.buffer, 0, ldb, 0.0, vkC.buffer, 0, ldc],
+    //                               (M + WORKGROUP_SIZE_X-1) div WORKGROUP_SIZE_X,
+    //                               (N + WORKGROUP_SIZE_Y-1) div WORKGROUP_SIZE_Y,
+    //                               1 //(K+WORKGROUP_SIZE_Z-1) div WORKGROUP_SIZE_Z
+    //                    )
+  else if (not tranA) and tranB then
+    dispatchPipeline(opGemm_nt_WrapTiling, [M, N, K, ALPHA, A.buffer, offsetA, lda, B.buffer, offsetB, ldb, BETA, C.buffer, offsetC, ldc],
+                                   CEIL_DIV(N, BN), CEIL_DIV(M, BM)
+                        );
+  if not cmdBufStarted then begin
+    endCommandBuffer;
+  end;
+
+end;
+
+
+{$ifdef TEST}
 const
   M : longint = $8;
   N : longint = $8;
@@ -224,6 +267,7 @@ var
   i4 : int4;
   ms : uint64;
   hh : half;
+{$endif}
 
 initialization
 

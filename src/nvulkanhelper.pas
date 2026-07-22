@@ -66,12 +66,39 @@ type
     function getMemoryIndex(const memType:longword; const memPropertyFlags:VkMemoryPropertyFlags): longword;
   end;
 
+  TVulkanPrecision = (
+    //floating
+    vpF32,
+    vpBf16,
+    vpF16,
+    vpF8_e5m2,
+    vpF8_e4m3,
+    vpF4_e2m1,
+    vpF4_e3m0,
+    vpF64,
+
+    //signed integers
+    vpS32,
+    vpS16,
+    vpS8,
+    vpS4,
+
+    //unsigned integers
+    vpU32,
+    vpU16,
+    vpU8,
+    vpU4,
+
+    vpBoolean
+    //vpE8m0,
+  );
   { TVulkanMemory }
 
   TVulkanMemory = record
     buffer : VkBuffer;
     memory : VkDeviceMemory;
     size   : VkDeviceSize;
+    precision : TVulkanPrecision;
     isStaging : boolean;
     class operator initialize({$ifdef FPC}var{$else}out{$endif} mem:TVulkanMemory);
   end;

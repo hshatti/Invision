@@ -269,7 +269,8 @@ type
 const IsLoadVerbose:boolean = false;
 
 implementation
-uses {$if defined(USE_CPU)} quicknn_cpu {$else} quicknn_kernels{$endif};
+uses quicknn_kernels;
+
 {$if defined(MSWINDOWS)}
 function mmapFile(var f:file; const size:uint64=0; const offset:uint64=0):pointer;
 var mapped_handle:THandle;
@@ -510,7 +511,7 @@ begin
   end;
 
 end;
-{$i+}
+{$I+}
 procedure TSafeTensorFile.close();
 begin
   //if TFileRec(sf_file).Mode<>fmClosed then begin
@@ -635,6 +636,7 @@ begin
       end;
     end;
   result := Default(TMemoryBlock);
+  assert(false, 'cannot find tensor "'+name+'" in "'+ extractFilePath(self[0].path)+ '"');
   //if isConsole then writeln(ErrOutput, 'WARNING : Tensor [', name, '] not found');
 end;
 

@@ -22,7 +22,7 @@ unit quicknn_flux;
 interface
 
 uses
-  SysUtils, math, quicknn_common, quicknn_transformers, quicknn_qwen3, quicknn_vae,safetensor, quickjson
+  SysUtils, math, quicknn_common, quicknn_transformers, quicknn_qwen3, quicknn_vae,safetensor
   {$ifdef FPC}
   {$else}
   , windows
@@ -78,16 +78,16 @@ type
     procedure loadVAE(const vaeModelPath:string);    overload;
     procedure loadVAE();                             overload;
     function generateLatent(const text_emb: TMemoryBlock; const text_seq, height, width, num_steps: longint; const seed:int64; const progress_callback:TStepCallback):TMemoryBlock;
-    function generate(const prompt: rawbytestring; params: TGenerateParams): TQNNImage;                        overload;
-    function generate(const prompt: rawbytestring; params: TGenerateParams; const image:TQNNImage): TQNNImage; overload;
-    function generate(const prompt: rawbytestring; params: TGenerateParams; const images:TArray<TQNNImage>): TQNNImage; overload;
+    function generate(const prompt: rawbytestring; var params: TGenerateParams): TQNNImage;                        overload;
+    function generate(const prompt: rawbytestring; var params: TGenerateParams; const image:TQNNImage): TQNNImage; overload;
+    function generate(const prompt: rawbytestring; var params: TGenerateParams; const images:TArray<TQNNImage>): TQNNImage; overload;
     //function generate(const prompt: rawbytestring; const images:TArray<TQNNImage>;params: TGenerateParams): TQNNImage; overload;
     function encodeText(const prompt: rawbytestring; var out_seq_len: longint): TMemoryBlock;
     procedure free();
   end;
 
 implementation
-uses quicknn_sample, {$if defined(USE_CPU)} quicknn_cpu {$else} quicknn_kernels{$endif}, sixel;
+uses quickjson, quicknn_sample, quicknn_kernels, sixel;
 
 { TQNNFlux }
 
@@ -235,7 +235,7 @@ end;
 //    TFloatArray = array[0..MaxLongint div 32] of single;
 //    PFloatArray = ^TFloatArray;
 
-function TQNNFlux.generate(const prompt: rawbytestring; params: TGenerateParams): TQNNImage;
+function TQNNFlux.generate(const prompt: rawbytestring; var params: TGenerateParams): TQNNImage;
 var
   text_emb, text_emb_uncond : TMemoryBlock;
   latent_h, latent_w, text_seq, image_seq_len, text_seq_uncond : longint;
@@ -341,7 +341,7 @@ begin
 end;
 
 
-function TQNNFlux.generate(const prompt: rawbytestring; params: TGenerateParams; const image: TQNNImage): TQNNImage;
+function TQNNFlux.generate(const prompt: rawbytestring; var params: TGenerateParams; const image: TQNNImage): TQNNImage;
 var
     resized, img_to_use: TQNNImage;
     scale: QNNFloat;
@@ -441,7 +441,7 @@ begin
     latent.free;
 end;
 
-function TQNNFlux.generate(const prompt: rawbytestring; params: TGenerateParams; const images: TArray<TQNNImage>): TQNNImage;
+function TQNNFlux.generate(const prompt: rawbytestring; var params: TGenerateParams; const images: TArray<TQNNImage>): TQNNImage;
 var
     i, text_seq, text_seq_uncond, rh, rw, ref_w, ref_h, lat_h, lat_w, latent_h, latent_w,
       image_seq_len:longint;
@@ -610,7 +610,6 @@ begin
   out_seq_len := QWEN3_MAX_SEQ_LEN;
   if assigned(phase_callback) then phase_callback('encoding text', true);
 end;
-
 
 procedure TQNNFlux.free();
 begin

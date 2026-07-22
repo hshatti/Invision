@@ -41,7 +41,7 @@ function schedule_linear(const num_steps:longint):TMemoryBlock;
 var i:longint;
   resultPtr: PQNNFloat;
 begin
-    result := TMemoryblock.Create(num_steps + 1, 'SCHEDULER_LINEAR');
+    result := TMemoryblock.Create([num_steps + 1], 'SCHEDULER_LINEAR');
     resultPtr := result;
     for i := 0 to num_steps do
         resultPtr[i] := 1.0 - i/num_steps;
@@ -57,7 +57,7 @@ end;
 function schedule_power(const num_steps:longint; const alpha:QNNFloat):TMemoryBlock;
 var i:longint; resultPtr: PQNNFloat;
 begin
-    result := TMemoryBlock.Create(num_steps + 1, 'SCHEDULER_POWER');
+    result := TMemoryBlock.Create([num_steps + 1], 'SCHEDULER_POWER');
     resultPtr:= result;
     for i := 0 to num_steps do
         resultPtr[i] := 1.0 - power(i/num_steps, alpha);
@@ -156,7 +156,7 @@ var
     t, mu: QNNFloat;
     i: longint;
 begin
-    result := TMemoryblock.Create(num_steps+1, 'SCHEDULER_FLUX');
+    result := TMemoryblock.Create([num_steps+1], 'SCHEDULER_FLUX');
     resultPtr := result;
     mu := compute_empirical_mu(image_seq_len, num_steps);
     for i := 0 to num_steps do begin
@@ -188,7 +188,7 @@ var i:longint;
     resultPtr:PQNNFloat;
     shift, sigma_max, sigma_min, sigma_train_min, u, raw:QNNFloat;
 begin
-     result := TMemoryBlock.Create(num_steps + 1, 'SCHEDULER_ZIMAGE');
+     result := TMemoryBlock.Create([num_steps + 1], 'SCHEDULER_ZIMAGE');
      resultPtr := result;
      shift := 3.0;
      sigma_max       := 1.0;

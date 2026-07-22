@@ -5,7 +5,8 @@ program invision;
 {$endif}
 
 uses
-  SysUtils, Generics.Collections, safetensor, quicknn_cpu, quicknn_common, quicknn_tokenizer,
+  SysUtils, Generics.Collections, typinfo, safetensor,
+  quicknncpu, quicknn_common, quicknn_tokenizer,
   quicknn_transformers, quicknn_vae, quicknn_sample,
   quicknn_qwen3
   , quicknn_flux
@@ -119,11 +120,14 @@ begin
   //params.seed:= 666;
   //params.seed:=1781898218;
   params.powerAlpha := 2;
+  params.num_steps := 4;
   substep_callback:=afterblockForward;
   step_callback := afterstep;
   text_progress_callback:=afterstep;
   vae_progress_callback := afterstep;
-  PROMPT := 'a cute realistic panda holding a "I will code for food!" signboard';
+  //PROMPT := 'a cute realistic panda holding a "I will code for food!" signboard';
+  //PROMPT := 'A Delphi with gargoyles on the top of it, a fron view of the whole delphi building';
+  PROMPT := 'cartimaphoble hembrashel';
   {$define _ZIMAGE}
   {$ifdef ZIMAGE}
   zimage := TQNNZImage.load('c:\development\flux2.c\Z-Image-Turbo', afterphase);
@@ -137,6 +141,9 @@ begin
   //img := flux.generate('أرنب روبوتي يغني في الفضاء', params);
   //img := flux.generate('أرنب روبوتي يتناول العشاء مع قطة', params);
   //img := flux.generate('تفاحة', params);
+  imgFile := GetCurrentDir()+ DirectorySeparator+FormatDateTime('YYYY_MM_DD_hhnnsszzz', Now())+ '_pascal.png';
+  writeln('Saving to [', imgFile ,']');
+  img.saveToFile(imgFile, 'Invision', '{"program" : "Invision , a (text to image/ image to image) generator example written in Object Pascal", "model" : "'+zimage.model_name+'"'+'"prompt" : "'+StringReplace(PROMPT, '"', '\"', [rfReplaceAll])+'", "seed" : '+IntToStr(params.seed)+'}');
   zimage.free;
   {$else}
 
@@ -168,11 +175,17 @@ begin
   //img := flux.generate('أرنب روبوتي يغني في الفضاء', params);
   //img := flux.generate('أرنب روبوتي يتناول العشاء مع قطة', params);
   //img := flux.generate('تفاحة', params);
-  flux.free;
-  {$endif}
   imgFile := GetCurrentDir()+ DirectorySeparator+FormatDateTime('YYYY_MM_DD_hhnnsszzz', Now())+ '_pascal.png';
   writeln('Saving to [', imgFile ,']');
-  img.saveToFile(imgFile);
+  img.saveToFile(imgFile, 'program', 'Invision, a (txt2img/img2img) generator example written in Object Pascal (Delphi and FPC)');
+  img.addPngMeta(imgFile, 'json',
+                          '{"model" : "'+flux.model_name+'"'+
+                          ', "prompt" : "'+StringReplace(PROMPT, '"', '\"', [rfReplaceAll])+
+                          '", "seed" : '+IntToStr(params.seed)+
+                          ', "steps" : '+intToStr(params.num_steps)+
+                          ', "schedueler" : "'+copy(GetEnumName(TypeInfo(TQNNSchedule), ord(params.schedule)), 5)+'"}');
+  flux.free;
+  {$endif}
   printSixel(pointer(img.data), img.width, img.height, true);
 
   img.free;

@@ -21,12 +21,49 @@ unit quicknn_transformers;
 {.$define USE_MULTITHREADING}
 
 interface
-uses SysUtils, math, safetensor, quicknn_common, {$if defined(USE_CPU)} quicknn_cpu {$else} quicknn_kernels{$endif}, quicknn_vae, quicknn_qwen3, quickjson
+uses SysUtils, math, safetensor, quicknn_common, quicknn_vae, quicknn_qwen3, quickjson
   {$ifdef USE_MULTITHREADING}
   , steroids
   {$endif}
   ;
 
+const
+  flux2_latent_rgb_proj : TArray<TArray<single>> = [
+    [ 0.000736   , -0.008385 , -0.019710 ],
+    [ -0.001352  , -0.016392 , 0.020693  ],
+    [ -0.006376  , 0.002428  , 0.036736  ],
+    [ 0.039384   , 0.074167  , 0.119789  ],
+    [ 0.007464   , -0.005705 , -0.004734 ],
+    [ -0.004086  , 0.005287  , -0.000409 ],
+    [ -0.032835  , 0.050802  , -0.028120 ],
+    [ -0.003158  , -0.000835 , 0.000406  ],
+    [ -0.112840  , -0.084337 , -0.023083 ],
+    [ 0.001462   , -0.006656 , 0.000549  ],
+    [ -0.009980  , -0.007480 , 0.009702  ],
+    [ 0.032540   , 0.000214  , -0.061388 ],
+    [ 0.011023   , 0.000694  , 0.007143  ],
+    [ -0.001468  , -0.006723 , -0.001678 ],
+    [ -0.005921  , -0.010320 , -0.003907 ],
+    [ -0.028434  , 0.027584  , 0.018457  ],
+    [ 0.014349   , 0.011523  , 0.000441  ],
+    [ 0.009874   , 0.003081  , 0.001507  ],
+    [ 0.002218   , 0.005712  , 0.001563  ],
+    [ 0.053010   , -0.019844 , 0.008683  ],
+    [ -0.002507  , 0.005384  , 0.000938  ],
+    [ -0.002177  , -0.011366 , 0.003559  ],
+    [ -0.000261  , 0.015121  , -0.003240 ],
+    [ -0.003944  , -0.002083 , 0.005043  ],
+    [ -0.009138  , 0.011336  , 0.003781  ],
+    [ 0.011429   , 0.003985  , -0.003855 ],
+    [ 0.010518   , -0.005586 , 0.010131  ],
+    [ 0.007883   , 0.002912 , -0.001473  ],
+    [ -0.003318  , -0.003160 , 0.003684  ],
+    [ -0.034560  , -0.008740 , 0.012996  ],
+    [ 0.000166   , 0.001079  , -0.012153 ],
+    [ 0.017772   , 0.000937  , -0.011953 ]
+  ];
+
+  flux2_latent_rgb_bias : TArray<single> = [-0.028738, -0.098463, -0.107619];
 
 type
   PSingles = ^TSingles;
@@ -493,6 +530,7 @@ procedure UnPatchifyZi(const dst:PQNNFloat; const src: PQNNFloat; const in_ch, H
 function loadShards(const modelDir: string):TSafeTensorFiles;
 
 implementation
+uses quicknn_kernels;
 
 function loadShards(const modelDir: string):TSafeTensorFiles;
 var json, wm:TJSON; i:integer;
@@ -813,7 +851,7 @@ begin
   result := assigned(sf_files)
 end;
 
-//{$define USE_FLASHATTENTION}
+{$define _USE_FLASHATTENTION}
 
 procedure TTransformerFlux.reInitialize(const totalSeq: longint);
 var fused_dim, hidden, mlp:longint; attn_scores_need:TArray<int64>;
@@ -1107,12 +1145,11 @@ end;
 
 
 
-procedure TTransformerFlux.multiHeadForward(const dst, Q, K, V: TMemoryBlock;
-  const seq: longint);
+procedure TTransformerFlux.multiHeadForward(const dst, Q, K, V: TMemoryBlock; const seq: longint);
 var
   hidden, headDim : longint;
   scale : QNNFloat;
-  scores : TMemoryBlock;
+  //scores : TMemoryBlock;
 
 {$ifdef FPC}
 procedure worker(const start, finish:IntPtr; const data:pointer);
@@ -1130,7 +1167,7 @@ begin
         kh := K      + i*headDim;
         vh := V      + i*headDim;
         oh := dst    + i*headDim;
-        sh := scores + i*seq*seq;
+        sh := attn_scores + i*seq*seq;
 
         cblas_gemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                     seq, seq, headDim,
@@ -1149,6 +1186,7 @@ begin
                     0.0,
                     oh {dst    + i*headDim}, hidden);
     end;
+
 end;
 
 {$ifdef fpc}
@@ -1160,10 +1198,10 @@ begin
   scale := 1/sqrt(head_dim);
 
 {$if defined(USE_FLASHATTENTION)}
-  QNNFlashAttention(dst, Q, K, V, seq, seq, num_heads, head_dim, 1/sqrt(head_dim));
+  QNNFlashAttention(dst, Q, K, V, num_heads, seq, seq, head_dim, scale{1/sqrt(head_dim)});
 {$else}
-  scores := attn_scores;
-  {$ifdef _USE_MULTITHREADING}
+  //scores := attn_scores;
+  {$ifdef _USE_MULTITHREADING}       // CAUTION : do not multithread
   mp.&for(worker, 0, num_heads-1) ;
   {$else}
   worker(0, num_heads-1, nil);
@@ -1179,7 +1217,8 @@ procedure TTransformerFlux.jointAttentionForward(const img_out, txt_out, img_Q,
 var
   totalSeq, hidden, headDim:longint;
   scale : QNNFloat;
-  cat_k, cat_v, scores : TMemoryBlock;
+  //cat_k, cat_v,
+      //scores : TMemoryBlock;
   {$ifdef fpc}
   procedure worker(const start, finish:IntPtr; const data:pointer);
 {$else}
@@ -1194,14 +1233,14 @@ begin
     kh, vh : TMemoryBlock;
   begin
     for i:= start to finish do begin
-            imgQh := img_Q   + i*headDim;
-            txtQh := txt_Q   + i*headDim;
-            kh    := cat_k   + i*headDim;
-            vh    := cat_v   + i*headDim;
-            imgOh := img_out + i*headDim;
-            txtOh := txt_out + i*headDim;
-            imgSh := scores  + i*totalSeq*totalSeq;
-            txtSh := imgSh   + img_seq*totalSeq; // txt_sh is an offset from img_sh
+            imgQh := img_Q        + i*headDim;
+            txtQh := txt_Q        + i*headDim;
+            kh    := attn_cat_k   + i*headDim;
+            vh    := attn_cat_v   + i*headDim;
+            imgOh := img_out      + i*headDim;
+            txtOh := txt_out      + i*headDim;
+            imgSh := attn_scores  + i*totalSeq*totalSeq;
+            txtSh := imgSh        + img_seq*totalSeq; // txt_sh is an offset from img_sh
 
             cblas_gemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                         img_seq, totalSeq, headDim,
@@ -1235,6 +1274,7 @@ begin
                         0.0,
                         txtOh, hidden);
 
+
     end;
   end;
 {$ifdef fpc}
@@ -1247,22 +1287,22 @@ begin
   scale  := 1/sqrt(head_dim);
 
   (* Use pre-allocated buffers for K/V concatenation *)
-  cat_k := attn_cat_k;
-  cat_v := attn_cat_v;
+  //cat_k := attn_cat_k;
+  //cat_v := attn_cat_v;
 
   //Concatenate K, V from both streams in [seq, heads, head_dim] format
   //IMPORTANT: Python (official Flux2) concatenates as [TEXT, IMAGE]
-  QNNCopy(cat_K, txt_K, txt_seq*hidden);
-  QNNCopy(cat_V, txt_V, txt_seq*hidden);
-  QNNCopy(cat_K + txt_seq*hidden, img_K, img_seq*hidden);
-  QNNCopy(cat_V + txt_seq*hidden, img_V, img_seq*hidden);
+  QNNCopy(attn_cat_k, txt_K, txt_seq*hidden);
+  QNNCopy(attn_cat_v, txt_V, txt_seq*hidden);
+  QNNCopy(attn_cat_k + txt_seq*hidden, img_K, img_seq*hidden);
+  QNNCopy(attn_cat_v + txt_seq*hidden, img_V, img_seq*hidden);
 
 {$if defined(USE_FLASHATTENTION)}
-  QNNFlashAttention(img_out, img_q, cat_k, cat_v, img_seq, totalSeq, num_heads, head_dim, scale);
-  QNNFlashAttention(txt_out, txt_q, cat_k, cat_v, txt_seq, totalSeq, num_heads, head_dim, scale);
+  QNNFlashAttention(img_out, img_q, attn_cat_k, attn_cat_v, num_heads, img_seq, totalSeq, head_dim, scale);
+  QNNFlashAttention(txt_out, txt_q, attn_cat_k, attn_cat_v, num_heads, txt_seq, totalSeq, head_dim, scale);
 {$else}
-  scores := attn_scores;
-  {$ifdef _USE_MULTITHREADING}
+  //scores := attn_scores;
+  {$ifdef _USE_MULTITHREADING}    // CAUTION : do not multithread
   mp.&for(worker, 0, num_heads-1);
   {$else}
   worker(0, num_heads-1, nil)
@@ -1852,6 +1892,8 @@ begin
         v_cond :=forward(result, h, w, text_emb, text_seq, t_curr);
         QNNFusedScaleAdd(result, v_cond, result, dt, latent_size);
         v_cond.free();
+        img := PVAE(step_image_vae).preview(result, flux2_latent_rgb_proj, h, w, channels, 1, flux2_latent_rgb_bias, 2); // flux2 patchsize is 2
+        img.print;
         if assigned(progress_callback) then
             progress_callback(step, num_steps);
         if assigned(step_image_callback) and assigned(step_image_vae) and (step+1 < num_steps) then  begin

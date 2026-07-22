@@ -22,7 +22,7 @@ unit quicknn_vae;
 interface
 
 uses
-  SysUtils, {$if defined(USE_CPU)} quicknn_cpu {$else} quicknn_kernels{$endif}, safetensor, quicknn_common;
+  SysUtils, safetensor, quicknn_common;
 
 
 type
@@ -131,6 +131,10 @@ type
       function encode(const img: TMemoryBlock; const batch, H, W: longint; var out_h, out_w: longint): TMemoryBlock;
       function decode(const latent: TMemoryBlock; const batch, latent_h, latent_w: longint):TQNNImage;   overload;
       procedure decode(const dst, latent: TMemoryBlock; const batch, latent_h, latent_w: longint);       overload;
+      class function preview(const latents: TMemoryBlock;
+        const latent_rgb_proj: TArray<TArray<single>>; const latent_height,
+        latent_width, dims, frames: longint; const latent_rgb_bias: TArray<single>;
+        const patch_size: longint): TQNNImage; static;
       //procedure load(var f: file);                                    overload;
       procedure load(const sf:TSafetensorFiles; const zChannels:longint; const scalingFactor, shiftFactor:QNNFloat);  overload;
       function isLoaded():boolean;
@@ -140,6 +144,7 @@ type
 
 
 implementation
+uses quicknn_kernels;
 
 function readInt(var f:file):longint;
 begin
@@ -710,6 +715,75 @@ begin
     QNNCopy(dst, x, 4*cur_w*cur_h);
     if assigned(phase_callback) then
         phase_callback('VAE Decode', true);
+end;
+
+class function TVAE.preview(const latents: TMemoryBlock;
+  const latent_rgb_proj: TArray<TArray<single>>; const latent_height,
+  latent_width, dims, frames: longint; const latent_rgb_bias: TArray<single>;
+  const patch_size: longint): TQNNImage;
+var
+  rgb_width, rgb_height, unpatched_dim, k, rgb_y, rgb_x, latent_y, latent_x, channel_offset, latent_channel, pixel_id, d : longint;
+  r, g, b, value : single;
+  latents_ptr : PQNNFloat;
+begin
+
+  rgb_width  := latent_width * patch_size;
+  rgb_height := latent_height * patch_size;
+
+  latents_ptr := latents;
+  unpatched_dim := dims div (patch_size * patch_size);
+  result := TQNNImage.Create(rgb_width, rgb_height);
+  for k := 0 to frames-1 do begin
+      for rgb_x := 0 to rgb_width-1 do begin
+          for rgb_y := 0 to rgb_height-1 do begin
+              latent_x := rgb_x div patch_size;
+              latent_y := rgb_y div patch_size;
+
+              channel_offset := 0;
+              if patch_size > 1 then
+                  channel_offset := ((rgb_y mod patch_size) * patch_size + (rgb_x mod patch_size));
+
+              // should be incremented by 1 for each pixel
+              pixel_id := k * rgb_width * rgb_height + rgb_y * rgb_width + rgb_x;
+
+              r := 0; g := 0; b := 0;
+              if assigned(latent_rgb_proj) then begin
+                  for d := 0 to unpatched_dim-1 do begin
+                      latent_channel := d * patch_size * patch_size + channel_offset;
+                      value := latents_ptr[latent_x + latent_width * (latent_y + latent_height * latent_channel)];
+                      r := r + value * latent_rgb_proj[d][0];
+                      g := g + value * latent_rgb_proj[d][1];
+                      b := b + value * latent_rgb_proj[d][2];
+                  end
+              end
+              else begin
+                  // interpret first 3 channels as RGB
+                  r := latents_ptr[latent_x + latent_width * (latent_y + latent_height * 0)];
+                  g := latents_ptr[latent_x + latent_width * (latent_y + latent_height * 1)];
+                  b := latents_ptr[latent_x + latent_width * (latent_y + latent_height * 2)];
+              end;
+              if assigned(latent_rgb_bias) then begin
+                  // bias
+                  r := r + latent_rgb_bias[0];
+                  g := g + latent_rgb_bias[1];
+                  b := b + latent_rgb_bias[2];
+              end;
+              // change range to from -1..1 to 0..1
+              r := r * 0.5 + 0.5;
+              g := g * 0.5 + 0.5;
+              b := b * 0.5 + 0.5;
+
+              // clamp rgb values to [0,1] range
+              if r>1.0 then r:=1.0 else if r<0.0 then r:=0.;
+              if g>1.0 then g:=1.0 else if g<0.0 then g:=0.;
+              if b>1.0 then b:=1.0 else if b<0.0 then b:=0.;
+
+              result.data[pixel_id * 3 + 0] := trunc(r * 255);
+              result.data[pixel_id * 3 + 1] := trunc(g * 255);
+              result.data[pixel_id * 3 + 2] := trunc(b * 255);
+          end
+      end
+  end
 end;
 
 //procedure TVAE.load(var f: file);

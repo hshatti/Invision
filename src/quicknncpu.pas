@@ -1,4 +1,4 @@
-unit quicknn_cpu;
+unit quicknncpu;
 
 {$ifdef FPC}
   //{$ifdef USE_CPP_GEMM}
@@ -12,7 +12,7 @@ unit quicknn_cpu;
   {$modeswitch nestedprocvars}
   {$ifdef CPUX64}
     {$asmmode intel}
-    //{$FPUType AVX2}
+    {$FPUType AVX2}
   {$endif}
   {$if defined(darwin)}
     {$LinkFramework accelerate}
@@ -83,21 +83,21 @@ type
 
   TQNNSingleOPS = class
   private
-    class function cubicInterpolation(const a, b, c, d, t: Single): Single; overload;
-    class function cubicInterpolation(const b, c, t: Single): Single;overload;
-    class function linearInterpolation(const a, b, t: Single): Single;
+    class function cubicInterpolation(const a, b, c, d, t: Single): Single;static;overload;
+    class function cubicInterpolation(const b, c, t: Single): Single;static;overload;
+    class function linearInterpolation(const a, b, t: Single): Single;static;
     class function qasum(n: longint; x: PSingle; incx: longint): Single; winapi; static;
-    class procedure qaxpy(n: longint; alpha: single; x: PSingle; y: PSingle);overload;
+    class procedure qaxpy(n: longint; alpha: single; x: PSingle; y: PSingle);static;
     class procedure qaxpyStrided(n: longint; alpha: single; x: PSingle; incx: longint; y: PSingle; incy: longint); winapi;static;
-    class function qdot(N: longint; x: PSingle; y: PSingle): single;overload;
+    class function qdot(N: longint; x: PSingle; y: PSingle): single;static;
     class function qdotStrided(n: longint; x: PSingle; incx: longint; y: PSingle; incy: longint): single; winapi;static;
     class procedure qgemm(Order: CBLAS_ORDER; TransA: CBLAS_TRANSPOSE;
   TransB: CBLAS_TRANSPOSE; M: longint; N: longint; K: longint; alpha: single;
   A: PSingle; lda: longint; B: PSingle; ldb: longint; beta: single;
   C: PSingle; ldc: longint); WINAPI; static;
     class procedure qscale(N: longint; alpha: single; X: PSingle; incX: longint); WINAPI;static;
-    class procedure saxpy_avx2(const N: longint; const a: single; const x, y: PSingle);
-    class function sdot_avx2(const N: longint; const A, B: PSingle): single;
+    class procedure saxpy_avx2(const N: longint; const a: single; const x, y: PSingle);static;
+    class function sdot_avx2(const N: longint; const A, B: PSingle): single;static;
   public
   class var
     cblas_sgemm : procedure (Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:longint; N:longint; K:longint;
@@ -108,6 +108,9 @@ type
     cblas_sscal : procedure (N:longint; alpha:Single; X:PSingle; incX:longint = 1); winapi ;
     cblas_sbgemm : procedure(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:longint; N:longint; K:longint;
                  alpha:single; A:PBF16; lda:longint; B:PBF16; ldb:longint; beta:single; C:PSingle; ldc:longint); winapi ;
+    openblas_set_num_threads : procedure (num_threads:longint); winapi;
+    openblas_get_num_threads : function ():longint; winapi;
+    openblas_get_num_procs : function ():longint; winapi;
 
     workspace : TArray<Single>;
   public
@@ -211,7 +214,7 @@ type
     class procedure QNNFlashAttentionHead(const dst, Q, K, V: PSingle; const seq_q, seq_k, head_dim: longint; const scale: Single);
     class procedure QNNFlashAttentionHeadTiled(const dst, Q, K, V: PSingle; const seq_q, seq_k, head_dim: longint;
                           const scale: Single; const tile_scores: PSingle; const q_tile_size, k_tile_size: longint);
-    class procedure QNNFlashAttention(const dst, Q, K, V: PSingle; const seq_q, seq_k, heads, head_dim: longint; const scale: Single);
+    class procedure QNNFlashAttention(const dst, Q, K, V: PSingle; const heads, seq_q, seq_k, head_dim: longint; const scale: Single);
     class procedure QNNUpSampleNearest(const dst, src: PSingle; const batch, channels, H, W, scale_h, scale_w: longint);
     class procedure QNNUpSample(const dst, src: PSingle; const batch, channels, H, W:longint; const scale_h, scale_w: Single; const interpolation:TInterpolation = iNearest);
     class procedure QNNPatchify(const dst, src: PSingle; const batch, channels, H, W, patch_size: longint);
@@ -243,9 +246,9 @@ type
   end;
 
 procedure printStat(const src:TMemoryBlock);                overload;
-procedure writeTensor(const buf:TMemoryBlock);
-function readTensor():TMemoryBlock;
-function readArray():TArray<integer>;
+//procedure writeTensor(const buf:TMemoryBlock);
+//function readTensor():TMemoryBlock;
+//function readArray():TArray<integer>;
 procedure compareArray(const a, b:TArray<Integer>);             overload;
 procedure compareArray(const a, b: PInteger; const N:longint);  overload;
 procedure compareArray(const a, b: PSingle; const N:longint);  overload;
@@ -271,7 +274,7 @@ var
 
 
 implementation
-uses quicknn_vulkan;
+uses termesc, quicknn_vulkan;
 
 var vk : TQNNVulkan;
 
@@ -1231,6 +1234,7 @@ begin
   {$else}
   //writeln('gemm m:',start,' to:', finish);
   if (transA=CblasNoTrans) and (transB=CblasNoTrans)then begin
+    //write(#13'MATMULstart ', start,' ,finish ', finish, setClearLineEnd);
     for idx :=start to finish do begin
       CC := C + idx*ldc;
       AA := A + idx*lda;
@@ -1281,8 +1285,8 @@ begin
   // todo qgemm Simdify
   assert((order=CblasRowMajor) and not((TransA=CblasTrans) and (TransB=CblasTrans)),'ERROR : Operation is not supported using the provided arguments!');
 
-  vk.sgemm(transA=CblasTrans, transB=CblasTrans, M, N, K, ALPHA, A, lda, B, ldb, BETA, c, ldc);
-  exit;
+  //vk.sgemm(transA=CblasTrans, transB=CblasTrans, M, N, K, ALPHA, A, lda, B, ldb, BETA, c, ldc);
+  //exit;
 
   {$ifdef USE_CPP_GEMM}
   //cblas_sgemm(order, transA, transB, M, N,K, alpha, A, lda, B, ldb, beta, C, ldc);
@@ -1302,6 +1306,245 @@ begin
   //for i:=0 to M-1 do gemm_thread(i, nil)
   {$endif}
 end;
+
+function CEIL_DIV(const A, B:longword):longword;
+begin
+  result := (A + B-1) div B
+end;
+
+function MIN(const a, b:longint):longint;inline;
+begin
+  if a>b then exit(b) else exit(a)
+end;
+
+// the following initial attempt to optimize GEMM through wraptiling didn't work commenting for later revisit
+(*
+procedure gemm1_nn(const M, N, K:longint; const alpha:single; const A:PSingle; const lda:longint; const B:PSingle; const ldb : longint; const BETA:Single; C:PSingle; const ldc:longint);
+const
+  BN = 128;
+  BM = 128;
+  WARPSIZE = 32; // warpSize is not constexpr
+
+  NUM_THREADS = 128;
+  BK = 16;
+  WN = 64;
+  WM = 64;
+  WNITER = 4;
+  TN = 4;
+  TM = 8;
+  NUM_WARPS = NUM_THREADS div 32;  // = 4
+
+  rowStrideA = (NUM_THREADS * 4) div BK;  // 32
+  rowStrideB = NUM_THREADS div (BN div 4);  // 4
+
+  //the warp subtile
+  WMITER = (WM * WN) div (WARPSIZE * TM * TN * WNITER); // = 1
+  WSUBM = WM div WMITER; // 64/2=32
+  WSUBN = WN div WNITER; // 32/2=16
+
+type
+  TWorkGroup = record
+    x, y:longint
+  end;
+  TAA = array[0..BM*BK-1] of single;
+  TBB = array[0..BK*BN-1] of single;
+  TThreadresults = array[0..WMITER * TM * WNITER * TN-1] of single;
+
+var workSize, localSize : TWorkGroup;
+
+    NUM_WORKGROUPS : longint;
+
+procedure loadFromGmem(var AA:TAA; var BB: TBB; const cCol, cRow, Ai, Bi, innerRowA, innerColA, innerRowB, innerColB:longint);
+var
+  kk, offset, mm, nn, _a, _is, id, i:longint;
+begin
+  kk := cRow*BK + innerColA * 4;
+  offset := 0;
+  while offset + rowStrideA <= BM do begin  //cRow             * BK
+    mm := cRow*BM + innerRowA + offset;
+    _a := Ai + (innerRowA + offset) * lda + innerColA * 4;   // (A + gl_WorkGroupID.y * 16) + (offset + (localX / 4)) * lda + (localX %4) * 4
+
+    for i:=0 to 3 do begin
+      if (kk + i < K) and (mm < M) then
+        AA[(innerColA * 4 + i) * BM + innerRowA + offset] := A[_a+i]
+      else
+        AA[(innerColA * 4 + i) * BM + innerRowA + offset] := 0.0;
+    end;
+    inc(offset, rowStrideA);
+  end;
+  nn := cCol*BN + innerColB*4;
+  offset := 0;
+  while offset + rowStrideB <= BK do begin // offset + 4 <= 16; offset += 4
+    //if (Bi + innerRowB + offset >= K) break;                                   //cCol             * BN
+    _is := Bi + (innerRowB + offset) * ldb  + innerColB * 4;      // (B + gl_WorkGroupID.x * 128) + (offset + (localX / 32)) * ldb + (localX % 32) * 4
+    id  := (innerRowB + offset) * BN + innerColB * 4;
+    //move(B[_is], BB[id], MIN(4, N-nn)*sizeof(single));
+    for i:=0 to 3 do begin
+      if nn + i < N then
+        BB[id + i] := B[_is + i]
+      else
+        BB[id + i] := 0.0;
+    end;
+    inc(offset, rowStrideB);
+  end
+end;
+
+procedure processFromSmem(var threadResults:TThreadResults; const AA:TAA; const BB:TBB ;const warpRow, warpCol, threadRowInWarp, threadColInWarp: longint);
+var
+  // we cache into registers on the warptile level
+  //1      X 8
+  regM : array[0..WMITER * TM-1] of single;
+  //4      X 4
+  regN : array[0..WNITER * TN-1] of single;
+  dotIdx, wSubRowIdx, wSubColIdx, resIdxM, resIdxN, i:longint;
+  CC, a_part : single;
+  cc_ptr : Psingle;
+begin
+
+
+  for dotIdx := 0 to BK-1 do begin
+    // populate registers for whole warptile
+    for wSubRowIdx := 0 to WMITER-1 do begin
+      //move(AA[(dotIdx * BM) + warpRow * WM + wSubRowIdx * WSUBM + threadRowInWarp * TM], regM[wSubRowIdx * TM], TM*sizeOf(single));
+      for i := 0 to TM-1 do
+        //regM.ar[wSubRowIdx * TM + i] = As[(dotIdx * BM) + warpRow * WM + wSubRowIdx * WSUBM + threadRowInWarp * TM + i];
+        regM[wSubRowIdx * TM + i] := AA[(dotIdx * BM) + warpRow * WM + wSubRowIdx * WSUBM + threadRowInWarp * TM + i];
+    end;
+    for wSubColIdx := 0 to WNITER-1 do begin
+      //move(BB[(dotIdx * BN) + warpCol * WN + wSubColIdx * WSUBN + threadColInWarp * TN], regN[wSubColIdx * TN], TN*sizeOf(single));
+      for i := 0 to TN-1 do
+        //regN.ar[wSubColIdx * TN + i] = Bs[(dotIdx * BN) + warpCol * WN + wSubColIdx * WSUBN + threadColInWarp * TN + i];
+        regN[wSubColIdx * TN + i] := BB[(dotIdx * BN) + warpCol * WN + wSubColIdx * WSUBN + threadColInWarp * TN + i];
+    end;
+
+    // execute warptile matmul
+    for wSubRowIdx := 0 to WMITER-1 do begin
+      for wSubColIdx := 0 to WNITER-1 do begin
+        // calculate per-thread results
+        for resIdxM := 0 to TM-1 do begin
+          //a_part := regM[wSubRowIdx * TM + resIdxM];
+          //TQNNSingleOPS.qaxpy(TN, a_part,  @regN[wSubColIdx * TN], @threadResults[(wSubRowIdx * TM + resIdxM) * (WNITER * TN) + (wSubColIdx * TN)]);
+          for resIdxN := 0 to TN-1 do begin
+            //CC := threadResults[(wSubRowIdx * TM + resIdxM) * (WNITER * TN) + (wSubColIdx * TN) + resIdxN];
+            //threadResults.ar[(wSubRowIdx * TM + resIdxM) * (WNITER * TN) + (wSubColIdx * TN) + resIdxN] += regM.ar[wSubRowIdx * TM + resIdxM] * regN.ar[wSubColIdx * TN + resIdxN];
+            threadResults[(wSubRowIdx * TM + resIdxM) * (WNITER * TN) + (wSubColIdx * TN) + resIdxN] := threadResults[(wSubRowIdx * TM + resIdxM) * (WNITER * TN) + (wSubColIdx * TN) + resIdxN] + regM[wSubRowIdx * TM + resIdxM] * regN[wSubColIdx * TN + resIdxN];
+          end;
+        end
+      end
+    end
+  end
+end;
+
+procedure localWorkgroup(idx:IntPtr; data:pointer);
+var
+  cRow, cCol : longint;
+  AA : TAA;
+  BB : TBB;
+
+procedure workItem(idx:longint);
+var
+  x, y, warpIdx, warpRow, warpCol
+  , threadIdxInWarp, threadColInWarp, threadRowInWarp
+  , innerRowA, innerRowB, innerColA, innerColB
+  , wtile, wSubRowIdx, wSubColIdx, resIdxM, resIdxN, bkIdx
+  , Ai, Bi, Ci, i, j, mm, nn, _is, currentM, currentN:longint;
+  threadResults : TThreadResults;
+begin
+  x := idx mod localSize.x;
+  y := idx div localSize.y;
+  warpIdx := x div WARPSIZE; // the warp this thread is in
+  warpCol := warpIdx mod (BN div WN);
+  warpRow := warpIdx div (BN div WN);
+
+  threadIdxInWarp := x mod WARPSIZE;         // [0, 31]
+  threadColInWarp := threadIdxInWarp mod (WSUBN div TN); // i%(16/4)
+  threadRowInWarp := threadIdxInWarp div (WSUBN div TN); // i/4
+
+  Ai := cRow * BM * lda;
+  Bi := cCol * BN;
+  // Move C_ptr to warp's output tile
+  Ci := (cRow * BM + warpRow * WM) * ldc + cCol * BN + warpCol * WN;
+
+  // calculating the indices that this thread will load into SMEM
+  // we'll load 128bit / 32bit = 4 elements per thread at each step
+  innerRowA := x div (BK div 4);
+  innerColA := x mod (BK div 4);
+  innerRowB := x div (BN div 4);
+  innerColB := x mod (BN div 4);
+  threadResults := default(TThreadresults);
+  //ZeroMemory(@threadResults[0], length(threadResults)*sizeOf(single));
+  bkIdx := 0;
+  while bkIdx < K do begin
+    loadFromGmem(AA, BB, cCol, cRow, Ai, Bi, innerRowA, innerColA, innerRowB, innerColB);
+    //barrier();
+    processFromSmem(threadResults, AA, BB,  warpRow, warpCol, threadRowInWarp, threadColInWarp);
+    inc(Ai, BK);     // move BK columns to right
+    inc(Bi, BK * ldb); // move BK rows down
+    //barrier();
+    inc(bkIdx, BK)
+  end;
+
+  // write out the results            // 1
+  for wSubRowIdx := 0 to WMITER-1 do begin
+                                         //4
+    for wSubColIdx := 0 to WNITER-1 do begin
+      // move C pointer to current warp subtile
+      wtile := Ci + (wSubRowIdx * WSUBM) * ldc + wSubColIdx * WSUBN;
+      //                               8
+      for resIdxM := 0 to TM-1 do begin
+        currentM := threadRowInWarp * TM + resIdxM;
+        mm := cRow * BM + warpRow * WM + wSubRowIdx * WSUBM + currentM;
+        if mm >= M then break;
+        resIdxN := 0;                               //4
+        while resIdxN < TN do begin
+          currentN := threadColInWarp * TN + resIdxN;
+          nn       := cCol * BN + warpCol * WN + wSubColIdx * WSUBN + currentN;
+          _is      := wtile + currentM * ldc + currentN;
+          // perform GEMM update in reg
+          // load C vector into registers
+          i := (wSubRowIdx * TM + resIdxM) * (WNITER * TN) + wSubColIdx * TN + resIdxN;
+	  // write back
+	  //[[unroll]]
+          j:=0;
+          while (j<4) and (nn+j< N) do begin //if nn + j < N then
+            //if (n + j < N)
+	      C[_is + j] := ALPHA * threadResults[i + j] + BETA * C[_is + j];
+              inc(j)
+	  end;
+          inc(resIdxN, 4)
+        end
+      end
+    end
+  end
+
+
+end;
+
+var
+  i : longint;
+begin
+  cRow := idx div workSize.y;
+  cCol := idx mod workSize.x;
+  AA := default(TAA); BB := default(TBB);
+
+  for i := 0 to localSize.y*localSize.x-1 do
+    workItem(i)
+end;
+var i:longint;
+begin
+  localSize.x:=NUM_THREADS; localSize.y := 1;
+  workSize.x:=CEIL_DIV(CEIL_DIV(N, BN), localSize.x);
+  workSize.y:=CEIL_DIV(CEIL_DIV(M, BM), localSize.y);
+
+  NUM_WORKGROUPS := workSize.y*workSize.x;
+  mp.&For(localWorkgroup, 0, NUM_WORKGROUPS);
+  //for i:=0 to NUM_WORKGROUPS-1 do begin
+  //  localWorkgroup(i, nil);
+  //end;
+  //wrapTiling(M, N, K, ALPHA, A, 0, lda, vkB.buffer, 0, ldb, BETA, vkC.buffer, 0, ldc,
+  //                               CEIL_DIV(N, BN), CEIL_DIV(M, BM))
+end;
+*)
 
 class function TQNNSingleOPS.qasum(n:longint; x:PSingle; incx:longint):Single; winapi ;
 var
@@ -1918,20 +2161,245 @@ begin
     end
 end;
 
+// todo : revisit
+{$ifdef _CPUX64}
+
+procedure QNNExp_avx2(const N:NativeInt; const src:PSingle; const dst:PSingle); assembler;
+const
+  l2e :single = 1.442695041;// log2(e);
+  c0  :single = 1.00172476;
+  c1  :single = 0.657636276;
+  c2  :single = 0.3371894346;
+  //MAX_EXP =  8.8722839052068352E+001;
+  //MIN_EXP = -8.7336544750553102E+001;
+
+  MAX_EXP =  8.872283E+001;
+  MIN_EXP = -8.733654E+001;
+
+  one :array[0..7] of single = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
+  zero:array[0..7] of single = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+  mx  :array[0..7] of single = (MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP);
+  mn  :array[0..7] of single = (MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP );
+
+asm
+  sub                  rsp      , $10*2                     // making stack space to save one xmm size register
+  vmovdqu              [rsp+$00], xmm6
+  vmovdqu              [rsp+$10], xmm7
+
+  vpbroadcastd  ymm3  , [rip + l2e]
+  vpbroadcastd  ymm4  , [rip + c1]
+  vpbroadcastd  ymm5  , [rip + c0]
+
+  mov           r11   , N
+  shr           r11   , 3
+  jz            @rem
+
+@while:
+  //vxorps        ymm0  , ymm0        , ymm0              // zero
+  vmovups       ymm1  , yword [src]
+  vcmpgeps      ymm6  , ymm1        , [rip + mx]
+  vcmpleps      ymm7  , ymm1        , [rip + mn]
+  vblendvps     ymm1  , ymm1 , [rip + mx], ymm6
+  vblendvps     ymm1  , ymm1 , [rip + mn], ymm7
+  vmulps        ymm1  , ymm3        , ymm1
+  vroundps      ymm2  , ymm1        , 1
+  vsubps        ymm1  , ymm1        , ymm2
+  vcvtps2dq     ymm0  , ymm2
+  vpbroadcastd  ymm2  , [rip + c2]
+  vfmadd213ps   ymm2  , ymm1        , ymm4
+  vpslld        ymm0  , ymm0        , 23
+  vfmadd213ps   ymm1  , ymm2        , ymm5
+  vpaddd        ymm0  , ymm0        , ymm1
+  vmovups       yword [dst] , ymm0
+
+  add           src   , 32
+  add           dst   , 32
+  dec           r11
+  jnz           @while
+
+  and           N   , 7
+  jz            @done
+
+@rem:
+
+  vmovss        xmm1  , dword [src]              //-src
+  vcmpgeps      xmm6  , xmm1        , [rip + mx]
+  vcmpleps      xmm7  , xmm1        , [rip + mn]
+  vblendvps     xmm1  , xmm1 , [rip + mx], xmm6
+  vblendvps     xmm1  , xmm1 , [rip + mn], xmm7
+  vmulss        xmm1  , xmm3        , xmm1
+  roundss       xmm2  , xmm1        , 1
+  vsubss        xmm1  , xmm1        , xmm2
+  vcvtps2dq     xmm0  , xmm2
+  vmovss        xmm2  , [rip + c2]
+  vfmadd213ss   xmm2  , xmm1        , xmm4
+  vpslld        xmm0  , xmm0        , 23
+  vfmadd213ss   xmm1  , xmm2        , xmm5
+  vpaddd        xmm0  , xmm0       , xmm1
+  vmovss        dword [dst] , xmm0
+
+  add           src   , 4
+  add           dst   , 4
+  dec           N
+  jnz           @rem
+
+@done:
+  vmovdqu              xmm6     , [rsp+$00]
+  vmovdqu              xmm7     , [rsp+$10]
+  add                  rsp      , $10*2                     // restoring stack
+end;
+
+// AKA SWISH
+// sigmoid or dst can be nil
+procedure QNNSiLU_avx2(const N:NativeInt; const src, up, outSigmoid, dst:PSingle);assembler;
+const
+  L2E :single = 1.442695041;// log2(e);
+  C0  :single = 1.00172476;
+  C1  :single = 0.657636276;
+  C2  :single = 0.3371894346;
+  //MAX_EXP =  8.8722839052068352E+001;
+  //MIN_EXP = -8.7336544750553102E+001;
+
+  MAX_EXP =  8.87E+001;
+  MIN_EXP = -8.73E+001;
+
+  one :array[0..7] of single = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
+  zero:array[0..7] of single = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+  MX  :array[0..7] of single = (MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP);
+  MN  :array[0..7] of single = (MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP );
+asm
+  sub                  rsp      , $10*2                     // making stack space to save one xmm size register
+  vmovdqu              [rsp+$00], xmm6
+  vmovdqu              [rsp+$10], xmm7
+
+  vpbroadcastd  ymm3  , [rip + L2E]
+  vpbroadcastd  ymm4  , [rip + C1]
+  vpbroadcastd  ymm5  , [rip + C0]
+
+  mov           r11   , N
+  shr           r11   , 3
+  jz            @rem
+
+@while:
+  vxorps        ymm0  , ymm0        , ymm0              // zero
+  vsubps        ymm1  , ymm0        , yword [src]             // -src
+  vcmpgeps      ymm6  , ymm1        , [rip + MX]
+  vcmpleps      ymm7  , ymm1        , [rip + MN]
+  vblendvps     ymm1  , ymm1 , [rip + MX], ymm6
+  vblendvps     ymm1  , ymm1 , [rip + MN], ymm7
+  vmulps        ymm1  , ymm3        , ymm1
+  vroundps      ymm2  , ymm1        , 1
+  vsubps        ymm1  , ymm1        , ymm2
+  vcvtps2dq     ymm0  , ymm2
+  vpbroadcastd  ymm2  , [rip + C2]
+  vfmadd213ps   ymm2  , ymm1        , ymm4
+  vpslld        ymm0  , ymm0        , 23
+  vfmadd213ps   ymm1  , ymm2        , ymm5
+  vpaddd        ymm0  , ymm0        , ymm1
+  vaddps        ymm1  , ymm0        , [rip + one]       // 1 +exp(-src)
+  vrcpps        ymm1  , ymm1                            // 1/(1+exp(-src))
+  //vpcmpeqd      ymm0  , ymm0        , ymm0              // set ymm0 to to 0xffffffff
+  //vpandn        ymm6  , ymm6        , ymm0              // ymm6 := not ymm6
+  //vpandn        ymm7  , ymm7        , ymm0              // ymm6 := not ymm6
+  //vblendvps     ymm1  , ymm1  , [rip+one] , ymm6
+  //vblendvps     ymm1  , ymm1  , [rip+zero] , ymm7
+  cmp           outSigmoid   , 0
+  je            @skip1
+  vmovups       yword [outSigmoid] , ymm1
+  add           outSigmoid   , 32
+@skip1:
+  cmp           dst       , 0
+  je            @skipup1
+  vmulps        ymm1            , ymm1 ,   yword [src]
+  cmp           up        , 0
+  je            @skipdst1
+  vmulps        ymm1            , ymm1 ,   yword [up]
+  add           up              , 32
+@skipdst1:
+  vmovups       yword [dst]     , ymm1
+  add           dst             , 32
+
+@skipup1:
+  add           src       , 32
+  dec           r11
+  jnz           @while
+
+  and           N   , 7
+  jz            @done
+@rem:
+
+  vpxor         xmm0  , xmm0        , xmm0
+  vsubss        xmm1  , xmm0        , dword [src]              //-src
+  vcmpgeps      xmm6  , xmm1        , [rip + MX]
+  vcmpleps      xmm7  , xmm1        , [rip + MN]
+  vblendvps     xmm1  , xmm1 , [rip + MX], xmm6
+  vblendvps     xmm1  , xmm1 , [rip + MN], xmm7
+  vmulss        xmm1  , xmm3        , xmm1
+  roundss       xmm2  , xmm1        , 1
+  vsubss        xmm1  , xmm1        , xmm2
+  vcvtps2dq     xmm0  , xmm2
+  vmovss        xmm2  , [rip + C2]
+  vfmadd213ss   xmm2  , xmm1        , xmm4
+  vpslld        xmm0  , xmm0        , 23
+  vfmadd213ss   xmm1  , xmm2        , xmm5
+  vpaddd        xmm0  , xmm0        , xmm1
+  vaddss        xmm1  , xmm0        , [rip + one]       // 1 +exp(-src)
+  vrcpss        xmm1  , xmm1        , xmm1              // 1/(1+exp(-src))
+  //vpcmpeqd      xmm0  , xmm0        , xmm0              // set ymm0 to to 0xffffffff
+  //vpandn        xmm6  , xmm6        , xmm0              // ymm6 := not ymm6
+  //vpandn        xmm7  , xmm7        , xmm0              // ymm6 := not ymm6
+  //vblendvps     xmm1  , xmm1  , [rip+one] , xmm6
+  //vblendvps     xmm1  , xmm1  , [rip+zero]  , xmm7
+  cmp           outSigmoid   , 0   // sigmoid is NULL
+  je            @skip2
+  vmovss        dword [outSigmoid] , xmm1
+  add           outSigmoid         , 4
+@skip2:
+  cmp           dst       , 0
+  je            @skipup2
+  vmulss        xmm1            , xmm1 ,   dword [src]
+  cmp           up        , 0
+  je            @skipdst2
+  vmulss        xmm1            , xmm1 ,   dword [up]
+  add           up              , 4
+@skipdst2:
+  vmovss        dword [dst]     , xmm1
+  add           dst             , 4
+
+@skipup2:
+  add           src             , 4
+  dec           N
+  jnz           @rem
+@done:
+  vmovdqu       xmm6            , [rsp+$00]
+  vmovdqu       xmm7            , [rsp+$10]
+  add           rsp             , $10*2                     // restoring stack
+end;
+
+{$endif}
+
 class procedure TQNNSingleOPS.QNNSigmoid(const x: PSingle; const N: integer);
 var i:integer;
 begin
   // todo sigmoid inplace simdify
+  {$ifdef _CPUX64}
+  QNNSiLU_avx2(N, x, nil, x, nil);
+  {$else}
   for i := 0 to N-1 do
-    x[i] := 1.0 / (1.0 + fast_exp(-x[i]));
+    x[i] := single(1.0) / (single(1.0) + fast_exp(-x[i]));
+  {$endif}
 end;
 
 class procedure TQNNSingleOPS.QNNSigmoid(const dst, src: PSingle; const N: integer);
 var i:integer;
 begin
   // todo sigmoid simdify
+  {$ifdef _CPUX64}
+  QNNSiLU_avx2(N, src, nil, dst, nil);
+  {$else}
   for i := 0 to N-1 do
-    dst[i] := 1.0 / (1.0 + fast_exp(-src[i]));
+    dst[i] := single(1.0) / (single(1.0) + fast_exp(-src[i]));
+  {$endif}
 end;
 
 class procedure TQNNSingleOPS.QNNSiluInplace(const x: PSingle; const N: integer);
@@ -1940,10 +2408,14 @@ var
   val :Single;
 begin
   // todo silu inplace simdify
-    for i := 0 to N-1 do begin
-        val := x[i];
-        x[i] := val / (1.0 + fast_exp(-val));
-    end
+  {$ifdef _CPUX64}
+  QNNSiLU_avx2(N, x, nil, nil, x);
+  {$else}
+  for i := 0 to N-1 do begin
+      val := x[i];
+      x[i] := val / (single(1.0) + fast_exp(-val));
+  end
+  {$endif}
 end;
 
 class procedure TQNNSingleOPS.QNNSilu(const dst, src: PSingle; const N: integer);
@@ -1952,10 +2424,14 @@ var
   val :Single;
 begin
   // todo silu priority simdify
+  {$ifdef _CPUX64}
+  QNNSiLU_avx2(N, src, nil, nil, dst);
+  {$else}
     for i := 0 to N-1 do begin
         val := src[i];
-        dst[i] := val / (1.0 + fast_exp(-val));
+        dst[i] := val / (single(1.0) + fast_exp(-val));
     end
+  {$endif}
 end;
 
 class procedure TQNNSingleOPS.QNNSiluMul(const gate, up:PSingle; const N:integer);
@@ -1965,10 +2441,14 @@ var
 begin
 
   // todo siluMul priority simdify
+  {$ifdef _CPUX64}
+  QNNSiLU_avx2(N, gate, up, nil, gate);
+  {$else}
   for i := 0 to N-1 do begin
     val := gate[i];
-    gate[i] := (val / (1.0 + fast_exp(-val))) * up[i];
+    gate[i] := (val / (single(1.0) + fast_exp(-val))) * up[i];
   end
+  {$endif}
 end;
 
 class procedure TQNNSingleOPS.QNNSoftmax(const x: PSingle; const N: integer);
@@ -1977,17 +2457,17 @@ var
   max_val, sum, inv_sum: Single;
 begin
   // todo softmax simdify
-  max_val := x[0];
-  for i := 1 to N -1 do
-      if x[i] > max_val then
-          max_val := x[i];
-  //max_val := QNNMax(N, x);
+  //max_val := x[0];
+  //for i := 1 to N -1 do
+  //    if x[i] > max_val then
+  //        max_val := x[i];
+  max_val := QNNMax(N, x);
   sum := 0.0;
   for i := 0 to N-1 do begin
       x[i] := fast_exp(x[i]-max_val);
       sum := sum + x[i]
   end;
-  inv_sum := 1.0 / sum;
+  inv_sum := single(1.0) / sum;
   for i := 0 to N-1 do
       x[i] := x[i] * inv_sum
 end;
@@ -2026,7 +2506,7 @@ end;
 (* SDPA (Scaled dot-product attention): softmax(Q @ K^T / sqrt(d)) @ V.
  * This is the naive implementation that materializes the full seq_q x seq_k
  * attention matrix. Used only for small sequences; the transformer's main
- * attention path uses iris_flash_attention() or the GPU kernel instead. *)
+ * attention path uses flash_attention() or the GPU kernel instead. *)
 class procedure TQNNSingleOPS.QNNAttention(const dst, Q, K, V: PSingle; const batch, heads, seq_q, seq_k, head_dim: longint; const scale: Single);
 var
     scores, qq, kk, vv, o: PSingle;
@@ -2045,7 +2525,11 @@ begin
                 vv := V+(b * heads+h) * seq_k * head_dim;
                 o := dst+(b * heads+h) * seq_q * head_dim;
                 {$if 1=1}
-                cblas_gemm(CblasRowMajor, CblasNoTrans, CblasTrans, seq_q, seq_k, head_dim, scale,  qq, head_dim, kk, head_dim, 0, scores, seq_k);
+                cblas_gemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                                          seq_q, seq_k, head_dim,
+                                          scale,  qq, head_dim,
+                                          kk, head_dim,
+                                          0, scores, seq_k);
                 //if scale<>1 then QNNScale(scores, scores, scale, seq_q*seq_k);
                 {$else}
                 for i := 0 to seq_q -1 do
@@ -2059,7 +2543,11 @@ begin
                 {$endif}
                 QNNSoftmaxRows(scores, seq_q, seq_k);
                 {$if 1=1}
-                cblas_gemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, seq_q, head_dim, seq_k, 1, scores, seq_k, vv, head_dim, 0, o, head_dim);
+                cblas_gemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                                          seq_q, head_dim, seq_k,
+                                          1, scores, seq_k,
+                                          vv, head_dim,
+                                          0, o, head_dim);
                 {$else}
                 for i := 0 to seq_q -1 do
                     for d := 0 to head_dim -1 do
@@ -2139,7 +2627,7 @@ begin
                             //    o_row[d] := o_row[d] + (weight * v_row[d])
                         end
                 end;
-            inv_sum := 1.0 / sum_exp;
+            inv_sum := single(1.0) / sum_exp;
             cblas_scal(head_dim, inv_sum, o_row, 1);
             //for d := 0 to head_dim -1 do
             //    o_row[d] := o_row[d] * inv_sum
@@ -2235,7 +2723,7 @@ begin
         k_start := k_start + k_tile_size
     end;
     for i := 0 to seq_q -1 do  begin
-        cblas_scal(head_dim, 1.0/sum_exps[i], dst+i*head_dim, 1);
+        cblas_scal(head_dim, single(1.0)/sum_exps[i], dst+i*head_dim, 1);
         //inv_sum := 1.0 / sum_exps[i];
         //o_row := dst+i * head_dim;
         //for d := 0 to head_dim -1 do
@@ -2254,7 +2742,7 @@ end;
  *
  * Memory usage: O(seq_q + tile_size²) instead of O(seq_q * seq_k)
  *)
-class procedure TQNNSingleOPS.QNNFlashAttention(const dst, Q, K, V: PSingle; const seq_q, seq_k, heads, head_dim: longint; const scale: Single);
+class procedure TQNNSingleOPS.QNNFlashAttention(const dst, Q, K, V: PSingle; const heads, seq_q, seq_k, head_dim: longint; const scale: Single);
 const
     q_tile_size = 32;
     k_tile_size = 64;
@@ -2878,10 +3366,11 @@ begin
   end;
 end;
 
+{
 procedure writeTensor(const buf:TMemoryBlock);
 var f: file; rt:integer;
 begin
-  assignFile(f, 'c:\development\flux2.c\tensor.1');
+  assignFile(f, 'c:\development\tensor.1');
   Rewrite(f, sizeof(single));
   BlockWrite(f, PSingle(buf)^, buf.count(), rt);
   closefile(f);
@@ -2891,7 +3380,7 @@ end;
 function readTensor(): TMemoryBlock;
 var f:File; rd:integer;
 begin
-  assignFile(f, 'c:\development\flux2.c\tensor');
+  assignFile(f, 'c:\development\tensor');
   reset(f, sizeof(single));
   result := TMemoryBlock.Create(fileSize(f), 'readTensor ' + TGUID.NewGuid.ToString() );
   BlockRead(f, PSingle(result)^, result.count, rd);
@@ -2902,13 +3391,14 @@ end;
 function readArray: TArray<integer>;
 var f:File; rd:integer;
 begin
-  assignFile(f, 'c:\development\flux2.c\tensor');
+  assignFile(f, 'c:\development\tensor');
   reset(f, sizeof(integer));
   setLength(result, fileSize(f));
   BlockRead(f, PInteger(result)^, length(result), rd);
   CloseFile(f);
   assert(rd = length(result), 'Unmatch blcoksize read');
 end;
+}
 
 procedure compareArray(const a, b: TArray<Integer>);
 var i:longint;
@@ -2952,7 +3442,7 @@ begin
   writeln(']')
 end;
 
-
+(* GEMM testing
 type
   PF = ^TF;
   TF = array[0..7] of Single;
@@ -2960,9 +3450,9 @@ const
   batch = 1; heads = 64; seq = 64; dim = 64;
 
 
-  M  = 1;
-  N  = 511*13;
-  KK = 519*9;
+  M  = 16;
+  N  = 16;
+  KK = 16;
 
 var
   A, B, O, O2 : TMemoryBlock;
@@ -2972,8 +3462,13 @@ var
 
   d1, d2 : Single;
   dptr : PSingle;
+*)
+
 initialization
 
+  //for i:=0 to high(TVulkanCompute.VulkanDevices) do
+  //  writeln(i, ' : ', TVulkanCompute.VulkanDevices[i].deviceProperties.deviceName);
+  vk := TQNNVulkan.Create(1);
 
   //SetPrecisionMode(TFPUPrecisionMode.pmDouble);
 (*
@@ -3036,57 +3531,60 @@ initialization
     TQNNSingleOPS.cblas_sdot    := getProcAddress(hBLASLib, 'cblas_sdot' );
     TQNNSingleOPS.cblas_sasum   := getProcAddress(hBLASLib, 'cblas_sasum');
     TQNNSingleOPS.cblas_sscal   := getProcAddress(hBLASLib, 'cblas_sscal');
-    TQNNSingleOPS.cblas_sbgemm := getProcAddress(hBLASLib, 'cblas_sbgemm');
+    TQNNSingleOPS.cblas_sbgemm  := getProcAddress(hBLASLib, 'cblas_sbgemm');
+    TQNNSingleOPS.openblas_set_num_threads    :=  getProcAddress(hBLASLib, 'openblas_set_num_threads');
+    TQNNSingleOPS.openblas_get_num_threads    :=  getProcAddress(hBLASLib, 'openblas_get_num_threads');
+    TQNNSingleOPS.openblas_get_num_procs      :=  getProcAddress(hBLASLib, 'openblas_get_num_procs');
   end;
   {$endif}
 
 
-(*
+(* //for GEMM tesing
   randomize;
-  A := TMemoryBlock.create(M*KK);
+  A := TMemoryBlock.create(M*KK, 'A');
   dptr := A;
   for i:=0 to A.Count-1 do
     dptr[i] := 10*(random()*2 -1);
-  B := TMemoryBlock.create(KK*N);
+  B := TMemoryBlock.create(KK*N, 'B');
   dptr := B;
   for i:=0 to B.Count-1 do
     dptr[i] := 10*(random()*2 -1);
 
-  O := TMemoryBlock.create([M, N]);
+  O := TMemoryBlock.create([M, N], 'O');
   dptr := O;
   for i:=0 to O.Count-1 do
     dptr[i] := 10*(random()*2 -1);
 
-  O2 := TMemoryBlock.create([M, N]);
-  QNNCopy(O2, O, O.count);
+  O2 := TMemoryBlock.create([M, N], 'O2');
+  TQNNSingleOPS.QNNCopy(O2, O, O.count);
 
   //set_prn(printf);
 
-  //cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, KK, 1.5, A, KK, B, N, 0, O, N) ;
-  //      qgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, KK, 1.5, A, KK, B, N, 0, O2, N) ;
-   //cpp_sgemm(               CblasNoTrans, CblasNoTrans, M, N, KK, 1.5, Q, KK, K, N, 0, O2, N, 0 , M) ;
+  //for i:=0 to 10 do begin
+    TQNNSingleOPS.cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, KK, 1.5, A, KK, B, N, 0, O, N) ;
+    //vk.sgemm(false, false, M, N, KK, 1.5, A, KK, B, N, 0, O2, N) ;
+         gemm1_nn(M, N, KK, 1.5, A, KK, B, N, 0, O2, N) ;
 
-   for i:=0 to 10 do
-       cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, M, N, KK, 1, A, KK, B, KK, 1, O , N) ;
-   for i:=0 to 10 do
-       cblas_gemm(CblasRowMajor, CblasNoTrans, CblasTrans, M, N, KK, 1, A, KK, B, KK, 1, O2, N) ;
+   //cpp_sgemm(               CblasNoTrans, CblasNoTrans, M, N, KK, 1.5, Q, KK, K, N, 0, O2, N, 0 , M) ;
+  //end;
+   //for i:=0 to 10 do
+   //    TQNNSingleOPS.cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, M, N, KK, 1, A, KK, B, KK, 1, O , N) ;
+   //for i:=0 to 10 do
+   //    gemm1_nn(CblasRowMajor, CblasNoTrans, CblasTrans, M, N, KK, 1, A, KK, B, KK, 1, O2, N) ;
   //cpp_sgemm(                CblasNoTrans, CblasTrans, M, N, KK, 1.5, Q, KK, K, KK, 0, O2, N, 0, M) ;
 
   //cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, M, N, KK, 1.5, Q, M, K, N, 0, O, N) ;
   //     qgemm(CblasRowMajor, CblasTrans, CblasNoTrans, M, N, KK, 1.5, Q, M, K, N, 0, O2, N) ;
 
-  //O .print();
-  //O2.print();           sgemm2
+  O .print();
+  O2.print();
 
   O.printCompare(O2, false);
 
   readln;
 
-*)
+  *)
 
-  //for i:=0 to high(TVulkanCompute.VulkanDevices) do
-  //  writeln(i, ' : ', TVulkanCompute.VulkanDevices[i].deviceProperties.deviceName);
-  vk := TQNNVulkan.Create(1);
 
 finalization
 

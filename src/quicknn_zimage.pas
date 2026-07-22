@@ -76,7 +76,7 @@ type
 
 implementation
 uses
-  sysutils, quickjson, {$if defined(USE_CPU)} quicknn_cpu {$else} quicknn_kernels{$endif}, quicknn_sample
+  sysutils, quickjson, quicknn_kernels, quicknn_sample
   {$ifdef MSWINDOWS}
   , windows
   {$endif}

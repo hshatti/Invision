@@ -20,7 +20,7 @@ unit quicknn_qwen3;
 interface
 
 uses
-  SysUtils, quicknn_common, {$if defined(USE_CPU)} quicknn_cpu {$else} quicknn_kernels{$endif}, safetensor, quickjson;
+  SysUtils, quicknn_common, safetensor, quickjson;
 
 (* ========================================================================
  * Architecture Constants
@@ -202,6 +202,7 @@ type
   function padTokens(const tokens:TArray<longint>; const max_len:longint; const attentionMask : TArray<longint>):TArray<longint>;
 
 implementation
+uses quicknn_kernels;
 
 const
   //QWEN3_MAX_SEQ_LEN = 512;

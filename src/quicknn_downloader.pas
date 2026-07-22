@@ -25,6 +25,9 @@ type
       DST_PATH        = 'FLUX.2-klein-4B';
       HTTP_ROOT       = 'https://huggingface.co/black-forest-labs/FLUX.2-klein-4B/resolve/main/';
       HF_DOWNLOAD_ARG = '?download=true';
+    class var
+      stage:longint;
+      currentFile : string;
     public
       class procedure download(const modelsPath: string = 'models'; srcPath: string=''); static;
   end;
@@ -74,7 +77,7 @@ const
   ];
 
 
-var curDir, fn :string;
+var curDir :string;
     i : integer;
 begin
 
@@ -90,43 +93,47 @@ begin
   MakeDir(curDir + TOKENIZER_DIR);
   MakeDir(curDir + TRANSFORMER_DIR);
   MakeDir(curDir + VAE_DIR);
-  cursorShow(false);
+  if isConsole then cursorShow(false);
   for i := 0 to high(ENCODER_FILES) do begin
-    fn := ENCODER_FILES[i];
-    if fileExists(curDir+ENCODER_DIR+PathDelim + fn) then continue;
+    currentFile := ENCODER_FILES[i];
+
+    if fileExists(curDir+ENCODER_DIR+PathDelim + currentFile) then continue;
     if isConsole then
       writeln('Downloading ... ', ENCODER_FILES[i]);
-    http.Download(HTTP_ROOT+ENCODER_DIR+ '/' + fn + HF_DOWNLOAD_ARG, curDir+ENCODER_DIR + '/' + fn);
+    http.Download(HTTP_ROOT+ENCODER_DIR+ '/' + currentFile + HF_DOWNLOAD_ARG, curDir+ENCODER_DIR + '/' + currentFile);
   end;
 
   for i := 0 to high(TOKENIZER_FILES) do begin
-    fn := TOKENIZER_FILES[i];
-    if fileExists(curDir+TOKENIZER_DIR+PathDelim + fn) then continue;
+    currentFile := TOKENIZER_FILES[i];
+    if fileExists(curDir+TOKENIZER_DIR+PathDelim + currentFile) then continue;
     if isConsole then
       writeln('Downloading ... ', TOKENIZER_FILES[i]);
-    http.Download(HTTP_ROOT+TOKENIZER_DIR+ '/' + fn + HF_DOWNLOAD_ARG, curDir+TOKENIZER_DIR+'/' + fn);
+    http.Download(HTTP_ROOT+TOKENIZER_DIR+ '/' + currentFile + HF_DOWNLOAD_ARG, curDir+TOKENIZER_DIR+'/' + currentFile);
   end;
 
   for i := 0 to high(TRANSFORMER_FILES) do begin
-    fn := TRANSFORMER_FILES[i];
-    if fileExists(curDir+TRANSFORMER_DIR+PathDelim + fn) then continue;
+    currentFile := TRANSFORMER_FILES[i];
+    if fileExists(curDir+TRANSFORMER_DIR+PathDelim + currentFile) then continue;
     if isConsole then
       writeln('Downloading ... ', TRANSFORMER_FILES[i]);
-    http.Download(HTTP_ROOT+TRANSFORMER_DIR+ '/' + fn + HF_DOWNLOAD_ARG, curDir+TRANSFORMER_DIR+'/' + fn);
+    http.Download(HTTP_ROOT+TRANSFORMER_DIR+ '/' + currentFile + HF_DOWNLOAD_ARG, curDir+TRANSFORMER_DIR+'/' + currentFile);
   end;
 
   for i := 0 to high(VAE_FILES) do begin
-    fn := VAE_FILES[i];
-    if fileExists(curDir+VAE_DIR+PathDelim + fn) then continue;
+    currentFile := VAE_FILES[i];
+    if fileExists(curDir+VAE_DIR+PathDelim + currentFile) then continue;
     if isConsole then
       writeln('Downloading ... ', VAE_FILES[i]);
-    http.Download(HTTP_ROOT+VAE_DIR+ '/' + fn + HF_DOWNLOAD_ARG, curDir+VAE_DIR+'/' + fn);
+    http.Download(HTTP_ROOT+VAE_DIR+ '/' + currentFile + HF_DOWNLOAD_ARG, curDir+VAE_DIR+'/' + currentFile);
   end;
-  cursorShow(True);
+  if isConsole then cursorShow(True);
 
 end;
 
 
 initialization
+
+  ExecuteProcess('powershell', ['-Command', 'Invoke-WebRequest', 'https://huggingface.co/black-forest-labs/FLUX.2-klein-4B/resolve/main/text_encoder/model-00001-of-00002.safetensors?download=true', '-OutFile', './model-00001-of-00002.safetensors']);
+
 end.
 
