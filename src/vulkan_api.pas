@@ -3201,9 +3201,9 @@ type
     VkApplicationInfo = record
         sType : VkStructureType;
         pNext : pointer;
-        pApplicationName : Pchar;
+        pApplicationName : Pansichar;
         applicationVersion : uint32_t;
-        pEngineName : Pchar;
+        pEngineName : Pansichar;
         engineVersion : uint32_t;
         apiVersion : uint32_t;
       end;
@@ -3237,9 +3237,9 @@ type
         flags : VkInstanceCreateFlags;
         pApplicationInfo : PVkApplicationInfo;
         enabledLayerCount : uint32_t;
-        ppEnabledLayerNames : ^Pchar;
+        ppEnabledLayerNames : ^Pansichar;
         enabledExtensionCount : uint32_t;
-        ppEnabledExtensionNames : ^Pchar;
+        ppEnabledExtensionNames : ^Pansichar;
       end;
 
     PVkMemoryHeap = ^VkMemoryHeap;
@@ -3447,7 +3447,7 @@ type
         vendorID : uint32_t;
         deviceID : uint32_t;
         deviceType : VkPhysicalDeviceType;
-        deviceName : array[0..(VK_MAX_PHYSICAL_DEVICE_NAME_SIZE)-1] of char;
+        deviceName : array[0..(VK_MAX_PHYSICAL_DEVICE_NAME_SIZE)-1] of ansichar;
         pipelineCacheUUID : array[0..(VK_UUID_SIZE)-1] of uint8_t;
         limits : VkPhysicalDeviceLimits;
         sparseProperties : VkPhysicalDeviceSparseProperties;
@@ -3490,24 +3490,24 @@ type
         queueCreateInfoCount : uint32_t;
         pQueueCreateInfos : PVkDeviceQueueCreateInfo;
         enabledLayerCount : uint32_t;
-        ppEnabledLayerNames : ^Pchar;
+        ppEnabledLayerNames : ^Pansichar;
         enabledExtensionCount : uint32_t;
-        ppEnabledExtensionNames : ^Pchar;
+        ppEnabledExtensionNames : ^Pansichar;
         pEnabledFeatures : PVkPhysicalDeviceFeatures;
       end;
 
     PVkExtensionProperties = ^VkExtensionProperties;
     VkExtensionProperties = record
-        extensionName : array[0..(VK_MAX_EXTENSION_NAME_SIZE)-1] of char;
+        extensionName : array[0..(VK_MAX_EXTENSION_NAME_SIZE)-1] of ansichar;
         specVersion : uint32_t;
       end;
 
     PVkLayerProperties = ^VkLayerProperties;
     VkLayerProperties = record
-        layerName : array[0..(VK_MAX_EXTENSION_NAME_SIZE)-1] of char;
+        layerName : array[0..(VK_MAX_EXTENSION_NAME_SIZE)-1] of ansichar;
         specVersion : uint32_t;
         implementationVersion : uint32_t;
-        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of char;
+        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of ansichar;
       end;
 (* Const before type ignored *)
 (* Const before type ignored *)
@@ -3895,7 +3895,7 @@ type
         flags : VkPipelineShaderStageCreateFlags;
         stage : VkShaderStageFlagBits;
         module : VkShaderModule;
-        pName : Pchar;
+        pName : Pansichar;
         pSpecializationInfo : PVkSpecializationInfo;
       end;
 (* Const before type ignored *)
@@ -4441,10 +4441,10 @@ type
     PFN_vkGetPhysicalDeviceMemoryProperties = procedure (physicalDevice:VkPhysicalDevice; pMemoryProperties:PVkPhysicalDeviceMemoryProperties);WINAPI;
 (* Const before type ignored *)
 
-    PFN_vkGetInstanceProcAddr = function (instance:VkInstance; pName:Pchar):PFN_vkVoidFunction;WINAPI;
+    PFN_vkGetInstanceProcAddr = function (instance:VkInstance; pName:Pansichar):PFN_vkVoidFunction;WINAPI;
 (* Const before type ignored *)
 
-    PFN_vkGetDeviceProcAddr = function (device:VkDevice; pName:Pchar):PFN_vkVoidFunction;WINAPI;
+    PFN_vkGetDeviceProcAddr = function (device:VkDevice; pName:Pansichar):PFN_vkVoidFunction;WINAPI;
 (* Const before type ignored *)
 (* Const before type ignored *)
 
@@ -4454,10 +4454,10 @@ type
     PFN_vkDestroyDevice = procedure (device:VkDevice; pAllocator:PVkAllocationCallbacks);WINAPI;
 (* Const before type ignored *)
 
-    PFN_vkEnumerateInstanceExtensionProperties = function (pLayerName:Pchar; pPropertyCount:Puint32_t; pProperties:PVkExtensionProperties):VkResult;WINAPI;
+    PFN_vkEnumerateInstanceExtensionProperties = function (pLayerName:Pansichar; pPropertyCount:Puint32_t; pProperties:PVkExtensionProperties):VkResult;WINAPI;
 (* Const before type ignored *)
 
-    PFN_vkEnumerateDeviceExtensionProperties = function (physicalDevice:VkPhysicalDevice; pLayerName:Pchar; pPropertyCount:Puint32_t; pProperties:PVkExtensionProperties):VkResult;WINAPI;
+    PFN_vkEnumerateDeviceExtensionProperties = function (physicalDevice:VkPhysicalDevice; pLayerName:Pansichar; pPropertyCount:Puint32_t; pProperties:PVkExtensionProperties):VkResult;WINAPI;
 
     PFN_vkEnumerateInstanceLayerProperties = function (pPropertyCount:Puint32_t; pProperties:PVkLayerProperties):VkResult;WINAPI;
 
@@ -4850,10 +4850,10 @@ type
   procedure vkGetPhysicalDeviceMemoryProperties(physicalDevice:VkPhysicalDevice; pMemoryProperties:PVkPhysicalDeviceMemoryProperties);WINAPI;external dllname;
 
 (* Const before type ignored *)
-  function vkGetInstanceProcAddr(instance:VkInstance; pName:Pchar):PFN_vkVoidFunction;WINAPI;external dllname;
+  function vkGetInstanceProcAddr(instance:VkInstance; pName:Pansichar):PFN_vkVoidFunction;WINAPI;external dllname;
 
 (* Const before type ignored *)
-  function vkGetDeviceProcAddr(device:VkDevice; pName:Pchar):PFN_vkVoidFunction;WINAPI;external dllname;
+  function vkGetDeviceProcAddr(device:VkDevice; pName:Pansichar):PFN_vkVoidFunction;WINAPI;external dllname;
 
 (* Const before type ignored *)
 (* Const before type ignored *)
@@ -4863,10 +4863,10 @@ type
   procedure vkDestroyDevice(device:VkDevice; pAllocator:PVkAllocationCallbacks);WINAPI;external dllname;
 
 (* Const before type ignored *)
-  function vkEnumerateInstanceExtensionProperties(pLayerName:Pchar; pPropertyCount:Puint32_t; pProperties:PVkExtensionProperties):VkResult;WINAPI;external dllname;
+  function vkEnumerateInstanceExtensionProperties(pLayerName:Pansichar; pPropertyCount:Puint32_t; pProperties:PVkExtensionProperties):VkResult;WINAPI;external dllname;
 
 (* Const before type ignored *)
-  function vkEnumerateDeviceExtensionProperties(physicalDevice:VkPhysicalDevice; pLayerName:Pchar; pPropertyCount:Puint32_t; pProperties:PVkExtensionProperties):VkResult;WINAPI;external dllname;
+  function vkEnumerateDeviceExtensionProperties(physicalDevice:VkPhysicalDevice; pLayerName:Pansichar; pPropertyCount:Puint32_t; pProperties:PVkExtensionProperties):VkResult;WINAPI;external dllname;
 
   function vkEnumerateInstanceLayerProperties(pPropertyCount:Puint32_t; pProperties:PVkLayerProperties):VkResult;WINAPI;external dllname;
 
@@ -6460,8 +6460,8 @@ type
         sType : VkStructureType;
         pNext : pointer;
         driverID : VkDriverId;
-        driverName : array[0..(VK_MAX_DRIVER_NAME_SIZE)-1] of char;
-        driverInfo : array[0..(VK_MAX_DRIVER_INFO_SIZE)-1] of char;
+        driverName : array[0..(VK_MAX_DRIVER_NAME_SIZE)-1] of ansichar;
+        driverInfo : array[0..(VK_MAX_DRIVER_INFO_SIZE)-1] of ansichar;
         conformanceVersion : VkConformanceVersion;
         denormBehaviorIndependence : VkShaderFloatControlsIndependence;
         roundingModeIndependence : VkShaderFloatControlsIndependence;
@@ -6528,8 +6528,8 @@ type
         sType : VkStructureType;
         pNext : pointer;
         driverID : VkDriverId;
-        driverName : array[0..(VK_MAX_DRIVER_NAME_SIZE)-1] of char;
-        driverInfo : array[0..(VK_MAX_DRIVER_INFO_SIZE)-1] of char;
+        driverName : array[0..(VK_MAX_DRIVER_NAME_SIZE)-1] of ansichar;
+        driverInfo : array[0..(VK_MAX_DRIVER_INFO_SIZE)-1] of ansichar;
         conformanceVersion : VkConformanceVersion;
       end;
 
@@ -7501,11 +7501,11 @@ type
     VkPhysicalDeviceToolProperties = record
         sType : VkStructureType;
         pNext : pointer;
-        name : array[0..(VK_MAX_EXTENSION_NAME_SIZE)-1] of char;
-        version : array[0..(VK_MAX_EXTENSION_NAME_SIZE)-1] of char;
+        name : array[0..(VK_MAX_EXTENSION_NAME_SIZE)-1] of ansichar;
+        version : array[0..(VK_MAX_EXTENSION_NAME_SIZE)-1] of ansichar;
         purposes : VkToolPurposeFlags;
-        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of char;
-        layer : array[0..(VK_MAX_EXTENSION_NAME_SIZE)-1] of char;
+        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of ansichar;
+        layer : array[0..(VK_MAX_EXTENSION_NAME_SIZE)-1] of ansichar;
       end;
 
     PVkPhysicalDevicePrivateDataFeatures = ^VkPhysicalDevicePrivateDataFeatures;
@@ -9537,7 +9537,7 @@ type
     PVkDisplayPropertiesKHR = ^VkDisplayPropertiesKHR;
     VkDisplayPropertiesKHR = record
         display : VkDisplayKHR;
-        displayName : Pchar;
+        displayName : Pansichar;
         physicalDimensions : VkExtent2D;
         physicalResolution : VkExtent2D;
         supportedTransforms : VkSurfaceTransformFlagsKHR;
@@ -11654,9 +11654,9 @@ type
         sType : VkStructureType;
         pNext : pointer;
         flags : VkPerformanceCounterDescriptionFlagsKHR;
-        name : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of char;
-        category : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of char;
-        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of char;
+        name : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of ansichar;
+        category : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of ansichar;
+        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of ansichar;
       end;
 (* Const before type ignored *)
 (* Const before type ignored *)
@@ -12791,8 +12791,8 @@ type
         sType : VkStructureType;
         pNext : pointer;
         stages : VkShaderStageFlags;
-        name : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of char;
-        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of char;
+        name : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of ansichar;
+        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of ansichar;
         subgroupSize : uint32_t;
       end;
 (* Const before type ignored *)
@@ -12818,8 +12818,8 @@ type
     VkPipelineExecutableStatisticKHR = record
         sType : VkStructureType;
         pNext : pointer;
-        name : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of char;
-        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of char;
+        name : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of ansichar;
+        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of ansichar;
         format : VkPipelineExecutableStatisticFormatKHR;
         value : VkPipelineExecutableStatisticValueKHR;
       end;
@@ -12828,8 +12828,8 @@ type
     VkPipelineExecutableInternalRepresentationKHR = record
         sType : VkStructureType;
         pNext : pointer;
-        name : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of char;
-        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of char;
+        name : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of ansichar;
+        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of ansichar;
         isText : VkBool32;
         dataSize : size_t;
         pData : pointer;
@@ -15090,7 +15090,7 @@ type
         vendorID : uint32_t;
         deviceID : uint32_t;
         layeredAPI : VkPhysicalDeviceLayeredApiKHR;
-        deviceName : array[0..(VK_MAX_PHYSICAL_DEVICE_NAME_SIZE)-1] of char;
+        deviceName : array[0..(VK_MAX_PHYSICAL_DEVICE_NAME_SIZE)-1] of ansichar;
       end;
 
     PVkPhysicalDeviceLayeredApiPropertiesListKHR = ^VkPhysicalDeviceLayeredApiPropertiesListKHR;
@@ -15450,7 +15450,7 @@ type
 (* Const before type ignored *)
 
     PFN_vkDebugReportCallbackEXT = function (flags:VkDebugReportFlagsEXT; objectType:VkDebugReportObjectTypeEXT; &object:uint64_t; location:size_t; messageCode:int32_t; 
-                 pLayerPrefix:Pchar; pMessage:Pchar; pUserData:pointer):VkBool32;WINAPI;
+                 pLayerPrefix:Pansichar; pMessage:Pansichar; pUserData:pointer):VkBool32;WINAPI;
 (* Const before type ignored *)
 
     PVkDebugReportCallbackCreateInfoEXT = ^VkDebugReportCallbackCreateInfoEXT;
@@ -15472,7 +15472,7 @@ type
 (* Const before type ignored *)
 
     PFN_vkDebugReportMessageEXT = procedure (instance:VkInstance; flags:VkDebugReportFlagsEXT; objectType:VkDebugReportObjectTypeEXT; &object:uint64_t; location:size_t; 
-                  messageCode:int32_t; pLayerPrefix:Pchar; pMessage:Pchar);WINAPI;
+                  messageCode:int32_t; pLayerPrefix:Pansichar; pMessage:Pansichar);WINAPI;
 {$ifndef VK_NO_PROTOTYPES}
 {$ifndef VK_ONLY_EXPORTED_PROTOTYPES}
 (* Const before type ignored *)
@@ -15492,7 +15492,7 @@ type
 (* Const before type ignored *)
 
   procedure vkDebugReportMessageEXT(instance:VkInstance; flags:VkDebugReportFlagsEXT; objectType:VkDebugReportObjectTypeEXT; &object:uint64_t; location:size_t; 
-              messageCode:int32_t; pLayerPrefix:Pchar; pMessage:Pchar);WINAPI;external dllname;
+              messageCode:int32_t; pLayerPrefix:Pansichar; pMessage:Pansichar);WINAPI;external dllname;
 
 {$endif}
 {$endif}
@@ -15553,7 +15553,7 @@ type
         pNext : pointer;
         objectType : VkDebugReportObjectTypeEXT;
         &object : uint64_t;
-        pObjectName : Pchar;
+        pObjectName : Pansichar;
       end;
 (* Const before type ignored *)
 (* Const before type ignored *)
@@ -15575,7 +15575,7 @@ type
     VkDebugMarkerMarkerInfoEXT = record
         sType : VkStructureType;
         pNext : pointer;
-        pMarkerName : Pchar;
+        pMarkerName : Pansichar;
         color : array[0..3] of single;
       end;
 (* Const before type ignored *)
@@ -15806,7 +15806,7 @@ type
         sType : VkStructureType;
         pNext : pointer;
         module : VkCuModuleNVX;
-        pName : Pchar;
+        pName : Pansichar;
       end;
 (* Const before type ignored *)
 (* Const before type ignored *)
@@ -16836,7 +16836,7 @@ type
     VkDebugUtilsLabelEXT = record
         sType : VkStructureType;
         pNext : pointer;
-        pLabelName : Pchar;
+        pLabelName : Pansichar;
         color : array[0..3] of single;
       end;
 (* Const before type ignored *)
@@ -16848,7 +16848,7 @@ type
         pNext : pointer;
         objectType : VkObjectType;
         objectHandle : uint64_t;
-        pObjectName : Pchar;
+        pObjectName : Pansichar;
       end;
 (* Const before type ignored *)
 (* Const before type ignored *)
@@ -16862,9 +16862,9 @@ type
         sType : VkStructureType;
         pNext : pointer;
         flags : VkDebugUtilsMessengerCallbackDataFlagsEXT;
-        pMessageIdName : Pchar;
+        pMessageIdName : Pansichar;
         messageIdNumber : int32_t;
-        pMessage : Pchar;
+        pMessage : Pansichar;
         queueLabelCount : uint32_t;
         pQueueLabels : PVkDebugUtilsLabelEXT;
         cmdBufLabelCount : uint32_t;
@@ -18805,7 +18805,7 @@ type
           1 : ( value64 : uint64_t );
           2 : ( valueFloat : single );
           3 : ( valueBool : VkBool32 );
-          4 : ( valueString : Pchar );
+          4 : ( valueString : Pansichar );
         end;
 
     PVkPerformanceValueINTEL = ^VkPerformanceValueINTEL;
@@ -21423,7 +21423,7 @@ type
 
     PVkDeviceFaultVendorInfoEXT = ^VkDeviceFaultVendorInfoEXT;
     VkDeviceFaultVendorInfoEXT = record
-        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of char;
+        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of ansichar;
         vendorFaultCode : uint64_t;
         vendorFaultData : uint64_t;
       end;
@@ -21432,7 +21432,7 @@ type
     VkDeviceFaultInfoEXT = record
         sType : VkStructureType;
         pNext : pointer;
-        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of char;
+        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of ansichar;
         pAddressInfos : PVkDeviceFaultAddressInfoEXT;
         pVendorInfos : PVkDeviceFaultVendorInfoEXT;
         pVendorBinaryData : pointer;
@@ -23615,7 +23615,7 @@ type
     PVkRenderPassSubpassFeedbackInfoEXT = ^VkRenderPassSubpassFeedbackInfoEXT;
     VkRenderPassSubpassFeedbackInfoEXT = record
         subpassMergeStatus : VkSubpassMergeStatusEXT;
-        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of char;
+        description : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of ansichar;
         postMergeIndex : uint32_t;
       end;
 (* Const before type ignored *)
@@ -23644,7 +23644,7 @@ type
     VkDirectDriverLoadingFlagsLUNARG = VkFlags;
 (* Const before type ignored *)
 
-    PFN_vkGetInstanceProcAddrLUNARG = function (instance:VkInstance; pName:Pchar):PFN_vkVoidFunction;WINAPI;
+    PFN_vkGetInstanceProcAddrLUNARG = function (instance:VkInstance; pName:Pansichar):PFN_vkVoidFunction;WINAPI;
 
     PVkDirectDriverLoadingInfoLUNARG = ^VkDirectDriverLoadingInfoLUNARG;
     VkDirectDriverLoadingInfoLUNARG = record
@@ -24493,7 +24493,7 @@ type
         codeType : VkShaderCodeTypeEXT;
         codeSize : size_t;
         pCode : pointer;
-        pName : Pchar;
+        pName : Pansichar;
         setLayoutCount : uint32_t;
         pSetLayouts : PVkDescriptorSetLayout;
         pushConstantRangeCount : uint32_t;
@@ -24832,8 +24832,8 @@ type
 
     PVkLayerSettingEXT = ^VkLayerSettingEXT;
     VkLayerSettingEXT = record
-        pLayerName : Pchar;
-        pSettingName : Pchar;
+        pLayerName : Pansichar;
+        pSettingName : Pansichar;
         &type : VkLayerSettingTypeEXT;
         valueCount : uint32_t;
         pValues : pointer;
@@ -25163,7 +25163,7 @@ type
     VkDataGraphPipelineCompilerControlCreateInfoARM = record
         sType : VkStructureType;
         pNext : pointer;
-        pVendorOptions : Pchar;
+        pVendorOptions : Pansichar;
       end;
 (* Const before type ignored *)
 (* Const before type ignored *)
@@ -25187,7 +25187,7 @@ type
         sType : VkStructureType;
         pNext : pointer;
         module : VkShaderModule;
-        pName : Pchar;
+        pName : Pansichar;
         pSpecializationInfo : PVkSpecializationInfo;
         constantCount : uint32_t;
         pConstants : PVkDataGraphPipelineConstantARM;
@@ -25287,7 +25287,7 @@ type
     PVkPhysicalDeviceDataGraphOperationSupportARM = ^VkPhysicalDeviceDataGraphOperationSupportARM;
     VkPhysicalDeviceDataGraphOperationSupportARM = record
         operationType : VkPhysicalDeviceDataGraphOperationTypeARM;
-        name : array[0..(VK_MAX_PHYSICAL_DEVICE_DATA_GRAPH_OPERATION_SET_NAME_SIZE_ARM)-1] of char;
+        name : array[0..(VK_MAX_PHYSICAL_DEVICE_DATA_GRAPH_OPERATION_SET_NAME_SIZE_ARM)-1] of ansichar;
         version : uint32_t;
       end;
 (* Const before type ignored *)
@@ -26994,7 +26994,7 @@ type
         sType : VkStructureType;
         pNext : pointer;
         flags : VkPerformanceCounterDescriptionFlagsARM;
-        name : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of char;
+        name : array[0..(VK_MAX_DESCRIPTION_SIZE)-1] of ansichar;
       end;
 (* Const before type ignored *)
 

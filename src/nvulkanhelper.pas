@@ -468,7 +468,7 @@ var
   instLayerProps             : array of VkLayerProperties;
 
 begin
-
+//  SetExceptionMask([exZeroDivide, exInvalidOp, exPrecision]);
   instance                    :=    nil;
   {$ifdef DEBUG}
   vkEnumerateInstanceLayerProperties(@instLayerPropCount, nil) ;
@@ -482,8 +482,8 @@ begin
 
   appInfo                     :=    default(VkApplicationInfo);
   appInfo.sType               :=    VK_STRUCTURE_TYPE_APPLICATION_INFO;
-  appInfo.pApplicationName    :=    PChar(appName);
-  appInfo.applicationVersion  :=    VK_MAKE_VERSION(1, 0, 0);
+  appInfo.pApplicationName    :=    nil;//PChar(appName);
+  appInfo.applicationVersion  :=    VK_MAKE_VERSION(1, 2, 0);
   appInfo.apiVersion          :=    VK_API_VERSION_1_2;
 
   features                    :=    default(VkValidationFeaturesEXT);
@@ -500,6 +500,12 @@ begin
   instanceCreateInfo.ppEnabledLayerNames     := pointer(validationLyr);
   instanceCreateInfo.pNext                   := @features;
   instanceCreateInfo.pApplicationInfo        := @appInfo;
+
+  // some GPU drivers do not check floating opertions
+  // exceptions which eventually ends up being captured by pascal compiler,
+  // disabling floating point operations exceptions below
+  SetExceptionMask([exInvalidOp, exPrecision, exUnderflow]);
+
   SAFE_CALL(vkCreateInstance(@instanceCreateInfo, nil, @instance));
 end;
 

@@ -155,7 +155,7 @@ function readSingles(var f:file; const count:longint):TMemoryBlock;
 var s : string;
 begin
     s := TFileRec(f).name;
-    result := TMemoryBlock.Create(count, s+'['+IntToStr(FilePos(f) div 128)+']');
+    result := TMemoryBlock.Create([count], s+'['+IntToStr(FilePos(f) div 128)+']');
     blockread(f, PSingle(result)^, count*sizeof(single))
 end;
 
@@ -271,11 +271,11 @@ begin
     QNNConv2d(v, work, v_weight, v_bias, ch, ch, H, W, 1, 1, 1, 0, batch);
     scale := 1.0 / sqrt(ch);
     attn_out := v + batch*ch*spatial;
-    q_t    := TMemoryBlock.Create(spatial * ch, 'VAE_FW_Q ' + TGUID.NewGuid.ToString()); //q_ptr := q_t;
-    k_t    := TMemoryBlock.Create(spatial * ch, 'VAE_FW_K ' + TGUID.NewGuid.ToString()); //k_ptr := k_t;
-    v_t    := TMemoryBlock.Create(spatial * ch, 'VAE_FW_V ' + TGUID.NewGuid.ToString()); //v_ptr := v_t;
-    o_t    := TMemoryBlock.Create(spatial * ch, 'VAE_FW_O ' + TGUID.NewGuid.ToString()); //o_ptr := o_t;
-    scores := TMemoryBlock.Create(spatial * spatial, 'VAE_FQ_SCORES ' + TGUID.NewGuid.ToString());
+    q_t    := TMemoryBlock.Create([spatial, ch], 'VAE_FW_Q ' + TGUID.NewGuid.ToString()); //q_ptr := q_t;
+    k_t    := TMemoryBlock.Create([spatial, ch], 'VAE_FW_K ' + TGUID.NewGuid.ToString()); //k_ptr := k_t;
+    v_t    := TMemoryBlock.Create([spatial, ch], 'VAE_FW_V ' + TGUID.NewGuid.ToString()); //v_ptr := v_t;
+    o_t    := TMemoryBlock.Create([spatial, ch], 'VAE_FW_O ' + TGUID.NewGuid.ToString()); //o_ptr := o_t;
+    scores := TMemoryBlock.Create([spatial, spatial], 'VAE_FQ_SCORES ' + TGUID.NewGuid.ToString());
     for b := 0 to batch -1 do
         begin
             qb := Q + b * ch * spatial;
@@ -295,7 +295,9 @@ begin
             //            v_ptr[i * ch+c] := vb[c * spatial+i]
             //        end;
             QNNMatMulNT(scores, q_t, k_t, spatial, ch, spatial);
+            scores.printStat;
             QNNSoftmaxRows(scores, spatial, spatial);
+            scores.printStat;
             QNNMatMulNN(o_t, scores, v_t, spatial, spatial, ch);
             QNNMatTranspose(ob, o_t, spatial, ch);
             //for c := 0 to ch -1 do
@@ -989,17 +991,17 @@ begin
     end;
     if not boolean(bn_mean) and (scaling_factor = 0.0) then begin
         lc := latent_channels;
-        bn_mean := TMemoryBlock.Create(lc, 'VAE_LOAD_BN_MEAN');
-        bn_var := TMemoryBlock.Create(lc, 'VAE_LOAD_BN_VAR');
+        bn_mean := TMemoryBlock.Create([lc], 'VAE_LOAD_BN_MEAN');
+        bn_var := TMemoryBlock.Create([lc], 'VAE_LOAD_BN_VAR');
         QNNFill(bn_var, 1.0, lc);
     end;
     max_spatial := max_h * max_w;
     max_channels := base_channels;
     work_size := 4 * max_channels * max_spatial;
 
-    work1 := TMemoryBlock.Create(work_size, 'VAE_WORK1');//calloc(work_size, sizeof(single));//;
-    work2 := TMemoryBlock.Create(work_size, 'VAE_WORK2');//calloc(work_size, sizeof(single));//;
-    work3 := TMemoryBlock.Create(work_size, 'VAE_WORK3');//calloc(work_size, sizeof(single));//
+    work1 := TMemoryBlock.Create([work_size], 'VAE_WORK1');//calloc(work_size, sizeof(single));//;
+    work2 := TMemoryBlock.Create([work_size], 'VAE_WORK2');//calloc(work_size, sizeof(single));//;
+    work3 := TMemoryBlock.Create([work_size], 'VAE_WORK3');//calloc(work_size, sizeof(single));//
 end;
 
 class procedure TVAE.padRightBottom(const dst, src: TMemoryBlock; batch,

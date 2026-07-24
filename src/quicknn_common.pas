@@ -1,4 +1,4 @@
-unit quicknn_common;
+﻿unit quicknn_common;
 
 {$ifdef FPC}
   {$PackRecords C}
@@ -166,8 +166,9 @@ type
   const
       ERRSTR_CAST_ARRAY = 'MemoryBlock with non zero offset cannot be casted to an Array';
       ERRSTR_CAST_TYPE = 'ERROR : Data is not of ';
+  private
+      constructor Create(const aSize:NativeInt; const aName:string; const dType:TQNNDataType = QNN_DATATYPE; const src : pointer =nil);           overload;// do not use
   public
-      constructor Create(const aSize:NativeInt; const aName:string; const dType:TQNNDataType = QNN_DATATYPE; const src : pointer =nil);           overload;
       constructor Create(const aShape : TArray<Int64>; const aName:string ; const dType:TQNNDataType = QNN_DATATYPE; const aData : pointer =nil);  overload;
       procedure reSize(const aSize:NativeInt);  overload;
       procedure reSize(const aShape:TArray<Int64>);  overload;
@@ -222,7 +223,8 @@ type
       class operator implicit(const val:TMemoryBlock):PShortint;
       class operator implicit(const val:TMemoryBlock):PINT4    ;
       class operator implicit(const val:TMemoryBlock):boolean ;
-      class operator add(const src:TMemoryBlock; const aOffset:NativeInt):TMemoryBlock;
+      class operator add(const src:TMemoryBlock; const aOffset:longint):TMemoryBlock;
+      class operator add(const src:TMemoryBlock; const aOffset:Int64):TMemoryBlock;
       procedure printCompare(const src:TMemoryBlock; const isSumSqrDiff:boolean =false);
 
       function TypeName():string;
@@ -777,6 +779,52 @@ begin
   end;
 end;
 
+{$else}
+var
+  img:TBitmap;
+  bmpData : TBitmapData;
+  y, x, _w, _h, imSize : longint;
+  d : PByte;
+  p : TAlphaColor;
+begin
+  result := default(TQNNImage);
+  img := TBitmap.Create;
+  try
+    img.LoadFromFile(fileName);
+    if resizeWidth<=0 then resizeWidth    := img.Width;
+    if resizeHeight<=0 then resizeHeight  := img.Height;
+    _w := img.Width;
+    _h := img.Height;
+    img.Map(TMapAccess.Read, bmpData);
+    imSize := resizeHeight*resizeWidth;
+    setLength(result.Data, 3*imSize);
+    for y := 0 to resizeHeight-1 do begin
+      for x := 0 to resizeWidth-1 do begin
+         p := bmpData.GetPixel(round(_w * x/resizeWidth), round(_h * y/resizeHeight));  // nearst neighor
+         d := @result.data[3*(y*resizeWidth + x)];
+         d[0] := (p shr 16) and $FF;
+         d[1] := (p shr 8) and $FF;
+         d[2] :=  p and $FF;
+
+      end;
+    end;
+    result.width  := resizeWidth;
+    result.height := resizeHeight;
+    result.channels := 3;
+  finally
+    if assigned(bmpData.Data) then
+      img.Unmap(bmpData);
+    img.Free
+  end;
+end;
+
+function SwapEndian(const x:longword):longword;
+begin
+  result := (x shl 24) or ((x shl 8) and $00ff0000) or ((x shr 8) and $0000ff00) or (x shr 24)
+end;
+{$endif}
+
+
 function _FileSize(var f:file):Int64; // a work around Delphi FileSize function returning incorrect file size on large files
 var fl :longword;
 begin
@@ -791,6 +839,15 @@ begin
 {$endif}
 end;
 
+class function TQNNImage.calcPngCRC(const buf: PByte; const len: NativeInt; const initCRC: longword): longword;
+var i:NativeInt;
+begin
+  result := initCRC;
+  for i := 0 to len-1 do
+      result := PNG_CRC_TABLE[(result xor buf[i]) and $ff] xor (result shr 8);
+  result := result xor $ffffffff; // isn't this the same as not()?
+end;
+
 class procedure TQNNImage.addPngMeta(const filename: string; const keyword, meta: ansistring);
 const PNG_SIGNATURE :Uint64 = $0A1A0A0D474E5089;
 var
@@ -801,6 +858,7 @@ var
   chunkSize, r, i:longword;
   pngChunk : ^TPngChunk;
   pngchunks : TArray<TPngChunk>;
+  len, crc:longword;
   strData : ansistring;
   tag : array[0..3] of ansichar;
 begin
@@ -840,12 +898,14 @@ begin
       reWrite(f, 1);
       blockWrite(f, PNG_SIGNATURE, sizeof(PNG_SIGNATURE));
       for i:= 0 to high(pngChunks) do begin
-        BlockWrite(f, swapEndian(longword(length(pngChunks[i].data))), sizeof(longword));
+        len := swapEndian(longword(length(pngChunks[i].data)));
+        BlockWrite(f, len, sizeof(longword));
         blockWrite(f, pngChunks[i].tag, sizeof(tag));
         if assigned(pngChunks[i].data) then begin
           blockWrite(f, pngChunks[i].data[0], length(pngchunks[i].data));
         end;
-        blockWrite(f, swapEndian(pngChunks[i].crc), sizeOf(pngchunks[i].crc));
+        crc := swapEndian(pngChunks[i].crc);
+        blockWrite(f, crc, sizeOf(pngchunks[i].crc));
       end;
     end;
   finally
@@ -866,56 +926,6 @@ begin
       PNG_CRC_TABLE[n] := c;
   end;
 end;
-
-class function TQNNImage.calcPngCRC(const buf: PByte; const len: NativeInt; const initCRC: longword): longword;
-var i:NativeInt;
-begin
-  result := initCRC;
-  for i := 0 to len-1 do
-      result := PNG_CRC_TABLE[(result xor buf[i]) and $ff] xor (result shr 8);
-  result := result xor $ffffffff; // isn't this the same as not()?
-end;
-
-{$else}
-var
-  img:TBitmap;
-  bmpData : TBitmapData;
-  y, x, _w, _h, imSize : longint;
-  d : PByte;
-  p : TAlphaColor;
-begin
-  result := default(TQNNImage);
-  img := TBitmap.Create;
-  try
-    img.LoadFromFile(fileName);
-    if resizeWidth<=0 then resizeWidth    := img.Width;
-    if resizeHeight<=0 then resizeHeight  := img.Height;
-    _w := img.Width;
-    _h := img.Height;
-    img.Map(TMapAccess.Read, bmpData);
-    imSize := resizeHeight*resizeWidth;
-    setLength(result.Data, 3*imSize);
-    for y := 0 to resizeHeight-1 do begin
-      for x := 0 to resizeWidth-1 do begin
-         p := bmpData.GetPixel(round(_w * x/resizeWidth), round(_h * y/resizeHeight));  // nearst neighor
-         d := @result.data[3*(y*resizeWidth + x)];
-         d[0] := (p shr 16) and $FF;
-         d[1] := (p shr 8) and $FF;
-         d[2] :=  p and $FF;
-
-      end;
-    end;
-    result.width  := resizeWidth;
-    result.height := resizeHeight;
-    result.channels := 3;
-  finally
-    if assigned(bmpData.Data) then
-      img.Unmap(bmpData);
-    img.Free
-  end;
-end;
-{$endif}
-
 procedure TQNNImage.print;
 begin
   printSixel(Data, width, height, true);
@@ -1081,31 +1091,44 @@ procedure TMemoryBlock.free();
 var m:pointer;
 begin
   if offset>0 then exit;
- if assigned(onMemoryUpdate) and isAllocated() then
-   if DATATYPE_BITS[DataType]=4 then
-     onMemoryUpdate('free', (Size*DATATYPE_BITS[DataType]+4) div 8, 0, self)
-   else
-     onMemoryUpdate('free', (Size*DATATYPE_BITS[DataType]) div 8, 0, self);
-  {$ifdef USE_CALLOC}
-  case DATATYPE_BITS[DataType] of
-    4 :if assigned(Data4 ) and (size>0) then begin m := Data4 ; Data4  :=nil; quicknn_common.free(m) end;
-    8 :if assigned(Data8 ) and (size>0) then begin m := Data8 ; Data8  :=nil; quicknn_common.free(m) end;
-    16:if assigned(Data16) and (size>0) then begin m := Data16; Data16 :=nil; quicknn_common.free(m) end;
-    32:if assigned(Data32) and (size>0) then begin m := Data32; Data32 :=nil; quicknn_common.free(m) end;
+  if isAllocated() then begin
+
+    if assigned(onMemoryUpdate) and isAllocated() then
+      if DATATYPE_BITS[DataType]=4 then
+        onMemoryUpdate('free', (Size*DATATYPE_BITS[DataType]+4) div 8, 0, self)
+      else
+        onMemoryUpdate('free', (Size*DATATYPE_BITS[DataType]) div 8, 0, self);
+    {$ifdef USE_CALLOC}
+    case DATATYPE_BITS[DataType] of
+      4 :if assigned(Data4 ) and (size>0) then begin m := Data4 ; Data4  :=nil; quicknn_common.free(m) end;
+      8 :if assigned(Data8 ) and (size>0) then begin m := Data8 ; Data8  :=nil; quicknn_common.free(m) end;
+      16:if assigned(Data16) and (size>0) then begin m := Data16; Data16 :=nil; quicknn_common.free(m) end;
+      32:if assigned(Data32) and (size>0) then begin m := Data32; Data32 :=nil; quicknn_common.free(m) end;
+    end;
+    {$else}
+  //  case DATATYPE_BITS[DataType] of
+  //    4 :setLength(Data4 , 0);
+  //    8 :setLength(Data8 , 0);
+  //    16:setLength(Data16, 0);
+  //    32:setLength(Data32, 0);
+  //  end;
+    if length(Data32)>0 then
+      setLength(Data32, 0);
+    if length(Data16)>0 then
+      setLength(Data16, 0);
+    if length(Data8)>0  then
+      setLength(Data8 , 0);
+    if length(Data4)>0  then
+      setLength(Data4 , 0);
+    {$endif}
   end;
-  {$else}
-//  case DATATYPE_BITS[DataType] of
-//    4 :setLength(Data4 , 0);
-//    8 :setLength(Data8 , 0);
-//    16:setLength(Data16, 0);
-//    32:setLength(Data32, 0);
-//  end;
-  if assigned(Data4)  then setLength(Data4 , 0);
-  if assigned(Data8)  then setLength(Data8 , 0);
-  if assigned(Data16) then setLength(Data16, 0);
-  if assigned(Data32) then setLength(Data32, 0);
- {$endif}
- fillchar(self, sizeof(self), #0);
+  self.DataType := dtUndef;
+  self.offset := 0;
+  self.size := 0;
+  self.shape := nil;
+  self.DataPtr := nil;
+  self.name := '';
+ // fillchar(self, sizeof(self), #0);
 end;
 
 function TMemoryBlock.count:NativeInt;
@@ -1127,10 +1150,18 @@ function TMemoryBlock.isAssigned():boolean;
 begin
   result := false;
   case DATATYPE_BITS[DataType] of
+{$ifdef USE_CALLOC}
     4  : result := assigned(Data4 );
     8  : result := assigned(Data8 );
     16 : result := assigned(Data16);
     32 : result := assigned(Data32)
+{$else}
+    4  : result := length(Data4 )>0;
+    8  : result := length(Data8 )>0;
+    16 : result := length(Data16)>0;
+    32 : result := length(Data32)>0
+{$endif}
+
   end;
   if not result then
     result := assigned(DataPtr)
@@ -1138,7 +1169,11 @@ end;
 
 function TMemoryBlock.isAllocated():boolean;
 begin
-  result := assigned(Data4) or assigned(Data8)or assigned(Data16) or assigned(Data32);
+  {$ifdef USE_CALLOC}
+  result := assigned(Data4) or assigned(Data8) or assigned(Data16) or assigned(Data32);
+  {$else}
+  result := (length(Data4)>0) or (length(Data8)>0) or (length(Data16)>0) or (length(Data32)>0);
+  {$endif}
   if result then
     assert(not assigned(DataPtr), 'ERROR [TMemoryBlock.isAllocated()] : Overlapping assigned memory and allocated memory were found! while one should exist!');
 end;
@@ -1454,7 +1489,13 @@ begin
   inc(result, val.offset)  // todo Implicit to PInt4 : check validity of int4 pointer offseting
 end;
 
-class operator TMemoryBlock.add(const src:TMemoryBlock; const aOffset:nativeInt):TMemoryBlock  ;
+class operator TMemoryBlock.add(const src:TMemoryBlock; const aOffset:longint):TMemoryBlock  ;
+begin
+  result := src;
+  result.offset:= src.offset + aOffset;
+end;
+
+class operator TMemoryBlock.add(const src:TMemoryBlock; const aOffset:int64):TMemoryBlock  ;
 begin
   result := src;
   result.offset:= src.offset + aOffset;

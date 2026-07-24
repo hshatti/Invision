@@ -319,6 +319,7 @@ procedure FillDWord(var dst; const count:IntPtr; const val:longword);
 procedure FillQWord(var dst; const count:IntPtr; const val:UInt64);
 {$endif}
 
+function isUsingBlas():boolean;
 (*
 procedure printStat(const src:PQNNFloat; const N:longint);  overload;
 procedure printStat(const src:TMemoryBlock);                overload;
@@ -367,6 +368,12 @@ begin
     d[i] := val
 end;
 {$endif}
+
+
+function isUsingBlas():boolean;
+begin
+  result := TQNNSingleOPS.isUsingBlas
+end;
 
 procedure OP_IMPL_FAIL();inline;
 begin
@@ -1078,11 +1085,18 @@ begin
 end;
 
 procedure QNNSoftmaxRows(const x: TMemoryBlock; const rows, cols: integer);
+var i:longint;
 begin
 
   case x.DataType of
     dtF32 :
-      TQNNSingleOPS.QNNSoftmaxRows(x, rows, cols);
+      //if x.offset=0 then
+        TQNNSingleOPS.QNNSoftmaxRows(x, rows, cols)
+      //else begin
+      //  assert(x.size - x.offset>= rows*cols, 'QNNSoftmax : out of bounds');
+      //  for i:=0 to Rows-1 do
+      //    TQNNSingleOPs.QNNSoftmax(x + i*cols, cols);
+      //end
   else
     OP_IMPL_FAIL()
   end

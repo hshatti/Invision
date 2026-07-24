@@ -6,12 +6,13 @@
     <BuildModes Active="Debug"/>
     <Units>
       <Unit>
-        <Filename Value="invision.lpr"/>
+        <Filename Value="Envision.lpr"/>
         <IsPartOfProject Value="True"/>
         <TopLine Value="90"/>
         <CursorPos X="101" Y="106"/>
         <UsageCount Value="223"/>
         <Loaded Value="True"/>
+        <DefaultSyntaxHighlighter Value="Delphi"/>
       </Unit>
       <Unit>
         <Filename Value="..\src\safetensor.pas"/>
@@ -85,7 +86,7 @@
         <IsPartOfProject Value="True"/>
         <IsVisibleTab Value="True"/>
         <EditorIndex Value="13"/>
-        <TopLine Value="275"/>
+        <TopLine Value="276"/>
         <CursorPos Y="300"/>
         <UsageCount Value="218"/>
         <Loaded Value="True"/>
@@ -365,6 +366,9 @@
       <Define3 Value="USE_CPP_GEMM"/>
       <Define4 Value="USE_CPU"/>
     </OtherDefines>
+    <General>
+      <ActiveWindowIndexAtStart Value="1"/>
+    </General>
     <JumpHistory HistoryIndex="28">
       <Position>
         <Filename Value="..\src\quicknn_vae.pas"/>

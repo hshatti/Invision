@@ -83,43 +83,43 @@ type
 
   TQNNSingleOPS = class
   private
-    class function cubicInterpolation(const a, b, c, d, t: Single): Single;static;overload;
-    class function cubicInterpolation(const b, c, t: Single): Single;static;overload;
+    class function cubicInterpolation(const a, b, c, d, t: Single): Single;overload;static;
+    class function cubicInterpolation(const b, c, t: Single): Single;overload;static;
     class function linearInterpolation(const a, b, t: Single): Single;static;
-    class function qasum(n: longint; x: PSingle; incx: longint): Single; winapi; static;
-    class procedure qaxpy(n: longint; alpha: single; x: PSingle; y: PSingle);static;
-    class procedure qaxpyStrided(n: longint; alpha: single; x: PSingle; incx: longint; y: PSingle; incy: longint); winapi;static;
-    class function qdot(N: longint; x: PSingle; y: PSingle): single;static;
-    class function qdotStrided(n: longint; x: PSingle; incx: longint; y: PSingle; incy: longint): single; winapi;static;
+    class function qasum(n: int64; x: PSingle; incx: int64): Single; winapi; static;
+    class procedure qaxpy(n: int64; alpha: single; x: PSingle; y: PSingle);static;
+    class procedure qaxpyStrided(n: int64; alpha: single; x: PSingle; incx: int64; y: PSingle; incy: int64); winapi;static;
+    class function qdot(N: int64; x: PSingle; y: PSingle): single;static;
+    class function qdotStrided(n: int64; x: PSingle; incx: int64; y: PSingle; incy: int64): single; winapi;static;
     class procedure qgemm(Order: CBLAS_ORDER; TransA: CBLAS_TRANSPOSE;
-  TransB: CBLAS_TRANSPOSE; M: longint; N: longint; K: longint; alpha: single;
-  A: PSingle; lda: longint; B: PSingle; ldb: longint; beta: single;
-  C: PSingle; ldc: longint); WINAPI; static;
-    class procedure qscale(N: longint; alpha: single; X: PSingle; incX: longint); WINAPI;static;
-    class procedure saxpy_avx2(const N: longint; const a: single; const x, y: PSingle);static;
-    class function sdot_avx2(const N: longint; const A, B: PSingle): single;static;
+  TransB: CBLAS_TRANSPOSE; M: int64; N: int64; K: int64; alpha: single;
+  A: PSingle; lda: int64; B: PSingle; ldb: int64; beta: single;
+  C: PSingle; ldc: int64); WINAPI; static;
+    class procedure qscale(N: int64; alpha: single; X: PSingle; incX: int64); WINAPI;static;
+    class procedure saxpy_avx2(const N: int64; const a: single; const x, y: PSingle);static;
+    class function sdot_avx2(const N: int64; const A, B: PSingle): single;static;
   public
   class var
-    cblas_sgemm : procedure (Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:longint; N:longint; K:longint;
-                alpha:single; A:PSingle; lda:longint; B:PSingle; ldb:longint; beta:single; C:PSingle; ldc:longint); winapi ;
-    cblas_saxpy : procedure (n:longint; alpha:single; x:PSingle; incx:longint; y:PSingle; incy:longint); winapi ;
-    cblas_sdot : function (n:longint; x:PSingle; incx:longint; y:PSingle; incy:longint):single; winapi ;
-    cblas_sasum : function (n:longint; x:PSingle; incx:longint):Single; winapi ;
-    cblas_sscal : procedure (N:longint; alpha:Single; X:PSingle; incX:longint = 1); winapi ;
-    cblas_sbgemm : procedure(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:longint; N:longint; K:longint;
-                 alpha:single; A:PBF16; lda:longint; B:PBF16; ldb:longint; beta:single; C:PSingle; ldc:longint); winapi ;
+    cblas_sgemm : procedure (Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:int64; N:int64; K:int64;
+                alpha:single; A:PSingle; lda:int64; B:PSingle; ldb:int64; beta:single; C:PSingle; ldc:int64); winapi ;
+    cblas_saxpy : procedure (n:int64; alpha:single; x:PSingle; incx:int64; y:PSingle; incy:int64); winapi ;
+    cblas_sdot : function (n:int64; x:PSingle; incx:int64; y:PSingle; incy:int64):single; winapi ;
+    cblas_sasum : function (n:int64; x:PSingle; incx:int64):Single; winapi ;
+    cblas_sscal : procedure (N:int64; alpha:Single; X:PSingle; incX:int64 = 1); winapi ;
+    cblas_sbgemm : procedure(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:int64; N:int64; K:int64;
+                 alpha:single; A:PBF16; lda:int64; B:PBF16; ldb:int64; beta:single; C:PSingle; ldc:int64); winapi ;
     openblas_set_num_threads : procedure (num_threads:longint); winapi;
     openblas_get_num_threads : function ():longint; winapi;
     openblas_get_num_procs : function ():longint; winapi;
-
+    isUsingBlas : boolean;
     workspace : TArray<Single>;
   public
-    class procedure cblas_gemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:longint; N:longint; K:longint;
-                 alpha:single; A:PSingle; lda:longint; B:PSingle; ldb:longint; beta:single; C:PSingle; ldc:longint);
-    class procedure cblas_axpy(n:longint; alpha:single; x:PSingle; incx:longint; y:PSingle; incy:longint);
-    class procedure cblas_scal(N:longint; alpha:Single; X:PSingle; incX:longint = 1);
-    class function cblas_dot(n:longint; x:PSingle; incx:longint; y:PSingle; incy:longint):single;
-    class function cblas_asum(n:longint; x:PSingle; incx:longint):Single;
+    class procedure cblas_gemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:int64; N:int64; K:int64;
+                 alpha:single; A:PSingle; lda:int64; B:PSingle; ldb:int64; beta:single; C:PSingle; ldc:int64);
+    class procedure cblas_axpy(n:int64; alpha:single; x:PSingle; incx:int64; y:PSingle; incy:int64);
+    class procedure cblas_scal(N:int64; alpha:Single; X:PSingle; incX:int64 = 1);
+    class function cblas_dot(n:int64; x:PSingle; incx:int64; y:PSingle; incy:int64):single;
+    class function cblas_asum(n:int64; x:PSingle; incx:int64):Single;
 
     class procedure printCompare(const N: longint; const src1, src2: PSingle; const isSumSqrDiff: boolean=false);
 
@@ -307,28 +307,28 @@ begin
     result := v.f;
 end;
 
-class procedure TQNNSingleOPS.cblas_gemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:longint; N:longint; K:longint;
-                      alpha:single; A:PSingle; lda:longint; B:PSingle; ldb:longint; beta:single; C:PSingle; ldc:longint);
+class procedure TQNNSingleOPS.cblas_gemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:int64; N:int64; K:int64;
+                      alpha:single; A:PSingle; lda:int64; B:PSingle; ldb:int64; beta:single; C:PSingle; ldc:int64);
 begin
   cblas_sgemm(Order, TransA, TransB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc)
 end;
 
-class procedure TQNNSingleOPS.cblas_axpy(n:longint; alpha:single; x:PSingle; incx:longint; y:PSingle; incy:longint);
+class procedure TQNNSingleOPS.cblas_axpy(n:int64; alpha:single; x:PSingle; incx:int64; y:PSingle; incy:int64);
 begin
   cblas_saxpy(n, alpha, x, incx, y, incy)
 end;
 
-class procedure TQNNSingleOPS.cblas_scal(N:longint; alpha:Single; X:PSingle; incX:longint);
+class procedure TQNNSingleOPS.cblas_scal(N:int64; alpha:Single; X:PSingle; incX:int64);
 begin
   cblas_sscal(N, alpha, X, incX)
 end;
 
-class function TQNNSingleOPS.cblas_dot(n:longint; x:PSingle; incx:longint; y:PSingle; incy:longint):single;
+class function TQNNSingleOPS.cblas_dot(n:int64; x:PSingle; incx:int64; y:PSingle; incy:int64):single;
 begin
   cblas_sdot(n, x, incx, y, incy)
 end;
 
-class function TQNNSingleOPS.cblas_asum(n:longint; x:PSingle; incx:longint):Single;
+class function TQNNSingleOPS.cblas_asum(n:int64; x:PSingle; incx:int64):Single;
 begin
   cblas_sasum(n, x, incx)
 end;
@@ -672,8 +672,9 @@ class procedure TQNNSingleOPS.QNNScaleInplace(const dst: PSingle; const aScale: 
 var i:integer;
 begin
     // todo SIMDIFY QNNScale
-  for i:=0 to N-1 do
-      dst[i] := dst[i]*aScale
+  cblas_scal(N, aScale, dst, 1);
+  //for i:=0 to N-1 do
+  //    dst[i] := dst[i]*aScale
 end;
 
 class procedure TQNNSingleOPS.QNNBias(const dst, src: PSingle; const aBias: Single; const N: longint);
@@ -989,7 +990,7 @@ begin
     end
 end;
 
-class procedure TQNNSingleOPS.qscale(N:longint; alpha:single; X:PSingle; incX:longint);  WINAPI;
+class procedure TQNNSingleOPS.qscale(N:int64; alpha:single; X:PSingle; incX:int64);  WINAPI;
 var i:longint;
 begin
   // todo qscale Simdify
@@ -1012,12 +1013,12 @@ const
   SIMD_OFF = SIMD_REGS * sizeof(single);
   ymmd : array[0..7] of int32 = (0, 1, 2, 3, 4, 5, 6, 7);
 
-class function TQNNSingleOPS.sdot_avx2(const N:longint; const A,B:PSingle):single;assembler;{$ifdef FPC}nostackframe;{$endif}
+class function TQNNSingleOPS.sdot_avx2(const N:int64; const A,B:PSingle):single;assembler;{$ifdef FPC}nostackframe;{$endif}
 asm
 {$ifndef FPC}
   .NOFRAME
 {$endif}
-   mov              r11d     ,    N
+   mov              r11     ,    N
    vpxor            ymm0    ,    ymm0   ,   ymm0
    shr              r11d     ,    SIMD_SHFT
    jz               @rem
@@ -1030,8 +1031,8 @@ asm
    jnz              @while
 
 @rem:
-   mov              r11d     ,    N
-   and              r11d     ,    SIMD_REGS -1
+   mov              r11     ,    N
+   and              r11     ,    SIMD_REGS -1
    jz               @done
    vmovd            xmm3    ,    r11d
    vpxor            ymm1    ,    ymm1    , ymm1
@@ -1051,7 +1052,7 @@ asm
 
 end;
 
-class procedure TQNNSingleOPS.saxpy_avx2(const N:longint; const a:single; const x,y:PSingle);assembler;{$ifdef FPC}nostackframe;{$endif}
+class procedure TQNNSingleOPS.saxpy_avx2(const N:int64; const a:single; const x,y:PSingle);assembler;{$ifdef FPC}nostackframe;{$endif}
 asm
   //push         r11
   //push         N
@@ -1061,8 +1062,8 @@ asm
 
 //  movss         xmm2   , a
   vbroadcastss ymm1   , a
-  mov          r11d    , N
-  shr          r11d    , (SIMD_SHFT + 2)    // div by 16 (4*4) = turns * SIMD_REGS
+  mov          r11    , N
+  shr          r11    , (SIMD_SHFT + 2)    // div by 16 (4*4) = turns * SIMD_REGS
   jz           @rem1
 
 @while:
@@ -1083,13 +1084,13 @@ asm
 
   add          x      , 4 * SIMD_OFF   // turns * offset
   add          y      , 4 * SIMD_OFF
-  dec          r11d
+  dec          r11
   jnz          @while
 
 @rem1:
-  mov          r11d    , N
-  and          r11d    , (4*SIMD_REGS-1)       // mod 32  ( turns * SIMD_REGS)
-  shr          r11d    , SIMD_SHFT             // div SIMD_REGS
+  mov          r11    , N
+  and          r11    , (4*SIMD_REGS-1)       // mod 32  ( turns * SIMD_REGS)
+  shr          r11    , SIMD_SHFT             // div SIMD_REGS
   jz           @rem
 
 @while1:
@@ -1099,12 +1100,12 @@ asm
   vmovups      yword [y]    , ymm0
   add          x      , SIMD_OFF
   add          y      , SIMD_OFF
-  dec          r11d
+  dec          r11
   jnz          @while1
 
 @rem:
-  mov          r11d    , N
-  and          r11d    , (SIMD_REGS -1)       // mod SIMD_REGS
+  mov          r11    , N
+  and          r11    , (SIMD_REGS -1)       // mod SIMD_REGS
   jz           @done
 
 @while2:
@@ -1113,7 +1114,7 @@ asm
   vmovss       dword [y]    , xmm0
   add          x      , 4
   add          y      , 4
-  dec          r11d
+  dec          r11
   jnz          @while2
 
 @done:
@@ -1122,7 +1123,7 @@ asm
 end;
 {$endif}
 
-class procedure TQNNSingleOPS.qaxpy(n:longint; alpha:single; x:PSingle; y:PSingle);
+class procedure TQNNSingleOPS.qaxpy(n:int64; alpha:single; x:PSingle; y:PSingle);
 var
   i:longint;
 begin
@@ -1135,13 +1136,13 @@ begin
     {$endif}
 end;
 
-class procedure TQNNSingleOPS.qaxpyStrided(n:longint; alpha:single; x:PSingle; incx:longint; y:PSingle; incy:longint); winapi ;
+class procedure TQNNSingleOPS.qaxpyStrided(n:int64; alpha:single; x:PSingle; incx:int64; y:PSingle; incy:int64); winapi ;
 var
   i:longint;
 begin
   // todo qaxpy Simdify
   if (incx=1) and (incy=1) then
-    {$if defined(CPUX64)}
+    {$if defined(_CPUX64)}
     saxpy_avx2(N, alpha, x, y)
     {$else}
     for i:=0 to N-1 do
@@ -1152,13 +1153,13 @@ begin
       y[i*incy]:= alpha*x[i*incx] + y[i*incy]
 end;
 
-class function TQNNSingleOPS.qdot(N:longint; x:PSingle; y:PSingle):single;
+class function TQNNSingleOPS.qdot(N:int64; x:PSingle; y:PSingle):single;
 var
   i:longint;
 begin
   // todo qdot Simdify
 
-    {$if defined(CPUX64)}
+    {$if defined(_CPUX64)}
     result := sdot_avx2(N, x, y)
     {$else}
     result := 0;
@@ -1167,13 +1168,13 @@ begin
     {$endif}
 end;
 
-class function TQNNSingleOPS.qdotStrided(n:longint; x:PSingle; incx:longint; y:PSingle; incy:longint):single; winapi;
+class function TQNNSingleOPS.qdotStrided(n:int64; x:PSingle; incx:int64; y:PSingle; incy:int64):single; winapi;
 var
   i:longint;
 begin
   // todo qdot Simdify
   if (incx=1) and (incy=1) then begin
-    {$if defined(CPUX64)}
+    {$if defined(_CPUX64)}
     result := sdot_avx2(N, x, y)
     {$else}
     result := 0;
@@ -1212,8 +1213,8 @@ procedure cpp_sgemm(TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; const M, N, 
 
 
 
-class procedure TQNNSingleOPS.qgemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:longint; N:longint; K:longint;
-  alpha:single; A:PSingle; lda:longint; B:PSingle; ldb:longint; beta:single; C:PSingle; ldc:longint); WINAPI;
+class procedure TQNNSingleOPS.qgemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:int64; N:int64; K:int64;
+  alpha:single; A:PSingle; lda:int64; B:PSingle; ldb:int64; beta:single; C:PSingle; ldc:int64); WINAPI;
 
 {$ifdef FPC}
 procedure gemm_thread(const start, finish: IntPtr; const data:pointer);
@@ -1546,7 +1547,7 @@ begin
 end;
 *)
 
-class function TQNNSingleOPS.qasum(n:longint; x:PSingle; incx:longint):Single; winapi ;
+class function TQNNSingleOPS.qasum(n:int64; x:PSingle; incx:int64):Single; winapi ;
 var
   i:longint;
 begin
@@ -2465,11 +2466,35 @@ begin
   sum := 0.0;
   for i := 0 to N-1 do begin
       x[i] := fast_exp(x[i]-max_val);
+      //x[i] := exp(x[i]-max_val);
       sum := sum + x[i]
   end;
   inv_sum := single(1.0) / sum;
+  QNNScaleInplace(x, inv_sum, N);
+  //for i := 0 to N-1 do
+  //    x[i] := x[i] * inv_sum
+end;
+
+procedure softmax(const N: longint ;const a:TArray<single>; const offset:longint);
+var
+  i: longint;
+  max_val, sum, inv_sum: Single;
+begin
+  // todo softmax simdify
+  //max_val := x[0];
+  //for i := 1 to N -1 do
+  //    if x[i] > max_val then
+  //        max_val := x[i];
+  max_val := TQNNSingleOps.QNNMax(N, PSingle(a)+offset);
+  sum := 0.0;
+  for i := 0 to N-1 do begin
+      //x[i] := fast_exp(x[i]-max_val);
+      a[i+offset] := exp(a[i+offset]-max_val);
+      sum := sum + a[i+offset]
+  end;
+  inv_sum := single(1.0) / sum;
   for i := 0 to N-1 do
-      x[i] := x[i] * inv_sum
+      a[i+offset] := a[i+offset] * inv_sum
 end;
 
 class procedure TQNNSingleOPS.QNNSoftmaxRows(const x: PSingle; const rows, cols: integer);
@@ -2477,9 +2502,12 @@ var
     i, c: longint;
     row: PSingle;
     max_val, sum, inv_sum: Single;
+    //a : TArray<single>;
 begin
+  //Pointer(a) := X;
   // todo softmax simdify
     for i := 0 to rows -1 do
+      //softmax(cols, TArray<Single>(x), i*cols);
       QNNSoftmax(x + i*cols, cols);
       //begin
       //  row := x+ i*cols;
@@ -3284,6 +3312,7 @@ end;
 const
   {$if defined(MSWINDOWS)}
   blaslib = 'openblas.dll';
+  blaslib64 = 'openblas_64.dll';
   {$elseif defined(LINUX)}
   blaslib = 'libopenblas.so';
   {$elseif defined(MACOS) or defined(DARWIN)}
@@ -3463,12 +3492,13 @@ var
   d1, d2 : Single;
   dptr : PSingle;
 *)
+var i:longint;
 
 initialization
-
-  //for i:=0 to high(TVulkanCompute.VulkanDevices) do
-  //  writeln(i, ' : ', TVulkanCompute.VulkanDevices[i].deviceProperties.deviceName);
-  vk := TQNNVulkan.Create(1);
+  SetExceptionMask([exInvalidOp, exPrecision, exUnderflow, exZeroDivide, exOverflow]);
+  //for i:=0 to high(TQNNVulkan.VulkanDevices) do
+  //  writeln(i, ' : ', TQNNVulkan.VulkanDevices[i].deviceProperties.deviceName);
+  vk := TQNNVulkan.Create(0);
 
   //SetPrecisionMode(TFPUPrecisionMode.pmDouble);
 (*
@@ -3519,12 +3549,15 @@ initialization
         TQNNSingleOPS.cblas_sdot  := cblas_sdot   ;
         TQNNSingleOPS.cblas_sasum := cblas_sasum  ;
         TQNNSingleOPS.cblas_sscal := cblas_sscal  ;
+        TQNNSingleOPS.isUsingBlas := true;
   {$else}
   hBLASLib := LoadLibrary(blaslib);
-  {$ifdef MSWINDOWS}
   if hBLASLib=0 then
     hBLASLib:=LoadLibrary('lib'+blaslib);
-  {$endif}
+  if hBLASLib=0 then
+    hBLASLib:=LoadLibrary(blaslib64);
+  if hBLASLib=0 then
+    hBLASLib:=LoadLibrary('lib'+blaslib64);
   if (hBLASLib>0) then begin
     TQNNSingleOPS.cblas_sgemm   := getProcAddress(hBLASLib, 'cblas_sgemm');
     TQNNSingleOPS.cblas_saxpy   := getProcAddress(hBLASLib, 'cblas_saxpy');
@@ -3536,6 +3569,7 @@ initialization
     TQNNSingleOPS.openblas_get_num_threads    :=  getProcAddress(hBLASLib, 'openblas_get_num_threads');
     TQNNSingleOPS.openblas_get_num_procs      :=  getProcAddress(hBLASLib, 'openblas_get_num_procs');
   end;
+  TQNNSingleOPS.isUsingBlas := hBlaslib<>0;
   {$endif}
 
 

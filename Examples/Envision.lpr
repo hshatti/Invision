@@ -1,13 +1,21 @@
-program invision;
+program Envision;
 
-{$APPTYPE CONSOLE}
-
-{$R *.res}
+{$ifdef FPC}
+  {$mode delphi}
+{$endif}
 
 uses
-  SysUtils, Generics.Collections, safetensor, quicknn_kernels, quicknn_common, quicknn_tokenizer,
+  SysUtils, Generics.Collections, typinfo, safetensor,
+  quicknncpu, quicknn_common, quicknn_tokenizer,
   quicknn_transformers, quicknn_vae, quicknn_sample,
-  quicknn_qwen3, quicknn_flux, quicknn_zimage, sixel, quicknn_downloader, nchrono, termesc;
+  quicknn_qwen3
+  , quicknn_flux
+  , quicknn_zimage
+  , sixel
+  , termesc
+  , nchrono, quicknn_downloader, quicknn_vulkan;
+
+const memAllocated:IntPtr = 0;
 
 var
   dict : TDictionary<string, TMemoryBlock>;
@@ -17,7 +25,7 @@ var
   img, src : TQNNImage;
   imgs : TArray<TQNNImage>;
   imgFile: String;
-  t, memAllocated : int64;
+  t : int64;
 
 procedure afterblockForward(typ :TSubstepType; i, total: longint);
 begin
@@ -92,7 +100,7 @@ begin
   if (memAllocated+delta)<0 then
     readln;
   o := memAllocated;
-  inc(memAllocated, delta);
+  InterlockedExchangeAdd64(memAllocated, delta);
   //DEBUGAllMems();
   cursorAbsPos(100, 1);
   write(memAllocated/1000000000:1:3, ' GB');
@@ -112,11 +120,14 @@ begin
   //params.seed:= 666;
   //params.seed:=1781898218;
   params.powerAlpha := 2;
+  params.num_steps := 4;
   substep_callback:=afterblockForward;
   step_callback := afterstep;
   text_progress_callback:=afterstep;
   vae_progress_callback := afterstep;
   PROMPT := 'a cute realistic panda holding a "I will code for food!" signboard';
+  //PROMPT := 'A Delphi with gargoyles on the top of it, a fron view of the whole delphi building';
+  //PROMPT := 'cartimaphoble hembrashel';
   {$define _ZIMAGE}
   {$ifdef ZIMAGE}
   zimage := TQNNZImage.load('c:\development\flux2.c\Z-Image-Turbo', afterphase);
@@ -127,18 +138,21 @@ begin
   //img := zimage.generate('a cute pink raccoon holding a "I''m Sad" signboard', params);
   //img := zimage.generate('A mechanical dog made of brass gears and copper pipes, steampunk style, highly detailed.', params);
   //img := flux.generate('een robotkonijn dat zingt in de ruimte', params);
-  //img := flux.generate('ÃÑäÈ ÑæÈæÊí íÛäí Ýí ÇáÝÖÇÁ', params);
-  //img := flux.generate('ÃÑäÈ ÑæÈæÊí íÊäÇæá ÇáÚÔÇÁ ãÚ ÞØÉ', params);
-  //img := flux.generate('ÊÝÇÍÉ', params);
+  //img := flux.generate('Ø£Ø±Ù†Ø¨ Ø±ÙˆØ¨ÙˆØªÙŠ ÙŠØºÙ†ÙŠ ÙÙŠ Ø§Ù„ÙØ¶Ø§Ø¡', params);
+  //img := flux.generate('Ø£Ø±Ù†Ø¨ Ø±ÙˆØ¨ÙˆØªÙŠ ÙŠØªÙ†Ø§ÙˆÙ„ Ø§Ù„Ø¹Ø´Ø§Ø¡ Ù…Ø¹ Ù‚Ø·Ø©', params);
+  //img := flux.generate('ØªÙØ§Ø­Ø©', params);
+  imgFile := GetCurrentDir()+ DirectorySeparator+FormatDateTime('YYYY_MM_DD_hhnnsszzz', Now())+ '_pascal.png';
+  writeln('Saving to [', imgFile ,']');
+  img.saveToFile(imgFile, 'Invision', '{"program" : "Invision , a (text to image/ image to image) generator example written in Object Pascal", "model" : "'+zimage.model_name+'"'+'"prompt" : "'+StringReplace(PROMPT, '"', '\"', [rfReplaceAll])+'", "seed" : '+IntToStr(params.seed)+'}');
   zimage.free;
   {$else}
 
-  TFLUX4B.download('../../../models');
+  TFLUX4B.download();
   //src := TQNNImage.loadFromFile('C:\development\flux2.c\bear.png');
   //src.print();
   //printSixel(pointer(src.data), src.width, src.height, true);
   //flux := TQNNFLux.load('c:\development\flux2.c\FLUX.2-klein-9B');
-  flux := TQNNFlux.load('../../../models/'+TFLUX4B.DST_PATH, afterphase);
+  flux := TQNNFlux.load('models/'+TFLUX4B.DST_PATH, afterphase);
   flux.use_mmap := true;
   //flux.loadVAE('c:\development\flux2.c\flux-klein-model');
   //l := flux.vae.encode(src.asMemoryBlock(), 1, src.height, src.width, l_h, l_w);
@@ -158,14 +172,20 @@ begin
 
   //img := flux.generate('A pink grizly bear wearing a blue fedora in a cozy room with green furniture and holding a sign with "I will code for  food!" signboard.', params);
   //img := flux.generate('een robotkonijn dat zingt in de ruimte', params);
-  //img := flux.generate('ÃÑäÈ ÑæÈæÊí íÛäí Ýí ÇáÝÖÇÁ', params);
-  //img := flux.generate('ÃÑäÈ ÑæÈæÊí íÊäÇæá ÇáÚÔÇÁ ãÚ ÞØÉ', params);
-  //img := flux.generate('ÊÝÇÍÉ', params);
+  //img := flux.generate('Ø£Ø±Ù†Ø¨ Ø±ÙˆØ¨ÙˆØªÙŠ ÙŠØºÙ†ÙŠ ÙÙŠ Ø§Ù„ÙØ¶Ø§Ø¡', params);
+  //img := flux.generate('Ø£Ø±Ù†Ø¨ Ø±ÙˆØ¨ÙˆØªÙŠ ÙŠØªÙ†Ø§ÙˆÙ„ Ø§Ù„Ø¹Ø´Ø§Ø¡ Ù…Ø¹ Ù‚Ø·Ø©', params);
+  //img := flux.generate('ØªÙØ§Ø­Ø©', params);
+  imgFile := GetCurrentDir()+ DirectorySeparator+FormatDateTime('YYYY_MM_DD_hhnnsszzz', Now())+ '_pascal.png';
+  writeln('Saving to [', imgFile ,']');
+  img.saveToFile(imgFile, 'program', 'Invision, a (txt2img/img2img) generator example written in Object Pascal (Delphi and FPC)');
+  img.addPngMeta(imgFile, 'json',
+                          '{"model" : "'+flux.model_name+'"'+
+                          ', "prompt" : "'+StringReplace(PROMPT, '"', '\"', [rfReplaceAll])+
+                          '", "seed" : '+IntToStr(params.seed)+
+                          ', "steps" : '+intToStr(params.num_steps)+
+                          ', "schedueler" : "'+copy(GetEnumName(TypeInfo(TQNNSchedule), ord(params.schedule)), 5)+'"}');
   flux.free;
   {$endif}
-  imgFile := GetCurrentDir()+ PathDelim+FormatDateTime('YYYY_MM_DD_hhnnsszzz', Now())+ '_pascal.png';
-  writeln('Saving to [', imgFile ,']');
-  img.saveToFile(imgFile);
   printSixel(pointer(img.data), img.width, img.height, true);
 
   img.free;
@@ -173,3 +193,4 @@ begin
   freeAndNil(dict);
   readln;
 end.
+

@@ -73,7 +73,7 @@ var
   t,x : QNNFloat;
   resultPtr : PQNNFloat;
 begin
-    result := TMemoryBlock.Create(num_steps + 1, 'SCHEDULER_SIGMOID');
+    result := TMemoryBlock.Create([num_steps + 1], 'SCHEDULER_SIGMOID');
     resultPtr := result;
     for i := 0 to num_steps do begin
         t := i / num_steps;
@@ -97,7 +97,7 @@ var
     resultPtr: PQNNFloat;
     shift, t: QNNFloat;
 begin
-    result := TMemoryBlock.Create(num_steps+1, 'SCHEDULER_RESOLUTION');
+    result := TMemoryBlock.Create([num_steps+1], 'SCHEDULER_RESOLUTION');
     resultPtr := result;
     pixels := height*width;
     shift := 0.0;
@@ -300,7 +300,7 @@ begin
     max_h := NOISE_MAX_LATENT_DIM;
     max_w := NOISE_MAX_LATENT_DIM;
     max_size := batch * channels * max_h * max_w;
-    maxNoise := TMemoryBlock.Create(max_size, 'INIT_NOISE_MAX_NOISE');
+    maxNoise := TMemoryBlock.Create([max_size], 'INIT_NOISE_MAX_NOISE');
     maxNoisePtr := maxNoise;
     randn(maxNoisePtr, max_size);
 

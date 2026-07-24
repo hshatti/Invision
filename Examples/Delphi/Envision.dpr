@@ -1,31 +1,23 @@
-program invision;
+program Envision;
 
-{$ifdef FPC}
-  {$mode delphi}
-{$endif}
+{$APPTYPE CONSOLE}
+
+{$R *.res}
 
 uses
-  SysUtils, Generics.Collections, typinfo, safetensor,
-  quicknncpu, quicknn_common, quicknn_tokenizer,
+  SysUtils, Generics.Collections, safetensor, quicknn_kernels, quicknn_common, quicknn_tokenizer,
   quicknn_transformers, quicknn_vae, quicknn_sample,
-  quicknn_qwen3
-  , quicknn_flux
-  , quicknn_zimage
-  , sixel
-  , termesc
-  , nchrono, quicknn_downloader, quicknn_vulkan;
-
-const memAllocated:IntPtr = 0;
+  quicknn_qwen3, quicknn_flux, quicknn_zimage, sixel, quicknn_downloader, nchrono, termesc;
 
 var
-  dict : TDictionary<string, TMemoryBlock>;
+  dict : TDictionary<string, PMemoryBlock>;
   flux:TQNNFlux;
   zimage : TQNNZImage;
   params:TGenerateParams;
   img, src : TQNNImage;
   imgs : TArray<TQNNImage>;
   imgFile: String;
-  t : int64;
+  t, memAllocated : int64;
 
 procedure afterblockForward(typ :TSubstepType; i, total: longint);
 begin
@@ -62,7 +54,7 @@ begin
 end;
 
 procedure DEBUGAllMems();
-var m : TPair<string, TMemoryBlock>;
+var m : TPair<string, PMemoryBlock>;
   sum:intPtr;
 begin
   sum :=0;
@@ -83,13 +75,13 @@ procedure memoryChange(const status:string; const old, new:IntPtr; const mem:TMe
 var delta: IntPtr;
   o : IntPtr;
 begin
-  assert(trim(mem.name)<>'');
+  assert(trim(mem.name)<>'', 'Memory has no name tag');
   saveCursorPos();
   delta := new - old;
   if not ((new>0) and (old>0)) then begin
     if not dict.ContainsKey(mem.name) then begin
       assert(status='new');
-      dict.Add(mem.name, mem);
+      dict.Add(mem.name, @mem);
     end;
     if new=0 then begin
       assert(dict.ContainsKey(mem.name));
@@ -100,7 +92,7 @@ begin
   if (memAllocated+delta)<0 then
     readln;
   o := memAllocated;
-  InterlockedExchangeAdd64(memAllocated, delta);
+  inc(memAllocated, delta);
   //DEBUGAllMems();
   cursorAbsPos(100, 1);
   write(memAllocated/1000000000:1:3, ' GB');
@@ -112,7 +104,7 @@ var
   l : TMemoryBlock;
   PROMPT: String;
 begin
-  dict := TDictionary<string, TMemoryBlock>.create();
+  dict := TDictionary<string, PMemoryBlock>.create();
   onMemoryUpdate:=memoryChange;
   params := default(TGenerateParams);
   params.width :=512;
@@ -120,14 +112,11 @@ begin
   //params.seed:= 666;
   //params.seed:=1781898218;
   params.powerAlpha := 2;
-  params.num_steps := 4;
   substep_callback:=afterblockForward;
   step_callback := afterstep;
   text_progress_callback:=afterstep;
   vae_progress_callback := afterstep;
   PROMPT := 'a cute realistic panda holding a "I will code for food!" signboard';
-  //PROMPT := 'A Delphi with gargoyles on the top of it, a fron view of the whole delphi building';
-  //PROMPT := 'cartimaphoble hembrashel';
   {$define _ZIMAGE}
   {$ifdef ZIMAGE}
   zimage := TQNNZImage.load('c:\development\flux2.c\Z-Image-Turbo', afterphase);
@@ -138,21 +127,18 @@ begin
   //img := zimage.generate('a cute pink raccoon holding a "I''m Sad" signboard', params);
   //img := zimage.generate('A mechanical dog made of brass gears and copper pipes, steampunk style, highly detailed.', params);
   //img := flux.generate('een robotkonijn dat zingt in de ruimte', params);
-  //img := flux.generate('Ø£Ø±Ù†Ø¨ Ø±ÙˆØ¨ÙˆØªÙŠ ÙŠØºÙ†ÙŠ ÙÙŠ Ø§Ù„ÙØ¶Ø§Ø¡', params);
-  //img := flux.generate('Ø£Ø±Ù†Ø¨ Ø±ÙˆØ¨ÙˆØªÙŠ ÙŠØªÙ†Ø§ÙˆÙ„ Ø§Ù„Ø¹Ø´Ø§Ø¡ Ù…Ø¹ Ù‚Ø·Ø©', params);
-  //img := flux.generate('ØªÙØ§Ø­Ø©', params);
-  imgFile := GetCurrentDir()+ DirectorySeparator+FormatDateTime('YYYY_MM_DD_hhnnsszzz', Now())+ '_pascal.png';
-  writeln('Saving to [', imgFile ,']');
-  img.saveToFile(imgFile, 'Invision', '{"program" : "Invision , a (text to image/ image to image) generator example written in Object Pascal", "model" : "'+zimage.model_name+'"'+'"prompt" : "'+StringReplace(PROMPT, '"', '\"', [rfReplaceAll])+'", "seed" : '+IntToStr(params.seed)+'}');
+  //img := flux.generate('ÃÑäÈ ÑæÈæÊí íÛäí İí ÇáİÖÇÁ', params);
+  //img := flux.generate('ÃÑäÈ ÑæÈæÊí íÊäÇæá ÇáÚÔÇÁ ãÚ ŞØÉ', params);
+  //img := flux.generate('ÊİÇÍÉ', params);
   zimage.free;
   {$else}
 
-  TFLUX4B.download();
+  TFLUX4B.download('../../../models');
   //src := TQNNImage.loadFromFile('C:\development\flux2.c\bear.png');
   //src.print();
   //printSixel(pointer(src.data), src.width, src.height, true);
   //flux := TQNNFLux.load('c:\development\flux2.c\FLUX.2-klein-9B');
-  flux := TQNNFlux.load('models/'+TFLUX4B.DST_PATH, afterphase);
+  flux := TQNNFlux.load('../../../models/'+TFLUX4B.DST_PATH, afterphase);
   flux.use_mmap := true;
   //flux.loadVAE('c:\development\flux2.c\flux-klein-model');
   //l := flux.vae.encode(src.asMemoryBlock(), 1, src.height, src.width, l_h, l_w);
@@ -172,25 +158,18 @@ begin
 
   //img := flux.generate('A pink grizly bear wearing a blue fedora in a cozy room with green furniture and holding a sign with "I will code for  food!" signboard.', params);
   //img := flux.generate('een robotkonijn dat zingt in de ruimte', params);
-  //img := flux.generate('Ø£Ø±Ù†Ø¨ Ø±ÙˆØ¨ÙˆØªÙŠ ÙŠØºÙ†ÙŠ ÙÙŠ Ø§Ù„ÙØ¶Ø§Ø¡', params);
-  //img := flux.generate('Ø£Ø±Ù†Ø¨ Ø±ÙˆØ¨ÙˆØªÙŠ ÙŠØªÙ†Ø§ÙˆÙ„ Ø§Ù„Ø¹Ø´Ø§Ø¡ Ù…Ø¹ Ù‚Ø·Ø©', params);
-  //img := flux.generate('ØªÙØ§Ø­Ø©', params);
-  imgFile := GetCurrentDir()+ DirectorySeparator+FormatDateTime('YYYY_MM_DD_hhnnsszzz', Now())+ '_pascal.png';
-  writeln('Saving to [', imgFile ,']');
-  img.saveToFile(imgFile, 'program', 'Invision, a (txt2img/img2img) generator example written in Object Pascal (Delphi and FPC)');
-  img.addPngMeta(imgFile, 'json',
-                          '{"model" : "'+flux.model_name+'"'+
-                          ', "prompt" : "'+StringReplace(PROMPT, '"', '\"', [rfReplaceAll])+
-                          '", "seed" : '+IntToStr(params.seed)+
-                          ', "steps" : '+intToStr(params.num_steps)+
-                          ', "schedueler" : "'+copy(GetEnumName(TypeInfo(TQNNSchedule), ord(params.schedule)), 5)+'"}');
+  //img := flux.generate('ÃÑäÈ ÑæÈæÊí íÛäí İí ÇáİÖÇÁ', params);
+  //img := flux.generate('ÃÑäÈ ÑæÈæÊí íÊäÇæá ÇáÚÔÇÁ ãÚ ŞØÉ', params);
+  //img := flux.generate('ÊİÇÍÉ', params);
   flux.free;
   {$endif}
+  imgFile := GetCurrentDir()+ PathDelim+FormatDateTime('YYYY_MM_DD_hhnnsszzz', Now())+ '_pascal.png';
+  writeln('Saving to [', imgFile ,']');
+  img.saveToFile(imgFile);
   printSixel(pointer(img.data), img.width, img.height, true);
 
   img.free;
   //DEBUGAllMems();
-  freeAndNil(dict);
+//  freeAndNil(dict);
   readln;
 end.
-

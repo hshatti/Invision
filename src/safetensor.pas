@@ -552,7 +552,7 @@ begin
     end;
   end
   else begin
-    result := TMemoryBlock.Create(safeTensor.count(), safeTensor.name, safeTensor.dtype.toDataType(), PByte(data) + safeTensor.data_offset);
+    result := TMemoryBlock.Create([safeTensor.count()], safeTensor.name, safeTensor.dtype.toDataType(), PByte(data) + safeTensor.data_offset);
   end;
 end;
 

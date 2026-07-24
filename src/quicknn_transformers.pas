@@ -841,9 +841,9 @@ begin
       QNNComputeRoPE(rope_freqs, max_seq_len, head_dim, rope_theta);
 
   (* Small constant-size buffers - always allocate *)
-  t_emb_silu     := TSingles.Create(hidden_size    , 'FLUX_LOAD_t_emb_silu');
-  double_mod_img := TSingles.Create(hidden_size * 6, 'FLUX_LOAD_double_mod_img');
-  double_mod_txt := TSingles.Create(hidden_size * 6, 'FLUX_LOAD_double_mod_txt');
+  t_emb_silu     := TSingles.Create([hidden_size    ], 'FLUX_LOAD_t_emb_silu');
+  double_mod_img := TSingles.Create([hidden_size , 6], 'FLUX_LOAD_double_mod_img');
+  double_mod_txt := TSingles.Create([hidden_size , 6], 'FLUX_LOAD_double_mod_txt');
 end;
 
 function TTransformerFlux.isLoaded(): boolean;
@@ -851,22 +851,23 @@ begin
   result := assigned(sf_files)
 end;
 
-{$define _USE_FLASHATTENTION}
+
 
 procedure TTransformerFlux.reInitialize(const totalSeq: longint);
 var fused_dim, hidden, mlp:longint; attn_scores_need:TArray<int64>;
 begin
-  {$ifndef USE_FLASHATTENTION}
-  attn_scores_need := [num_heads, totalSeq, totalSeq];
 
-  if product(attn_scores_need) > attn_scores_alloc then begin
+  if isUsingBlas then begin
+    attn_scores_need := [num_heads, totalSeq, totalSeq];
+
+    if product(attn_scores_need) > attn_scores_alloc then begin
       if attn_scores.isAssigned() then
         attn_scores.reSize(attn_scores_need)
       else
-        attn_scores := TMemoryBlock.Create(attn_scores_need, 'FLUS_INIT_ATTN_SCORES');
+        attn_scores := TMemoryBlock.Create(attn_scores_need, 'FLUX_INIT_ATTN_SCORES');
       attn_scores_alloc := product(attn_scores_need);
+    end;
   end;
-  {$endif}
 
   if totalSeq<=work_seq_alloc then exit;
 
@@ -908,7 +909,7 @@ begin
   work_size           := totalSeq*fused_dim + hidden*3 ;
 
   work1               := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_work1          ');
-  work2               := TMemoryBlock.Create(work_size         , 'FLUX_INIT_work2          ');
+  work2               := TMemoryBlock.Create([work_size       ], 'FLUX_INIT_work2          ');
   attn_q_t            := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_attn_q_t       ');
   attn_k_t            := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_attn_k_t       ');
   attn_v_t            := TMemoryBlock.Create([totalSeq, hidden], 'FLUX_INIT_attn_v_t       ');
@@ -1149,7 +1150,7 @@ procedure TTransformerFlux.multiHeadForward(const dst, Q, K, V: TMemoryBlock; co
 var
   hidden, headDim : longint;
   scale : QNNFloat;
-  //scores : TMemoryBlock;
+  scores : TMemoryBlock;
 
 {$ifdef FPC}
 procedure worker(const start, finish:IntPtr; const data:pointer);
@@ -1167,7 +1168,7 @@ begin
         kh := K      + i*headDim;
         vh := V      + i*headDim;
         oh := dst    + i*headDim;
-        sh := attn_scores + i*seq*seq;
+        sh := scores + i*seq*seq;
 
         cblas_gemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                     seq, seq, headDim,
@@ -1196,17 +1197,15 @@ begin
   headDim := head_dim;
   hidden := num_heads * head_dim;  //but we use self.hidden_size
   scale := 1/sqrt(head_dim);
-
-{$if defined(USE_FLASHATTENTION)}
-  QNNFlashAttention(dst, Q, K, V, num_heads, seq, seq, head_dim, scale{1/sqrt(head_dim)});
-{$else}
-  //scores := attn_scores;
+  scores := attn_scores; // because unlice FPC delphi does not capture Self in lambda referenced procedures
+  if not isUsingBlas then
+    QNNFlashAttention(dst, Q, K, V, num_heads, seq, seq, head_dim, scale{1/sqrt(head_dim)})
+  else
   {$ifdef _USE_MULTITHREADING}       // CAUTION : do not multithread
-  mp.&for(worker, 0, num_heads-1) ;
+    mp.&for(worker, 0, num_heads-1) ;
   {$else}
-  worker(0, num_heads-1, nil);
+    worker(0, num_heads-1, nil);
   {$endif}
-{$endif}
 
 
 end;
@@ -1217,8 +1216,7 @@ procedure TTransformerFlux.jointAttentionForward(const img_out, txt_out, img_Q,
 var
   totalSeq, hidden, headDim:longint;
   scale : QNNFloat;
-  //cat_k, cat_v,
-      //scores : TMemoryBlock;
+  cat_k, cat_v, scores : TMemoryBlock;
   {$ifdef fpc}
   procedure worker(const start, finish:IntPtr; const data:pointer);
 {$else}
@@ -1235,11 +1233,11 @@ begin
     for i:= start to finish do begin
             imgQh := img_Q        + i*headDim;
             txtQh := txt_Q        + i*headDim;
-            kh    := attn_cat_k   + i*headDim;
-            vh    := attn_cat_v   + i*headDim;
+            kh    := cat_k        + i*headDim;
+            vh    := cat_v        + i*headDim;
             imgOh := img_out      + i*headDim;
             txtOh := txt_out      + i*headDim;
-            imgSh := attn_scores  + i*totalSeq*totalSeq;
+            imgSh := scores       + i*totalSeq*totalSeq;
             txtSh := imgSh        + img_seq*totalSeq; // txt_sh is an offset from img_sh
 
             cblas_gemm(CblasRowMajor, CblasNoTrans, CblasTrans,
@@ -1287,8 +1285,9 @@ begin
   scale  := 1/sqrt(head_dim);
 
   (* Use pre-allocated buffers for K/V concatenation *)
-  //cat_k := attn_cat_k;
-  //cat_v := attn_cat_v;
+  cat_k := attn_cat_k;
+  cat_v := attn_cat_v;
+  scores := attn_scores; // because delphi does not capture Self in lambda procedures
 
   //Concatenate K, V from both streams in [seq, heads, head_dim] format
   //IMPORTANT: Python (official Flux2) concatenates as [TEXT, IMAGE]
@@ -1297,17 +1296,16 @@ begin
   QNNCopy(attn_cat_k + txt_seq*hidden, img_K, img_seq*hidden);
   QNNCopy(attn_cat_v + txt_seq*hidden, img_V, img_seq*hidden);
 
-{$if defined(USE_FLASHATTENTION)}
-  QNNFlashAttention(img_out, img_q, attn_cat_k, attn_cat_v, num_heads, img_seq, totalSeq, head_dim, scale);
-  QNNFlashAttention(txt_out, txt_q, attn_cat_k, attn_cat_v, num_heads, txt_seq, totalSeq, head_dim, scale);
-{$else}
-  //scores := attn_scores;
+  if not isUsingBlas then begin
+    QNNFlashAttention(img_out, img_q, attn_cat_k, attn_cat_v, num_heads, img_seq, totalSeq, head_dim, scale);
+    QNNFlashAttention(txt_out, txt_q, attn_cat_k, attn_cat_v, num_heads, txt_seq, totalSeq, head_dim, scale);
+  end else begin
   {$ifdef _USE_MULTITHREADING}    // CAUTION : do not multithread
-  mp.&for(worker, 0, num_heads-1);
+    mp.&for(worker, 0, num_heads-1);
   {$else}
-  worker(0, num_heads-1, nil)
+    worker(0, num_heads-1, nil)
   {$endif}
-{$endif}
+  end
 
 end;
 
@@ -1545,7 +1543,7 @@ begin
     total_seq := img_seq+txt_seq;
     reInitialize(total_seq);
 
-    t_emb := TMemoryBlock.Create(hidden_size, 'FLUX_FW_TIME_EMB');
+    t_emb := TMemoryBlock.Create([hidden_size], 'FLUX_FW_TIME_EMB');
     t_sincos := QNNTimestepEmbedding(timestep * 1000.0, time_embed.sincos_dim, 10000.0);
 
     time_embed.forward(t_emb, t_sincos,  hidden_size, t_emb_silu);
@@ -1655,7 +1653,7 @@ begin
     combined_img_seq := img_seq + ref_seq;
     total_seq := combined_img_seq + txt_seq;
     reInitialize(total_seq);
-    t_emb := TMemoryBlock.Create(hidden_size, 'FLUX_FW_TIME_EMBED');
+    t_emb := TMemoryBlock.Create([hidden_size], 'FLUX_FW_TIME_EMBED');
     t_sincos := QNNTimeStepEmbedding(timestep * 1000.0, time_embed.sincos_dim, 10000.0);
     time_embed.forward(t_emb, t_sincos, hidden_size, t_emb_silu);
     t_sincos.free;
@@ -1768,7 +1766,7 @@ begin
     combined_img_seq := img_seq+total_ref_seq;
     total_seq := combined_img_seq+txt_seq;
     reInitialize(total_seq);
-    t_emb := TMemoryBlock.Create(hidden_size, 'FLUX_FW_TIME_EMB');
+    t_emb := TMemoryBlock.Create([hidden_size], 'FLUX_FW_TIME_EMB');
 
     t_sincos := QNNTimestepEmbedding(timestep * 1000.0, time_embed.sincos_dim, 10000.0);
     time_embed.forward(t_emb, t_sincos,  hidden_size, t_emb_silu);
@@ -2392,8 +2390,8 @@ begin
         half_d  := d div 2;
         max_pos := axes_lens[ax];
 
-        rope_cos[ax] := TMemoryBlock.create(max_pos*half_d, 'ZI_PRECOMPUTE_ROPE_COS_'+IntToStr(ax));
-        rope_sin[ax] := TMemoryBlock.create(max_pos*half_d, 'ZI_PRECOMPUTE_ROPE_SIN_'+IntToStr(ax));
+        rope_cos[ax] := TMemoryBlock.create([max_pos, half_d], 'ZI_PRECOMPUTE_ROPE_COS_'+IntToStr(ax));
+        rope_sin[ax] := TMemoryBlock.create([max_pos, half_d], 'ZI_PRECOMPUTE_ROPE_SIN_'+IntToStr(ax));
         ropeCos := rope_cos[ax];
         ropeSin := rope_sin[ax];
         for pos := 0 to max_pos-1 do begin
@@ -2432,7 +2430,7 @@ var
 begin
     out_dim := patch_size * patch_size * in_channels;
 
-    scale := TMemoryBlock.Create(dim, 'ZI_FINAL_SCALE');
+    scale := TMemoryBlock.Create([dim], 'ZI_FINAL_SCALE');
     finalComputeScale(scale, t_emb);
 
     (* LayerNorm (no affine) -> scale *)
@@ -2756,7 +2754,7 @@ begin
     sinusoidalEmbeddingZi(PQNNFloat(@sin_emb[0]), t*1000.0, 256);
 
     (* MLP: Linear(256 -> t_emb_mid_size) + SiLU + Linear(t_emb_mid_size -> adaln_dim) *)
-    hidden := TMemoryBlock.Create(t_emb_mid_size, 'ZI_TIMESTEP_EMBED');
+    hidden := TMemoryBlock.Create([t_emb_mid_size], 'ZI_TIMESTEP_EMBED');
 
     (* Linear 0 *)
     QNNMatMulNT(hidden, sinEmbMem, t_emb_mlp0_weight, 1, 256, t_emb_mid_size);

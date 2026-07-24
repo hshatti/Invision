@@ -133,7 +133,7 @@ end;
 
 initialization
 
-  ExecuteProcess('powershell', ['-Command', 'Invoke-WebRequest', 'https://huggingface.co/black-forest-labs/FLUX.2-klein-4B/resolve/main/text_encoder/model-00001-of-00002.safetensors?download=true', '-OutFile', './model-00001-of-00002.safetensors']);
+  //ExecuteProcess('powershell', ['-Command', 'Invoke-WebRequest', 'https://huggingface.co/black-forest-labs/FLUX.2-klein-4B/resolve/main/text_encoder/model-00001-of-00002.safetensors?download=true', '-OutFile', './model-00001-of-00002.safetensors']);
 
 end.
 
