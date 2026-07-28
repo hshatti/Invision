@@ -9,6 +9,7 @@ lib/
 # Compiled Units
 *.dcu
 *.ppu
+*.identcache
 
 # Executable files
 *.exe
@@ -23,6 +24,9 @@ zimage-*/
 misc/
 documents/
 backup/
+Win64/
+Win32/
+__*/
 
 # IDE and editor files
 .vscode/
