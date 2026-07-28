@@ -256,19 +256,19 @@ procedure compareArray(const a, b:TArray<Integer>);             overload;
 procedure compareArray(const a, b: PInteger; const N:longint);  overload;
 procedure compareArray(const a, b: PSingle; const N:longint);  overload;
 {$if defined(MACOS) or defined(DARWIN) or defined(USE_STATIC_LINK)}
-procedure cblas_saxpy(n:longint; alpha:single; x:Psingle; incx:longint; y:Psingle; incy:longint); winapi ; external;
-function  cblas_sdot (n:longint; x:Psingle; incx:longint; y:Psingle; incy:longint):single; winapi ; external;
-function  cblas_sasum(n:longint; x:Psingle; incx:longint):single; winapi ; external;
-procedure cblas_sscal(N:longint; alpha:single; X:Psingle; incX:longint); winapi ; external;
-procedure cblas_sgemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:longint; N:longint; K:longint;
-                      alpha:single; A:Psingle; lda:longint; B:Psingle; ldb:longint; beta:single; C:Psingle; ldc:longint); winapi ; external;
+procedure cblas_saxpy(n:int64; alpha:single; x:Psingle; incx:int64; y:Psingle; incy:int64); winapi ; external;
+function  cblas_sdot (n:int64; x:Psingle; incx:int64; y:Psingle; incy:int64):single; winapi ; external;
+function  cblas_sasum(n:int64; x:Psingle; incx:int64):single; winapi ; external;
+procedure cblas_sscal(N:int64; alpha:single; X:Psingle; incX:int64); winapi ; external;
+procedure cblas_sgemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:int64; N:int64; K:int64;
+                      alpha:single; A:Psingle; lda:int64; B:Psingle; ldb:int64; beta:single; C:Psingle; ldc:int64); winapi ; external;
 
-procedure cblas_daxpy(n:longint; alpha:double; x:PDouble; incx:longint; y:PDouble; incy:longint); winapi ; external;
-function  cblas_ddot (n:longint; x:PDouble; incx:longint; y:PDouble; incy:longint):double; winapi ; external;
-function  cblas_dasum(n:longint; x:PDouble; incx:longint):double; winapi ; external;
-procedure cblas_dscal(N:longint; alpha:double; X:PDouble; incX:longint); winapi ; external;
-procedure cblas_dgemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:longint; N:longint; K:longint;
-                      alpha:double; A:PDouble; lda:longint; B:PDouble; ldb:longint; beta:double; C:PDouble; ldc:longint); winapi ; external;
+procedure cblas_daxpy(n:int64; alpha:double; x:PDouble; incx:int64; y:PDouble; incy:int64); winapi ; external;
+function  cblas_ddot (n:int64; x:PDouble; incx:int64; y:PDouble; incy:int64):double; winapi ; external;
+function  cblas_dasum(n:int64; x:PDouble; incx:int64):double; winapi ; external;
+procedure cblas_dscal(N:int64; alpha:double; X:PDouble; incX:int64); winapi ; external;
+procedure cblas_dgemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:int64; N:int64; K:int64;
+                      alpha:double; A:PDouble; lda:int64; B:PDouble; ldb:int64; beta:double; C:PDouble; ldc:int64); winapi ; external;
 {$endif}
 
 
