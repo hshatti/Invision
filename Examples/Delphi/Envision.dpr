@@ -19,7 +19,7 @@ var
   imgFile: String;
   t, memAllocated : int64;
 
-procedure afterblockForward(typ :TSubstepType; i, total: longint);
+procedure afterblockForward(const typ :TSubstepType; const i, total: longint);
 begin
   case typ of
     SUBSTEP_DOUBLE_BLOCK: write('D');
@@ -30,7 +30,7 @@ begin
   if i=0 then t:= clock();
 end;
 
-procedure afterstep(i, total:longint);
+procedure afterstep(const i, total:longint);
 begin
   //if i=total-1 then
   //  write(#13' ',i+1,'/',total, ' ')
@@ -119,7 +119,7 @@ begin
   PROMPT := 'a cute realistic panda holding a "I will code for food!" signboard';
   {$define _ZIMAGE}
   {$ifdef ZIMAGE}
-  zimage := TQNNZImage.load('c:\development\flux2.c\Z-Image-Turbo', afterphase);
+  zimage := TQNNZImage.load('../../Z-Image-Turbo', afterphase);
   zimage.use_mmap:=true;
   img := zimage.generate(PROMPT, params);
   //img := zimage.generate('a realistic pink grisly bear wearing a blue hat holding a (I''m Sad) signboard.', params);

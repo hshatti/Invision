@@ -111,6 +111,9 @@ type
     openblas_set_num_threads : procedure (num_threads:longint); winapi;
     openblas_get_num_threads : function ():longint; winapi;
     openblas_get_num_procs : function ():longint; winapi;
+    openblas_get_config : function ():PAnsiChar;
+    openblas_get_corename : function ():PAnsiChar;
+
     isUsingBlas : boolean;
     workspace : TArray<Single>;
   public
@@ -1142,7 +1145,7 @@ var
 begin
   // todo qaxpy Simdify
   if (incx=1) and (incy=1) then
-    {$if defined(_CPUX64)}
+    {$if defined(CPUX64)}
     saxpy_avx2(N, alpha, x, y)
     {$else}
     for i:=0 to N-1 do
@@ -1159,7 +1162,7 @@ var
 begin
   // todo qdot Simdify
 
-    {$if defined(_CPUX64)}
+    {$if defined(CPUX64)}
     result := sdot_avx2(N, x, y)
     {$else}
     result := 0;
@@ -1174,7 +1177,7 @@ var
 begin
   // todo qdot Simdify
   if (incx=1) and (incy=1) then begin
-    {$if defined(_CPUX64)}
+    {$if defined(CPUX64)}
     result := sdot_avx2(N, x, y)
     {$else}
     result := 0;
@@ -2163,7 +2166,7 @@ begin
 end;
 
 // todo : revisit
-{$ifdef _CPUX64}
+{$ifdef CPUX64}
 
 procedure QNNExp_avx2(const N:NativeInt; const src:PSingle; const dst:PSingle); assembler;
 const
@@ -2475,27 +2478,27 @@ begin
   //    x[i] := x[i] * inv_sum
 end;
 
-procedure softmax(const N: longint ;const a:TArray<single>; const offset:longint);
-var
-  i: longint;
-  max_val, sum, inv_sum: Single;
-begin
-  // todo softmax simdify
-  //max_val := x[0];
-  //for i := 1 to N -1 do
-  //    if x[i] > max_val then
-  //        max_val := x[i];
-  max_val := TQNNSingleOps.QNNMax(N, PSingle(a)+offset);
-  sum := 0.0;
-  for i := 0 to N-1 do begin
-      //x[i] := fast_exp(x[i]-max_val);
-      a[i+offset] := exp(a[i+offset]-max_val);
-      sum := sum + a[i+offset]
-  end;
-  inv_sum := single(1.0) / sum;
-  for i := 0 to N-1 do
-      a[i+offset] := a[i+offset] * inv_sum
-end;
+//procedure softmax(const N: longint ;const a:TArray<single>; const offset:longint);
+//var
+//  i: longint;
+//  max_val, sum, inv_sum: Single;
+//begin
+//  // todo softmax simdify
+//  //max_val := x[0];
+//  //for i := 1 to N -1 do
+//  //    if x[i] > max_val then
+//  //        max_val := x[i];
+//  max_val := TQNNSingleOps.QNNMax(N, PSingle(a)+offset);
+//  sum := 0.0;
+//  for i := 0 to N-1 do begin
+//      //x[i] := fast_exp(x[i]-max_val);
+//      a[i+offset] := exp(a[i+offset]-max_val);
+//      sum := sum + a[i+offset]
+//  end;
+//  inv_sum := single(1.0) / sum;
+//  for i := 0 to N-1 do
+//      a[i+offset] := a[i+offset] * inv_sum
+//end;
 
 class procedure TQNNSingleOPS.QNNSoftmaxRows(const x: PSingle; const rows, cols: integer);
 var
@@ -3495,10 +3498,10 @@ var
 var i:longint;
 
 initialization
-  SetExceptionMask([exInvalidOp, exPrecision, exUnderflow, exZeroDivide, exOverflow]);
+  //SetExceptionMask([exInvalidOp, exPrecision, exUnderflow, exZeroDivide, exOverflow]);
   //for i:=0 to high(TQNNVulkan.VulkanDevices) do
   //  writeln(i, ' : ', TQNNVulkan.VulkanDevices[i].deviceProperties.deviceName);
-  vk := TQNNVulkan.Create(0);
+  //vk := TQNNVulkan.Create(0);
 
   //SetPrecisionMode(TFPUPrecisionMode.pmDouble);
 (*
@@ -3558,6 +3561,7 @@ initialization
     hBLASLib:=LoadLibrary(blaslib64);
   if hBLASLib=0 then
     hBLASLib:=LoadLibrary('lib'+blaslib64);
+
   if (hBLASLib>0) then begin
     TQNNSingleOPS.cblas_sgemm   := getProcAddress(hBLASLib, 'cblas_sgemm');
     TQNNSingleOPS.cblas_saxpy   := getProcAddress(hBLASLib, 'cblas_saxpy');
@@ -3568,8 +3572,12 @@ initialization
     TQNNSingleOPS.openblas_set_num_threads    :=  getProcAddress(hBLASLib, 'openblas_set_num_threads');
     TQNNSingleOPS.openblas_get_num_threads    :=  getProcAddress(hBLASLib, 'openblas_get_num_threads');
     TQNNSingleOPS.openblas_get_num_procs      :=  getProcAddress(hBLASLib, 'openblas_get_num_procs');
+    TQNNSingleOPS.openblas_get_config         :=  getProcAddress(hBLASLib, 'openblas_get_config');
+    TQNNSingleOPS.openblas_get_corename       :=  getProcAddress(hBLASLib, 'openblas_get_corename');
   end;
   TQNNSingleOPS.isUsingBlas := hBlaslib<>0;
+  if isConsole and (hBLASLIB<>0) then
+    writeln('Using [', ansistring(TQNNSingleOPS.openblas_get_config()), ']');
   {$endif}
 
 
@@ -3622,7 +3630,7 @@ initialization
 
 finalization
 
-  freeandnil(vk);
+  //freeandnil(vk);
   if hBLASLib>0 then begin
     FreeLibrary(hBLASLib);
     TQNNSingleOPS.cblas_sgemm := nil;
@@ -3630,7 +3638,9 @@ finalization
     TQNNSingleOPS.cblas_sdot  := nil;
     TQNNSingleOPS.cblas_sasum := nil;
     TQNNSingleOPS.cblas_sscal := nil;
-    TQNNSingleOPS.cblas_sbgemm := nil
-  end;
+    TQNNSingleOPS.cblas_sbgemm := nil;
+    TQNNSingleOPS.openblas_get_config := nil;
+    TQNNSingleOPS.openblas_get_corename := nil;
+  end
 
 end.

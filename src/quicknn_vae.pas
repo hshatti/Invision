@@ -295,9 +295,7 @@ begin
             //            v_ptr[i * ch+c] := vb[c * spatial+i]
             //        end;
             QNNMatMulNT(scores, q_t, k_t, spatial, ch, spatial);
-            scores.printStat;
             QNNSoftmaxRows(scores, spatial, spatial);
-            scores.printStat;
             QNNMatMulNN(o_t, scores, v_t, spatial, spatial, ch);
             QNNMatTranspose(ob, o_t, spatial, ch);
             //for c := 0 to ch -1 do

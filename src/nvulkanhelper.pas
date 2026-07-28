@@ -504,7 +504,7 @@ begin
   // some GPU drivers do not check floating opertions
   // exceptions which eventually ends up being captured by pascal compiler,
   // disabling floating point operations exceptions below
-  SetExceptionMask([exInvalidOp, exPrecision, exUnderflow]);
+  //SetExceptionMask([exInvalidOp, exPrecision, exUnderflow]);
 
   SAFE_CALL(vkCreateInstance(@instanceCreateInfo, nil, @instance));
 end;
@@ -1557,10 +1557,11 @@ initialization
   //assert(SetEnvironmentVariableA('VK_LAYER_PRINTF_TO_STDOUT', '1'), 'Cannot set Vulkan ENV for debugging!');
 
 
+  FPUMask := GetExceptionMask;
+  SetExceptionMask([exInvalidOp] + FPUMask);
   TVulkanCompute.CreateInstance(ExtractFileName(paramStr(0)));
   TVulkanCompute.VulkanDevices := TVulkanCompute.QueryPhysicalDevices();
-  FPUMask := GetExceptionMask;
-  SetExceptionMask([exZeroDivide, exInvalidOp] + FPUMask);
+  //SetExceptionMask(FPUMask);
 
 
 finalization

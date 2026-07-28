@@ -174,6 +174,11 @@ type
       procedure reSize(const aShape:TArray<Int64>);  overload;
       procedure free();
       function count:NativeInt;
+
+      function channels():longint;
+      function height():longint;
+      function width():longint;
+
       function isAssigned():boolean;
       function isAllocated():boolean;
       procedure printStat;
@@ -261,7 +266,7 @@ type
       constructor Create(const aWidth, aHeight:longint; const aChannels : longint =3; const aData:PQNNFloat =nil);
       function asMemoryBlock(const aDataType:TQNNDataType=QNN_DATATYPE; const aPixelOrder: TQNNPixelOrder= poCHW):TMemoryBlock;
       procedure saveToFile(const filename:string; const tagKey:string = ''; const tagDesc :string ='');
-      procedure print;
+      procedure printSixel();
       procedure free();
   end;
 
@@ -355,7 +360,7 @@ type
       num_steps : longint;          (* Inference steps (default: 4 distilled, 50 base) *)
       seed : int64;                 (* Random seed (-1 for random) *)
       guidance : QNNFloat;          (* CFG guidance scale (0 = auto from model type) *)
-      schedule : longint;                 (* Schedule type (IRIS_SCHEDULE_*)
+      schedule : longint;                 (* Schedule type (SCHEDULE_*)
       power_alpha : QNNFloat;            (* Exponent for power schedule (default: 2.0) *)
   end;
 
@@ -446,14 +451,15 @@ type
    * index: 0-based index of this substep within its type
    * total: total count for this substep type
    *)
-  TSubstepCallback = procedure( &type :TSubstepType; index :longint; total: longint);
+  TSubstepCallback = procedure(const &type :TSubstepType; const index, total: longint);
 
   (*
    * Step callback - called at sampling step boundaries.
    * step: current step (1-based), or 0 to indicate sampling is starting
    * total: total number of steps
    *)
-  TStepCallback = procedure (step:longint; total:longint);
+  TStepCallback = procedure (const step, total:longint);
+  TProgressCallback = procedure (const step, total:longint; const outTensor : TMemoryBlock);
 
 
   (*
@@ -469,31 +475,31 @@ type
    * total: total number of steps
    * img: decoded image at this step (caller must NOT free)
    *
-   * To use: set both iris_step_image_callback and iris_step_image_vae before
+   * To use: set both step_image_callback and step_image_vae before
    * calling the sampling function. The callback is only invoked when both are set.
    *)
-  TStepImageCallback = procedure (step: longint; total: longint; const img : TQNNimage(* todo maybe its an array? *));
+  TStepImageCallback = procedure (const step, total: longint; const img : TQNNimage(* todo maybe its an array? *));
 
   (*
    * Text encoder progress callback - called once per Qwen3 layer.
    * layer: current layer (0-based)
    * total: total number of layers (36)
    *)
-  TTextProgressCallback = procedure (layer : longint; total : longint);
+  TTextProgressCallback = procedure (const layer, total : longint);
 
   (*
    * VAE progress callback - called once per resblock/attention block.
    * block: current block (0-based)
    * total: total number of blocks (11 for encoder, 15 for decoder)
    *)
-  TVAEProgressCallback = procedure ( block: longint; total: longint );
+  TVAEProgressCallback = procedure (const block, total: longint );
 
 var
   substep_callback : TSubstepCallback;
   step_callback    : TStepCallback;
   phase_callback   : TPhaseCallBack;
   step_image_callback : TStepImageCallback;
-  step_image_vae : pointer;  (* Set to iris_vae_t* for step image decoding *)
+  vae_ptr : pointer;
   text_progress_callback : TTextProgressCallback;
   vae_progress_callback  : TVAEProgressCallback;
   onMemoryUpdate : TOnMemoryUpdate;
@@ -825,7 +831,7 @@ end;
 {$endif}
 
 
-function _FileSize(var f:file):Int64; // a work around Delphi FileSize function returning incorrect file size on large files
+function _FileSize(var f:file):Int64; // a work around Delphi FileSize function bug returning incorrect file size on large files
 var fl :longword;
 begin
 {$if defined(FPC)}
@@ -926,9 +932,9 @@ begin
       PNG_CRC_TABLE[n] := c;
   end;
 end;
-procedure TQNNImage.print;
+procedure TQNNImage.printSixel;
 begin
-  printSixel(Data, width, height, true);
+  sixel.printSixel(Data, width, height, true);
 end;
 
 procedure TQNNImage.free();
@@ -1144,6 +1150,23 @@ begin
   end;
   result := 0
   {$endif}
+end;
+
+function TMemoryblock.channels():longint;
+begin
+  assert(length(shape)>2 ,'ERROR : Memory has no channels dimension');
+  result := shape[high(shape)-2]
+end;
+
+function TMemoryblock.height():longint;
+begin
+  assert(length(shape)>1,'ERROR : Memory has no height dimension');
+  result := shape[high(shape)-1]
+end;
+
+function TMemoryblock.width():longint;
+begin
+  result := shape[high(shape)]
 end;
 
 function TMemoryBlock.isAssigned():boolean;

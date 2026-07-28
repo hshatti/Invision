@@ -354,7 +354,7 @@ type
     function sampleEuler(const z: TMemoryBlock; const batch, channels, h, w: longint;
       const text_emb: TMemoryBlock; const text_seq: longint;
       const schedule: TMemoryBlock; const num_steps: longint;
-      const progress_callback:TStepCallback): TMemoryBlock; overload;
+      const progress_callback:TProgressCallback): TMemoryBlock; overload;
 
     // simplist distilled with one latent image
     function sampleEuler(const z: TMemoryBlock;
@@ -362,7 +362,7 @@ type
       const ref_latent: TMemoryBlock; const ref_h, ref_w, t_offset: longint;
       const text_emb: TMemoryBlock; const text_seq: longint;
       const schedule: TMemoryBlock; const num_steps: longint;
-      const progress_callback:TStepCallback): TMemoryBlock; overload;
+      const progress_callback:TProgressCallback): TMemoryBlock; overload;
 
     // non distilled with uncoditioning and guidance
     function sampleEuler(const z: TMemoryBlock;
@@ -371,7 +371,7 @@ type
       const text_emb_uncond: TMemoryBlock; const text_seq_uncond: longint;
       const guidance_scale: QNNFloat;   const schedule: TMemoryBlock;
       const num_steps: longint;
-      const progress_callback: TStepCallback):TMemoryBlock; overload;
+      const progress_callback: TProgressCallback):TMemoryBlock; overload;
 
     // non distiled with unconditioning, guidance and one latent image
     function sampleEuler(const z: TMemoryBlock;
@@ -381,14 +381,14 @@ type
       const text_emb_uncond: TMemoryBlock; const text_seq_uncond: longint;
       const guidance_scale: QNNFloat; const schedule: TMemoryBlock;
       const num_steps: longint;
-      const progress_callback: TStepCallback): TMemoryBlock; overload;
+      const progress_callback: TProgressCallback): TMemoryBlock; overload;
 
     // simplest disilled with multi images
     function sampleEuler(const z:TMemoryBlock; const batch, channels, h, w : longint;
       const refs : TArray<TImageRef>;
       const text_emb : TMemoryBlock; const text_seq:longint;
       const schedule:TMemoryBlock; const num_steps:longint;
-      const progress_callback:TStepCallback):TMemoryBlock;    overload;
+      const progress_callback:TProgressCallback):TMemoryBlock;    overload;
 
     // non disilled with unconditioning, gudance and multi images
     function sampleEuler(const z:TMemoryBlock; const batch, channels, h, w : longint;
@@ -396,7 +396,7 @@ type
       const text_emb_cond : TMemoryBlock; const text_seq_cond:longint;
       const text_emb_uncond : TMemoryBlock; const text_seq_uncond:longint;
       const gudance_scale:QNNFloat; const schedule:PQNNFloat; num_steps:longint;
-      const progress_callback:TStepCallback):TMemoryBlock;  overload;
+      const progress_callback:TProgressCallback):TMemoryBlock;  overload;
   end;
 
   const
@@ -1867,7 +1867,7 @@ end;
 function TTransformerFlux.sampleEuler(const z: TMemoryBlock; const batch,
   channels, h, w: longint; const text_emb: TMemoryBlock;
   const text_seq: longint; const schedule: TMemoryBlock;
-  const num_steps: longint; const progress_callback: TStepCallback
+  const num_steps: longint; const progress_callback: TProgressCallback
   ): TMemoryBlock;
 var
     latent_size, step: longint;
@@ -1890,14 +1890,12 @@ begin
         v_cond :=forward(result, h, w, text_emb, text_seq, t_curr);
         QNNFusedScaleAdd(result, v_cond, result, dt, latent_size);
         v_cond.free();
-        img := PVAE(step_image_vae).preview(result, flux2_latent_rgb_proj, h, w, channels, 1, flux2_latent_rgb_bias, 2); // flux2 patchsize is 2
-        img.print;
         if assigned(progress_callback) then
-            progress_callback(step, num_steps);
-        if assigned(step_image_callback) and assigned(step_image_vae) and (step+1 < num_steps) then  begin
-            img := PVAE(step_image_vae).decode(result, 1, h, w);
+            progress_callback(step, num_steps, result);
+        if assigned(step_image_callback) and assigned(vae_ptr) and (step+1 < num_steps) then  begin
+            img := PVAE(vae_ptr).decode(result, 1, h, w);
             if assigned(img.data) then begin
-                step_image_callback(step+1, num_steps, img);
+                step_image_callback(step, num_steps, img);
                 img.free
             end
         end
@@ -1909,7 +1907,7 @@ function TTransformerFlux.sampleEuler(const z: TMemoryBlock; const batch,
   channels, h, w: longint; const ref_latent: TMemoryBlock; const ref_h, ref_w,
   t_offset: longint; const text_emb: TMemoryBlock; const text_seq: longint;
   const schedule: TMemoryBlock; const num_steps: longint;
-  const progress_callback: TStepCallback): TMemoryBlock;
+  const progress_callback: TProgressCallback): TMemoryBlock;
 var
   latent_size, step: LongInt;
   t_curr, t_next, dt: QNNFloat;
@@ -1945,11 +1943,11 @@ begin
       v.free;
 
       if assigned(progress_callback) then
-          progress_callback(step, num_steps);
+          progress_callback(step, num_steps, result);
 
       (* Step image callback - decode and display intermediate result *)
-      if assigned(step_image_callback) and assigned(step_image_vae) and (step + 1 < num_steps) then begin
-          img := PVAE(step_image_vae).decode(result, 1, h, w);
+      if assigned(step_image_callback) and assigned(vae_ptr) and (step + 1 < num_steps) then begin
+          img := PVAE(vae_ptr).decode(result, 1, h, w);
           step_image_callback(step, num_steps, img);
           img.free;
       end
@@ -1963,7 +1961,7 @@ function TTransformerFlux.sampleEuler(const z: TMemoryBlock; const batch,
   const text_seq_cond: longint; const text_emb_uncond: TMemoryBlock;
   const text_seq_uncond: longint; const guidance_scale: QNNFloat;
   const schedule: TMemoryBlock; const num_steps: longint;
-  const progress_callback: TStepCallback): TMemoryBlock;
+  const progress_callback: TProgressCallback): TMemoryBlock;
 var
     latent_size, step, i: longint;
     t_curr, t_next, dt, v: QNNFloat;
@@ -1994,9 +1992,9 @@ begin
         v_uncond.free;
         v_cond.free;
         if assigned(progress_callback) then
-            progress_callback(step, num_steps);
-        if assigned(step_image_callback) and assigned(step_image_vae) and (step+1 < num_steps) then begin
-            img := PVAE(step_image_vae).decode(result, 1, h, w);
+            progress_callback(step, num_steps, result);
+        if assigned(step_image_callback) and assigned(vae_ptr) and (step+1 < num_steps) then begin
+            img := PVAE(vae_ptr).decode(result, 1, h, w);
             if assigned(img.data) then begin
                 step_image_callback(step, num_steps, img);
                 img.free
@@ -2013,7 +2011,7 @@ function TTransformerFlux.sampleEuler(const z: TMemoryBlock; const batch,
   const text_seq_cond: longint; const text_emb_uncond: TMemoryBlock;
   const text_seq_uncond: longint; const guidance_scale: QNNFloat;
   const schedule: TMemoryBlock; const num_steps: longint;
-  const progress_callback: TStepCallback): TMemoryBlock;
+  const progress_callback: TProgressCallback): TMemoryBlock;
 var
     latent_size, step, i: longint;
     t_curr, t_next, dt, v: QNNFloat;
@@ -2044,11 +2042,11 @@ begin
         v_uncond.free;
         v_cond.free;
         if assigned(progress_callback) then
-            progress_callback(step, num_steps);
-        if assigned(step_image_callback) and assigned(step_image_vae) and (step+1 < num_steps) then begin
-            img := PVAE(step_image_vae).decode(result, 1, h, w);
+            progress_callback(step, num_steps, result);
+        if assigned(step_image_callback) and assigned(vae_ptr) and (step+1 < num_steps) then begin
+            img := PVAE(vae_ptr).decode(result, 1, h, w);
             if assigned(img.data) then begin
-                step_image_callback(step+1, num_steps, img);
+                step_image_callback(step, num_steps, img);
                 img.free
             end
         end
@@ -2060,7 +2058,7 @@ function TTransformerFlux.sampleEuler(const z: TMemoryBlock; const batch,
   channels, h, w: longint; const refs: TArray<TImageRef>;
   const text_emb: TMemoryBlock; const text_seq: longint;
   const schedule: TMemoryBlock; const num_steps: longint;
-  const progress_callback: TStepCallback): TMemoryBlock;
+  const progress_callback: TProgressCallback): TMemoryBlock;
 var
   i, step, latent_size:longint;
   t_curr, t_next, dt: QNNFloat;
@@ -2090,10 +2088,10 @@ begin
       v.free;
 
       if assigned(progress_callback) then
-          progress_callback(step, num_steps);
+          progress_callback(step, num_steps, result);
 
-      if assigned(step_image_callback) and assigned(step_image_vae) and (step + 1 < num_steps) then begin
-          img := PVAE(step_image_vae).decode(result, 1, h, w);
+      if assigned(step_image_callback) and assigned(vae_ptr) and (step + 1 < num_steps) then begin
+          img := PVAE(vae_ptr).decode(result, 1, h, w);
           step_image_callback(step, num_steps, img);
           img.free;
       end;
@@ -2107,8 +2105,8 @@ function TTransformerFlux.sampleEuler(const z: TMemoryBlock; const batch,
   channels, h, w: longint; const refs: TArray<TImageRef>;
   const text_emb_cond: TMemoryBlock; const text_seq_cond: longint;
   const text_emb_uncond: TMemoryBlock; const text_seq_uncond: longint;
-  const gudance_scale: QNNFloat; const schedule: PQNNFloat;
-  num_steps: longint; const progress_callback: TStepCallback): TMemoryBlock;
+  const gudance_scale: QNNFloat; const schedule: PQNNFloat; num_steps: longint;
+  const progress_callback: TProgressCallback): TMemoryBlock;
 begin
 
 end;
@@ -2790,7 +2788,7 @@ begin
 //    step_latent := nil;
     step_h := h;
     step_w := w;
-    if assigned(step_image_callback) and assigned(step_image_vae) and (num_steps > 1) and (patch_size > 1) then begin
+    if assigned(step_image_callback) and assigned(vae_ptr) and (num_steps > 1) and (patch_size > 1) then begin
       if (h mod patch_size = 0) and (w mod patch_size = 0) then begin
         step_ch := in_channels{channels} *patch_size * patch_size;
         step_h := h div patch_size;
@@ -2815,7 +2813,7 @@ begin
             model_out.free;
             if assigned(progress_callback) then
                 progress_callback(step+1, num_steps);
-            if assigned(step_image_callback) and assigned(step_image_vae) and (step+1 < num_steps) then begin
+            if assigned(step_image_callback) and assigned(vae_ptr) and (step+1 < num_steps) then begin
               decode_latent := result;
               decode_h := h;
               decode_w := w;
@@ -2827,7 +2825,7 @@ begin
                   decode_h := step_h;
                   decode_w := step_w
               end;
-              img := PVAE(step_image_vae).decode(decode_latent, 1, decode_h, decode_w);
+              img := PVAE(vae_ptr).decode(decode_latent, 1, decode_h, decode_w);
               step_image_callback(step, num_steps, img);
               img.free
             end

@@ -74,13 +74,15 @@ type
     (* Memory mode *)
     use_mmap           : boolean   ;  (* Use mmap for text encoder (lower memory, slower) *)
 
+    //progress
+
     constructor load(const aModel_dir:string; const OnStatus: TPhaseCallback = nil);
     procedure loadVAE(const vaeModelPath:string);    overload;
     procedure loadVAE();                             overload;
-    function generateLatent(const text_emb: TMemoryBlock; const text_seq, height, width, num_steps: longint; const seed:int64; const progress_callback:TStepCallback):TMemoryBlock;
-    function generate(const prompt: rawbytestring; var params: TGenerateParams): TQNNImage;                        overload;
-    function generate(const prompt: rawbytestring; var params: TGenerateParams; const image:TQNNImage): TQNNImage; overload;
-    function generate(const prompt: rawbytestring; var params: TGenerateParams; const images:TArray<TQNNImage>): TQNNImage; overload;
+    function generateLatent(const text_emb: TMemoryBlock; const text_seq, height, width, num_steps: longint; const seed:int64; const progress_callback:TProgressCallback):TMemoryBlock;
+    function generate(const prompt: rawbytestring; var params: TGenerateParams; const progress_callback:TProgressCallback=nil): TQNNImage;                        overload;
+    function generate(const prompt: rawbytestring; var params: TGenerateParams; const image:TQNNImage; const progress_callback:TProgressCallback=nil): TQNNImage; overload;
+    function generate(const prompt: rawbytestring; var params: TGenerateParams; const images:TArray<TQNNImage>; const progress_callback:TProgressCallback=nil): TQNNImage; overload;
     //function generate(const prompt: rawbytestring; const images:TArray<TQNNImage>;params: TGenerateParams): TQNNImage; overload;
     function encodeText(const prompt: rawbytestring; var out_seq_len: longint): TMemoryBlock;
     procedure free();
@@ -133,7 +135,7 @@ begin
   vae_shift   := 0;
   if assigned(phase_callback) then phase_callback('Loading ['+modelArc+']', true);
 
-  is_non_commercial :=  hidden_size>3072; // shouldn't it the opposite? mans it's commercial if above 3072 ?
+  is_non_commercial :=  hidden_size>3072; // shouldn't it the opposite? maans it's commercial if above 3072 ?
   if is_non_commercial then
      model_name     := '9B'
   else
@@ -202,9 +204,9 @@ begin
   if assigned(phase_callback) then phase_callback('Loading ['+modelArc+']', true);
 end;
 
-function TQNNFlux.generateLatent(const text_emb: TMemoryBlock;
-  const text_seq, height, width, num_steps: longint; const seed: int64;
-  const progress_callback: TStepCallback): TMemoryBlock;
+function TQNNFlux.generateLatent(const text_emb: TMemoryBlock; const text_seq,
+  height, width, num_steps: longint; const seed: int64;
+  const progress_callback: TProgressCallback): TMemoryBlock;
 var
   latent_h, latent_w, channels: longint;
   z, schedule : TMemoryBlock;
@@ -235,7 +237,9 @@ end;
 //    TFloatArray = array[0..MaxLongint div 32] of single;
 //    PFloatArray = ^TFloatArray;
 
-function TQNNFlux.generate(const prompt: rawbytestring; var params: TGenerateParams): TQNNImage;
+function TQNNFlux.generate(const prompt: rawbytestring;
+  var params: TGenerateParams; const progress_callback: TProgressCallback
+  ): TQNNImage;
 var
   text_emb, text_emb_uncond : TMemoryBlock;
   latent_h, latent_w, text_seq, image_seq_len, text_seq_uncond : longint;
@@ -273,9 +277,9 @@ begin
         phase_callback('Loading FLUX.2 transformer', true);
   end;
   if is_distilled then
-      latent := transformer.sampleEuler(z, 1, QNN_LATENT_CHANNELS, latent_h, latent_w, text_emb, text_seq, schedule, params.num_steps, nil {step callback})
+      latent := transformer.sampleEuler(z, 1, QNN_LATENT_CHANNELS, latent_h, latent_w, text_emb, text_seq, schedule, params.num_steps, progress_callback)
   else
-      latent := transformer.sampleEuler(z, 1, QNN_LATENT_CHANNELS, latent_h, latent_w, text_emb, text_seq, text_emb_uncond, text_seq_uncond, params.guidance, schedule, params.num_steps, nil {step callback});
+      latent := transformer.sampleEuler(z, 1, QNN_LATENT_CHANNELS, latent_h, latent_w, text_emb, text_seq, text_emb_uncond, text_seq_uncond, params.guidance, schedule, params.num_steps, progress_callback);
 
   z.free;
   schedule.free;
@@ -341,7 +345,9 @@ begin
 end;
 
 
-function TQNNFlux.generate(const prompt: rawbytestring; var params: TGenerateParams; const image: TQNNImage): TQNNImage;
+function TQNNFlux.generate(const prompt: rawbytestring;
+  var params: TGenerateParams; const image: TQNNImage;
+  const progress_callback: TProgressCallback): TQNNImage;
 var
     resized, img_to_use: TQNNImage;
     scale: QNNFloat;
@@ -404,7 +410,7 @@ begin
     //else begin
     //    latent_h := ref_h div 16;
     //    latent_w := ref_w div 16;
-    //    img_latent := TMemoryBloack.create(IRIS_LATENT_CHANNELS, latent_h, latent_w])
+    //    img_latent := TMemoryBloack.create(LATENT_CHANNELS, latent_h, latent_w])
     //end;
     if use_mmap then vae.free;
     img_tensor.free();
@@ -422,9 +428,9 @@ begin
     z := init_noise(1, QNN_LATENT_CHANNELS, out_lat_h, out_lat_w, params.seed);
     t_offset := 10;
     if is_distilled then
-        latent := transformer.sampleEuler(z, 1, QNN_LATENT_CHANNELS, out_lat_h, out_lat_w, img_latent, latent_h, latent_w, t_offset, text_emb, text_seq, schedule, num_steps, nil)
+        latent := transformer.sampleEuler(z, 1, QNN_LATENT_CHANNELS, out_lat_h, out_lat_w, img_latent, latent_h, latent_w, t_offset, text_emb, text_seq, schedule, num_steps, progress_callback)
     else
-        latent := transformer.sampleEuler(z, 1, QNN_LATENT_CHANNELS, out_lat_h, out_lat_w, img_latent, latent_h, latent_w, t_offset, text_emb, text_seq, text_emb_uncond, text_seq_uncond, params.guidance, schedule, num_steps, nil);
+        latent := transformer.sampleEuler(z, 1, QNN_LATENT_CHANNELS, out_lat_h, out_lat_w, img_latent, latent_h, latent_w, t_offset, text_emb, text_seq, text_emb_uncond, text_seq_uncond, params.guidance, schedule, num_steps, progress_callback);
     z.free;
     img_latent.free;
     schedule.free;
@@ -441,7 +447,9 @@ begin
     latent.free;
 end;
 
-function TQNNFlux.generate(const prompt: rawbytestring; var params: TGenerateParams; const images: TArray<TQNNImage>): TQNNImage;
+function TQNNFlux.generate(const prompt: rawbytestring;
+  var params: TGenerateParams; const images: TArray<TQNNImage>;
+  const progress_callback: TProgressCallback): TQNNImage;
 var
     i, text_seq, text_seq_uncond, rh, rw, ref_w, ref_h, lat_h, lat_w, latent_h, latent_w,
       image_seq_len:longint;
@@ -560,7 +568,7 @@ begin
             ref_latents,
             text_emb, text_seq,
             schedule, params.num_steps,
-            nil
+            progress_callback
         );
     end else begin
         latent := transformer.sampleEuler(
@@ -570,7 +578,7 @@ begin
             text_emb_uncond, text_seq_uncond,
             params.guidance,
             schedule, params.num_steps,
-            nil
+            progress_callback
         );
     end;
 

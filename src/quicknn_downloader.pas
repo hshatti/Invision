@@ -9,6 +9,9 @@ interface
 
 uses
   Classes, SysUtils
+  {$if not defined(FPC) and defined(MSWINDOWS)}
+  , ShellApi
+  {$endif}
 
   ;
 
@@ -29,7 +32,7 @@ type
       stage:longint;
       currentFile : string;
     public
-      class procedure download(const modelsPath: string = 'models'; srcPath: string=''); static;
+      class procedure download(modelsPath: string = 'models'; srcPath: string=''); static;
   end;
 
 implementation
@@ -47,7 +50,20 @@ end;
 
 { TFLUX4B }
 
-class procedure TFLUX4B.download(const modelsPath: string; srcPath: string);
+function getFileSize(const filename: TFileName):int64;
+var f:TFileStream;
+begin
+  f := nil;
+  result := 0;
+  try
+    f := TFilestream.Create(filename, fmOpenRead);
+    result := f.Size;
+  finally
+    freeandnil(f)
+  end;
+end;
+
+class procedure TFLUX4B.download(modelsPath: string; srcPath: string);
 const
   ENCODER_FILES : array of string = [
     'generation_config.json' ,
@@ -78,10 +94,11 @@ const
 
 
 var curDir :string;
-    i : integer;
+    i, dsize, fSize : int64;
+    //sl : TStringList;
 begin
+  //sl := TStringList.Create;
 
-  curDir := modelsPath + PathDelim + DST_PATH + PathDelim;
   if modelsPath<>'' then begin
     curDir := modelsPath + PathDelim + DST_PATH + PathDelim;
     MakeDir(modelsPath);
@@ -94,46 +111,51 @@ begin
   MakeDir(curDir + TRANSFORMER_DIR);
   MakeDir(curDir + VAE_DIR);
   if isConsole then cursorShow(false);
-  for i := 0 to high(ENCODER_FILES) do begin
-    currentFile := ENCODER_FILES[i];
+  try
+    for i := 0 to high(ENCODER_FILES) do begin
+      currentFile := ENCODER_FILES[i];
+      if fileExists(curDir+ENCODER_DIR+PathDelim + currentFile) then continue;
+      fSize := getfileSize(curDir+ENCODER_DIR + '/' + currentFile);
+      if isConsole then
+        writeln('Downloading ... ', ENCODER_FILES[i]);
+      http.Download(HTTP_ROOT+ENCODER_DIR+ '/' + currentFile + HF_DOWNLOAD_ARG, curDir+ENCODER_DIR + '/' + currentFile);
+    end;
 
-    if fileExists(curDir+ENCODER_DIR+PathDelim + currentFile) then continue;
-    if isConsole then
-      writeln('Downloading ... ', ENCODER_FILES[i]);
-    http.Download(HTTP_ROOT+ENCODER_DIR+ '/' + currentFile + HF_DOWNLOAD_ARG, curDir+ENCODER_DIR + '/' + currentFile);
-  end;
+    for i := 0 to high(TOKENIZER_FILES) do begin
+      currentFile := TOKENIZER_FILES[i];
+      if fileExists(curDir+TOKENIZER_DIR+PathDelim + currentFile) then continue;
+      if isConsole then
+        writeln('Downloading ... ', TOKENIZER_FILES[i]);
+      http.Download(HTTP_ROOT+TOKENIZER_DIR+ '/' + currentFile + HF_DOWNLOAD_ARG, curDir+TOKENIZER_DIR+'/' + currentFile);
+    end;
 
-  for i := 0 to high(TOKENIZER_FILES) do begin
-    currentFile := TOKENIZER_FILES[i];
-    if fileExists(curDir+TOKENIZER_DIR+PathDelim + currentFile) then continue;
-    if isConsole then
-      writeln('Downloading ... ', TOKENIZER_FILES[i]);
-    http.Download(HTTP_ROOT+TOKENIZER_DIR+ '/' + currentFile + HF_DOWNLOAD_ARG, curDir+TOKENIZER_DIR+'/' + currentFile);
-  end;
+    for i := 0 to high(TRANSFORMER_FILES) do begin
+      currentFile := TRANSFORMER_FILES[i];
+      if fileExists(curDir+TRANSFORMER_DIR+PathDelim + currentFile) then continue;
+      if isConsole then
+        writeln('Downloading ... ', TRANSFORMER_FILES[i]);
+      http.Download(HTTP_ROOT+TRANSFORMER_DIR+ '/' + currentFile + HF_DOWNLOAD_ARG, curDir+TRANSFORMER_DIR+'/' + currentFile);
+    end;
 
-  for i := 0 to high(TRANSFORMER_FILES) do begin
-    currentFile := TRANSFORMER_FILES[i];
-    if fileExists(curDir+TRANSFORMER_DIR+PathDelim + currentFile) then continue;
-    if isConsole then
-      writeln('Downloading ... ', TRANSFORMER_FILES[i]);
-    http.Download(HTTP_ROOT+TRANSFORMER_DIR+ '/' + currentFile + HF_DOWNLOAD_ARG, curDir+TRANSFORMER_DIR+'/' + currentFile);
+    for i := 0 to high(VAE_FILES) do begin
+      currentFile := VAE_FILES[i];
+      if fileExists(curDir+VAE_DIR+PathDelim + currentFile) then continue;
+      if isConsole then
+        writeln('Downloading ... ', VAE_FILES[i]);
+      http.Download(HTTP_ROOT+VAE_DIR+ '/' + currentFile + HF_DOWNLOAD_ARG, curDir+VAE_DIR+'/' + currentFile);
+    end;
+  except
   end;
-
-  for i := 0 to high(VAE_FILES) do begin
-    currentFile := VAE_FILES[i];
-    if fileExists(curDir+VAE_DIR+PathDelim + currentFile) then continue;
-    if isConsole then
-      writeln('Downloading ... ', VAE_FILES[i]);
-    http.Download(HTTP_ROOT+VAE_DIR+ '/' + currentFile + HF_DOWNLOAD_ARG, curDir+VAE_DIR+'/' + currentFile);
-  end;
+  //sl.free;
   if isConsole then cursorShow(True);
 
 end;
 
 
 initialization
-
-  //ExecuteProcess('powershell', ['-Command', 'Invoke-WebRequest', 'https://huggingface.co/black-forest-labs/FLUX.2-klein-4B/resolve/main/text_encoder/model-00001-of-00002.safetensors?download=true', '-OutFile', './model-00001-of-00002.safetensors']);
+  //TFLUX4B.download();
+  //ExecuteProcess('cmd',[]);
+   //ExecuteProcess('powershell', ['-Command', 'Invoke-WebRequest', 'https://huggingface.co/black-forest-labs/FLUX.2-klein-4B/resolve/main/text_encoder/model-00001-of-00002.safetensors?download=true', '-resume', '-OutFile', './model-00001-of-00002.safetensors']);
 
 end.
 
