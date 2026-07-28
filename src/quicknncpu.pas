@@ -277,9 +277,9 @@ var
 
 
 implementation
-uses termesc, quicknn_vulkan;
+uses termesc;
 
-var vk : TQNNVulkan;
+//var vk : TQNNVulkan;
 
 function sqr(const x:Single):Single;inline;
 begin

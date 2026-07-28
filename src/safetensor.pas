@@ -313,12 +313,12 @@ begin
   assert(ff.mode<>fmClosed, 'ERROR : File is not opened!');
   if size>0 then sz := size else sz := _FileSize(f);
   result := mmap(nil, sz, PROT_READ, MAP_PRIVATE, ff.handle, offset);
-  assert(result<>MAP_FAILD, 'ERROR : Unable to map file to memory!');
+  assert(result<>MAP_FAILED, 'ERROR : Unable to map file to memory!');
 end;
 
 function mumapFile(var addr:pointer; const size:uint64):pointer;
 begin
-  assert(mumap(addr, size)=0, 'ERROR : unable to unmap memory');
+  assert(munmap(addr, size)=0, 'ERROR : unable to unmap memory');
   addr := nil
 end;
 {$endif}
@@ -482,7 +482,7 @@ begin
   assert(header_size<file_size, 'ERROR : Invalid SafeTensor header!');
   setLength(header_json, header_size);
   BlockRead(sf_file, header_json[1], header_size);
-  data := mmapFile(sf_file);
+  data := mmapFile(sf_file, file_size);
   closefile(sf_file);
   offset := 8 + header_size;
   data_size := file_size - offset;

@@ -26,7 +26,7 @@ unit HSButtons; {$ifdef FPC}
 {$endif}
 interface
 
-uses Windows, sysutils, ExtCtrls, Buttons, Graphics, Classes {$ifdef FPC}, GraphType, IntfGraphics {$endif},Dialogs;
+uses {$ifdef MSWINDOWS}Windows, {$endif}sysutils, ExtCtrls, Buttons, Graphics, Classes {$ifdef FPC}, GraphType, IntfGraphics {$endif},Dialogs;
 
 const
    cHotTrackSteps = 8;
@@ -81,14 +81,14 @@ end;
 function GetGrayScale(C:TColor):TColor;
 var g:Integer;
 begin
-  g:=(GetRValue(C)+GetGValue(C)+GetBValue(C)) div 3;
-  Result:=RGB(g,g,g);
+  g:=(red(C)+green(C)+blue(C)) div 3;
+  Result:=RGBToColor(g,g,g);
 end;
 
 function ColorBright(C:TColor;B:Integer):TColor;
 begin
 //  C:=ColorToRGB(C);
-  Result:=RGB(Limit(GetRValue(c)+B,0,255),Limit(GetGValue(c)+B,0,255),Limit(GetBValue(c)+B,0,255))
+  Result:=RGBToColor(Limit(red(c)+B,0,255),Limit(green(c)+B,0,255),Limit(blue(c)+B,0,255))
 end;
 
 { THSButtonTimer }
@@ -152,11 +152,14 @@ end;
 
 //##############################################################################
 
+type
+   TRGBQuad = packed record rgbRed, rgbGreen, rgbBlue, alpha: byte end;
+
 procedure HSPaintButton(Bitmap:TBitmap ; Width, Height, RoundArc , HotTrackStep,Smooth, NumGlyphs: SmallInt; Glyph: TBitmap; Down, CursorOnButton, Transparent, Enabled, Flat, Wordwrap, PopupArrow: boolean; Style: THSButtonStyle; Color, ColorWhenDown, HotTrackColor, LightColor, ShadowColor: TColor; Font: TFont; Layout: THSButtonLayout; Caption: string; Alignment: TAlignment);
 
 var
    iCaptionHeight, iCaptionWidth, iGlyphHeight, iGlyphWidth, iGlyphOffset: integer;
-   dtMode: integer;
+   dtMode: TTextStyle;
    iGlyphIndex: integer;
    iOffset, iVertHeight: integer;
    iBorder:Byte;
@@ -266,12 +269,12 @@ var
 
       aOldStyle := Bitmap.Canvas.Pen.Style; Bitmap.Canvas.Pen.Style := psClear;
       if Orientation =doTopBottom then begin
-        aColor1 := ColorToRGB(StartColor); bR1 := GetRValue(aColor1); bG1 := GetGValue(aColor1); bB1 := GetBValue(aColor1);
-        aColor2 := ColorToRGB(StopColor);  bR2 := GetRValue(aColor2); bG2 := GetGValue(aColor2); bB2 := GetBValue(aColor2);
+        aColor1 := ColorToRGB(StartColor); bR1 := red(aColor1); bG1 := green(aColor1); bB1 := blue(aColor1);
+        aColor2 := ColorToRGB(StopColor);  bR2 := red(aColor2); bG2 := green(aColor2); bB2 := blue(aColor2);
       end;
       if Orientation=doBottomTop then begin
-        aColor1 := ColorToRGB(StopColor); bR1 := GetRValue(aColor1); bG1 := GetGValue(aColor1); bB1 := GetBValue(aColor1);
-        aColor2 := ColorToRGB(StartColor);  bR2 := GetRValue(aColor2); bG2 := GetGValue(aColor2); bB2 := GetBValue(aColor2);
+        aColor1 := ColorToRGB(StopColor); bR1 := red(aColor1); bG1 := green(aColor1); bB1 := blue(aColor1);
+        aColor2 := ColorToRGB(StartColor);  bR2 := red(aColor2); bG2 := green(aColor2); bB2 := blue(aColor2);
       end;
       dCurrentR := bR1; dCurrentG := bG1; dCurrentB := bB1;
       dRStep := (bR2-bR1) / 31; dGStep := (bG2-bG1) / 31; dBStep := (bB2-bB1) / 31;
@@ -291,7 +294,7 @@ var
                 iCorner:=iArc-Round(Sqrt(2*(iArc*(iHeight-iBuffer-1))-Sqr(iHeight-iBuffer-1)))
               else
                 iCorner:=0;
-            Bitmap.Canvas.Brush.Color := rgb(trunc(dCurrentR), trunc(dCurrentG), trunc(dCurrentB));
+            Bitmap.Canvas.Brush.Color := RGBToColor(trunc(dCurrentR), trunc(dCurrentG), trunc(dCurrentB));
             dCurrentR := dCurrentR + dRStep; dCurrentG := dCurrentG + dGStep; dCurrentB := dCurrentB + dBStep;
             iDrawBottom := iTop + iBuffer + iFillStep; if iDrawBottom > iBottom then iDrawBottom := iBottom;
             Bitmap.Canvas.FillRect(Rect(iLeft+iCorner, iTop + iBuffer, iRight-iCorner, iDrawBottom));
@@ -308,11 +311,11 @@ var
    begin
       aColor1 := ColorToRGB(Color);
       aColor2 := ColorToRGB(HotTrackColor);
-      bR1 := GetRValue(aColor1); bG1 := GetGValue(aColor1); bB1 := GetBValue(aColor1);
-      bR2 := GetRValue(aColor2); bG2 := GetGValue(aColor2); bB2 := GetBValue(aColor2);
+      bR1 := red(aColor1); bG1 := green(aColor1); bB1 := blue(aColor1);
+      bR2 := red(aColor2); bG2 := green(aColor2); bB2 := blue(aColor2);
       d2 := HotTrackStep / cHotTrackSteps;
       d1 := 1 - d2;
-      Result := RGB(Trunc(d1 * bR1 + d2 * bR2), Trunc(d1 * bG1 + d2 * bG2), Trunc(d1 * bB1 + d2 * bB2));
+      Result := RGBToColor(Trunc(d1 * bR1 + d2 * bR2), Trunc(d1 * bG1 + d2 * bG2), Trunc(d1 * bB1 + d2 * bB2));
    end;
 
    procedure DrawGlyph(iDestLeft, iDestTop, iSrcLeft, iSrcTop, iWidth, iHeight: integer);  // transparent draw
@@ -357,10 +360,12 @@ begin
                DrawColorFade(clBackColor, LightColor,0, Height div 4 + iOffset, Width , Height,RoundArc,doBottomTop);
              end
            else if Style=bsRounded then begin
-             Bitmap.Canvas.Brush.Color:= Color;
-             Bitmap.Canvas.FillRect(0, 0, width, height);
+             //Bitmap.Canvas.Brush.Color:= Color;
+             //Bitmap.Canvas.FillRect(0, 0, width, height);
              Bitmap.Canvas.Brush.Color := clBackColor;
              Bitmap.Canvas.Pen.Color := LightColor;
+             //Bitmap.canvas.pen.style:=psClear;
+             //Bitmap.Canvas.Pen.Width:=2;
              Bitmap.Canvas.RoundRect(0, 0, Width, Height, RoundArc*2, RoundArc*2);
            end
            else if Style=bsGlass then
@@ -476,7 +481,13 @@ begin
   Bitmap.Canvas.Font := Font;
   if ((Style = bsEncarta) and down) {or ((Style = bsQuicken) and (CursorOnButton or Down))} then Bitmap.Canvas.Font.Style := Bitmap.Canvas.Font.Style + [fsBold];
     iGlX := 0;
-  dtMode := DT_CENTER or DT_VCENTER or DT_SINGLELINE;
+
+  dtMode := Bitmap.canvas.TextStyle;
+  dtMode.Wordbreak:=true;
+  dtMode.Layout := tlCenter;
+  dtMode.Alignment:= taCenter;
+  dtMode.SingleLine:=true;
+
   iGlyphHeight := Glyph.Height;
   if NumGlyphs <> 0 then iGlyphWidth := Glyph.Width div NumGlyphs else iGlyphWidth := 0;
   iGlyphIndex := 0;
@@ -487,23 +498,27 @@ begin
       if Down and (NumGlyphs > 2) then iGlyphIndex := 2 * iGlyphWidth;
     end;
 
-  case Alignment of
-     taLeftJustify:  dtMode := DT_LEFT or DT_WORDBREAK;
-     taRightJustify: dtMode := DT_RIGHT or DT_WORDBREAK;
-     taCenter:       dtMode := DT_CENTER or DT_WORDBREAK;
-  end;
+  dtMode.Alignment:=Alignment;
 
   if Style = bsShape then
     begin
       iCaptionWidth := Width - 8; if iCaptionWidth < 0 then iCaptionWidth := 0;
       if not WordWrap then while Bitmap.Canvas.TextWidth(Caption) > iCaptionWidth do Caption := copy(Caption, 1, length(Caption)-1);
       aRect := Rect(0, 0, iCaptionWidth, 0);
-      DrawText(Bitmap.Canvas.Handle, pChar(Caption), Length(Caption), aRect, DT_WORDBREAK or DT_CALCRECT);
+      dtMode.Clipping:=true;
+      dtMode.Wordbreak:=false;
+      Bitmap.Canvas.TextStyle := dtMode;
+      Bitmap.Canvas.TextRect(aRect, 0, 0, Caption);
       iCaptionHeight := aRect.Bottom;
-
+      dtMode.Clipping:=false;
+      dtMode.Wordbreak:=true;
+      Bitmap.Canvas.TextStyle := dtMode;
       DrawGlyph((Width-iGlyphWidth) div 2, (Height-iGlyphHeight) div 2, iGlyphIndex, 0, iGlyphWidth, iGlyphHeight);
       aRect := Rect(iOffset, iOffset + (Height-iCaptionHeight) div 2, Width, Height);
-      DrawText(Bitmap.Canvas.Handle, pChar(Caption), Length(Caption), aRect, DT_CENTER or DT_WORDBREAK);
+      dtMode.Clipping:=true;
+      dtMode.Wordbreak:=true;
+      Bitmap.Canvas.TextStyle := dtMode;
+      Bitmap.Canvas.TextRect(aRect, 0, 0, Caption);
     end
   else
     begin
@@ -513,7 +528,10 @@ begin
           if iCaptionWidth < 0 then iCaptionWidth := 0;
           if not WordWrap then while Bitmap.Canvas.TextWidth(Caption) > iCaptionWidth do Caption := copy(Caption, 1, length(Caption)-1);
           aRect := Rect(0, 0, iCaptionWidth, 0);
-          DrawText(Bitmap.Canvas.Handle, pChar(Caption), Length(Caption), aRect, DT_WORDBREAK or DT_CALCRECT);
+          dtMode.Clipping:=true;
+          dtMode.Wordbreak:=true;
+          //Bitmap.Canvas.TextStyle := dtMode;
+          //Bitmap.Canvas.TextRect(aRect, 0, 0, Caption);
           iCaptionHeight := aRect.Bottom;
           iCapY := (Height - iCaptionHeight) div 2 + iOffset;
           iCapX := 4 + iOffset;
@@ -548,7 +566,10 @@ begin
           if iCaptionWidth < 0 then iCaptionWidth := 0;
           if not WordWrap then while Bitmap.Canvas.TextWidth(Caption) > iCaptionWidth do Caption := copy(Caption, 1, length(Caption)-1);
           aRect := Rect(0, 0, iCaptionWidth, 0);
-          DrawText(Bitmap.Canvas.Handle, pChar(Caption), Length(Caption), aRect, DT_WORDBREAK or DT_CALCRECT);
+          dtMode.Clipping:=true;
+          dtMode.Wordbreak:=true;
+          Bitmap.Canvas.TextStyle := dtMode;
+          //Bitmap.Canvas.TextRect(aRect, 0, 0, Caption);
           iCaptionHeight := aRect.Bottom;
           iVertHeight := iCaptionHeight; if iGlyphHeight > 0 then inc(iVertHeight, iGlyphHeight + 4);
           iCapX := 4 + iOffset;
@@ -578,7 +599,10 @@ begin
       if not Enabled then Bitmap.Canvas.Font.Color := clGray;
 
       aRect := Rect(iCapX, iCapY, iCapX + iCaptionWidth, iCapY + iCaptionHeight);
-      DrawText(Bitmap.Canvas.Handle, pChar(Caption), Length(Caption), aRect, dtMode);
+      //dtMode.Clipping:=false;
+      //dtMode.Wordbreak:=true;
+      Bitmap.Canvas.TextStyle := dtMode;
+      Bitmap.Canvas.TextRect(aRect, 0, 0, Caption);
       DrawGlyph(iGlX, iGlY, iGlyphIndex, 0, iGlyphWidth, iGlyphHeight);
    end;
 

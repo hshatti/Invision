@@ -28,7 +28,7 @@ unit HSButton;
 interface
 
 uses
-   Windows, {$ifdef fpc} LMessages {$else} messages {$endif}, SysUtils, Classes, Graphics, Controls, Forms, ImgList, ActnList, HSButtons, Dialogs;
+   {$ifdef MSWINDOWS}Windows, {$endif} {$ifdef fpc} LMessages {$else} messages {$endif}, SysUtils, Classes, Graphics, Controls, Forms, ImgList, ActnList, HSButtons, Dialogs;
 
 type
 
@@ -97,11 +97,11 @@ type
       procedure SetColorStyle(fNew: THSColorStyle);
       procedure SetWordWrap(fNew: boolean);
 
-      procedure DoMouseEnter(var Msg: TMessage); message CM_MOUSEENTER;
-      procedure DoMouseLeave(var Msg: TMessage); message CM_MOUSELEAVE;
-      procedure DoFocusChanged(var Msg: TMessage); message CM_FOCUSCHANGED;
-      procedure DoKeyDown(var Msg: TMessage); message CN_KEYDOWN;
-      procedure DoKeyUp(var Msg: TMessage); message CN_KEYUP;
+      procedure MouseEnter(); override;
+      procedure MouseLeave(); override;
+      procedure FocusChanged(var Msg); message CM_FOCUSCHANGED;
+      procedure KeyDown(var key:word; shift:TShiftState);override;
+      procedure KeyUp(var key:word; shift:TShiftState);override;
       procedure DoDialogChar(var Message: TCMDialogChar); message CM_DIALOGCHAR;
       procedure DoDialogKey(var Message: TCMDialogKey); message CM_DIALOGKEY;
 
@@ -496,7 +496,9 @@ end;
 procedure THSButton.SetStyle(fNew: THSButtonStyle);
 begin
    FStyle := fNew;
-   if fStyle in [bsModern, bsGlass, bsShape, bsQuicken] then SetWindowLong(Handle, GWL_EXSTYLE, WS_EX_TRANSPARENT) else SetWindowLong(Handle, GWL_EXSTYLE, 0);
+{$ifdef MSWINDOWS}
+   if fStyle in [bsModern, bsRounded, bsGlass, bsShape, bsQuicken] then SetWindowLong(Handle, GWL_EXSTYLE, WS_EX_TRANSPARENT) else SetWindowLong(Handle, GWL_EXSTYLE, 0);
+{$endif}
    Invalidate;
 end;
 
@@ -510,7 +512,7 @@ end;
 
 {##############################################################################}
 
-procedure THSButton.DoMouseEnter(var Msg: TMessage);
+procedure THSButton.MouseEnter;
 begin
    if Enabled and Visible and (Parent <> nil) and Parent.Showing then
     begin
@@ -531,7 +533,7 @@ end;
 
 {##############################################################################}
 
-procedure THSButton.DoMouseLeave(var Msg: TMessage);
+procedure THSButton.MouseLeave;
 begin
    bCursorOnButton := false;
    if FSlowDecease<>sdNone then
@@ -603,17 +605,17 @@ end;
 
 {##############################################################################}
 
-procedure THSButton.DoFocusChanged(var Msg: TMessage);
+procedure THSButton.FocusChanged(var Msg);
 begin
    Paint;
 end;
 
 {##############################################################################}
 
-procedure THSButton.DoKeyDown(var Msg: TMessage);
+procedure THSButton.KeyDown(var key: word; shift: TShiftState);
 begin
    inherited;
-   if Enabled then if Msg.WParam in [VK_SPACE, VK_RETURN] then
+   if Enabled then if key in [32, 13] then
    begin
       bDown := true;
       Paint;
@@ -622,10 +624,10 @@ end;
 
 {##############################################################################}
 
-procedure THSButton.DoKeyUp(var Msg: TMessage);
+procedure THSButton.KeyUp(var key: word; shift: TShiftState);
 begin
    inherited;
-   if Msg.WParam in [VK_SPACE, VK_RETURN] then Click;
+   if Key in [32, 13] then Click;
    Paint;
 end;
 
@@ -740,7 +742,7 @@ procedure THSButton.DoDialogKey(var Message: TCMDialogKey);
 begin
    with Message do
    begin
-      if (((CharCode = VK_RETURN) and FDefault) or ((CharCode = VK_ESCAPE) and FCancel) and (KeyDataToShiftState(Message.KeyData) = []) and Visible and Enabled) and ((pos('BUTTON', (TForm(OwnerForm(self)).ActiveControl.ClassName)) = 0) or (pos('RADIOBUTTON', AnsiUpperCase(TForm(OwnerForm(self)).ActiveControl.ClassName)) > 0)) then
+      if (((CharCode = 13{Return}) and FDefault) or ((CharCode = 27{escape}) and FCancel) and (KeyDataToShiftState(Message.KeyData) = []) and Visible and Enabled) and ((pos('BUTTON', (TForm(OwnerForm(self)).ActiveControl.ClassName)) = 0) or (pos('RADIOBUTTON', AnsiUpperCase(TForm(OwnerForm(self)).ActiveControl.ClassName)) > 0)) then
       begin
          bDown := true;
          Click;

@@ -12,20 +12,19 @@ object MainForm: TMainForm
   Font.Pitch = fpVariable
   Font.Quality = fqDraft
   ShowHint = True
-  LCLVersion = '4.8.0.0'
   OnClose = FormClose
   OnCreate = FormCreate
   object Panel1: TPanel
     Left = 0
     Height = 573
     Top = 34
-    Width = 56
+    Width = 48
     Align = alLeft
     BevelColor = 6710886
     BevelOuter = bvNone
     BevelWidth = 2
     ClientHeight = 573
-    ClientWidth = 56
+    ClientWidth = 48
     ParentBackground = False
     TabOrder = 0
     object btnImg2Img: TBitBtn
@@ -33,7 +32,7 @@ object MainForm: TMainForm
       Height = 56
       Hint = 'Image to Image'
       Top = 56
-      Width = 56
+      Width = 48
       Align = alTop
       BorderSpacing.Top = 4
       Color = 3355443
@@ -122,7 +121,7 @@ object MainForm: TMainForm
       Height = 52
       Hint = 'Text to Image'
       Top = 0
-      Width = 56
+      Width = 48
       Align = alTop
       Color = 3355443
       Glyph.Data = {
@@ -207,11 +206,11 @@ object MainForm: TMainForm
     end
   end
   object Notebook1: TNotebook
-    Left = 56
+    Left = 48
     Height = 573
     Top = 34
-    Width = 848
-    PageIndex = 0
+    Width = 856
+    PageIndex = 1
     Align = alClient
     TabOrder = 1
     object txt2img: TPage
@@ -370,7 +369,7 @@ object MainForm: TMainForm
           end
           object spnSteps: TSpinEdit
             Left = 763
-            Height = 23
+            Height = 21
             Top = 104
             Width = 83
             Anchors = [akTop, akRight]
@@ -382,7 +381,7 @@ object MainForm: TMainForm
           end
           object edtSeed: TEdit
             Left = 763
-            Height = 15
+            Height = 16
             Top = 166
             Width = 82
             Anchors = [akTop, akRight]
@@ -393,17 +392,17 @@ object MainForm: TMainForm
           end
           object Label1: TLabel
             Left = 763
-            Height = 15
+            Height = 16
             Top = 85
-            Width = 28
+            Width = 35
             Anchors = [akTop, akRight]
             Caption = 'Steps'
           end
           object Label2: TLabel
             Left = 763
-            Height = 30
+            Height = 32
             Top = 133
-            Width = 70
+            Width = 79
             Anchors = [akTop, akRight]
             Caption = 'Seed'#13#10'(0 = random)'
           end
@@ -720,11 +719,11 @@ object MainForm: TMainForm
         Left = 0
         Height = 573
         Top = 0
-        Width = 848
+        Width = 856
         Align = alClient
         BevelOuter = bvNone
         ClientHeight = 573
-        ClientWidth = 848
+        ClientWidth = 856
         ParentBackground = False
         TabOrder = 0
         object Splitter2: TSplitter
@@ -732,7 +731,7 @@ object MainForm: TMainForm
           Left = 0
           Height = 5
           Top = 373
-          Width = 848
+          Width = 856
           Align = alBottom
           ResizeAnchor = akBottom
         end
@@ -740,7 +739,7 @@ object MainForm: TMainForm
           Left = 0
           Height = 373
           Top = 0
-          Width = 848
+          Width = 856
           Align = alClient
           Center = True
           Picture.Data = {
@@ -846,11 +845,11 @@ object MainForm: TMainForm
           Left = 0
           Height = 195
           Top = 378
-          Width = 848
+          Width = 856
           Align = alBottom
           BevelOuter = bvNone
           ClientHeight = 195
-          ClientWidth = 848
+          ClientWidth = 856
           Color = 3355443
           ParentBackground = False
           ParentColor = False
@@ -859,7 +858,7 @@ object MainForm: TMainForm
             Left = 0
             Height = 190
             Top = 4
-            Width = 757
+            Width = 765
             Anchors = [akTop, akLeft, akRight, akBottom]
             BorderStyle = bsNone
             Color = 2236962
@@ -869,8 +868,8 @@ object MainForm: TMainForm
             TabOrder = 0
           end
           object spnSteps1: TSpinEdit
-            Left = 763
-            Height = 23
+            Left = 771
+            Height = 21
             Top = 104
             Width = 83
             Anchors = [akTop, akRight]
@@ -881,8 +880,8 @@ object MainForm: TMainForm
             Value = 4
           end
           object edtSeed1: TEdit
-            Left = 763
-            Height = 15
+            Left = 771
+            Height = 16
             Top = 166
             Width = 82
             Anchors = [akTop, akRight]
@@ -892,23 +891,23 @@ object MainForm: TMainForm
             Text = '0'
           end
           object Label4: TLabel
-            Left = 763
-            Height = 15
+            Left = 771
+            Height = 16
             Top = 85
-            Width = 28
+            Width = 35
             Anchors = [akTop, akRight]
             Caption = 'Steps'
           end
           object Label5: TLabel
-            Left = 763
-            Height = 30
+            Left = 771
+            Height = 32
             Top = 133
-            Width = 70
+            Width = 79
             Anchors = [akTop, akRight]
             Caption = 'Seed'#13#10'(0 = random)'
           end
           object btnGenerate1: TBitBtn
-            Left = 763
+            Left = 771
             Height = 78
             Top = 4
             Width = 82
@@ -1213,7 +1212,7 @@ object MainForm: TMainForm
           end
         end
         object btnLoadPic: TSpeedButton
-          Left = 824
+          Left = 832
           Height = 22
           Hint = 'Load Picture'
           Top = 4
@@ -1238,7 +1237,7 @@ object MainForm: TMainForm
     TabOrder = 2
     object cmbModels: TComboBox
       Left = 52
-      Height = 21
+      Height = 20
       Top = 4
       Width = 428
       Anchors = [akTop, akLeft, akRight]
@@ -1251,9 +1250,9 @@ object MainForm: TMainForm
     end
     object Label3: TLabel
       Left = 12
-      Height = 15
+      Height = 16
       Top = 8
-      Width = 34
+      Width = 37
       Caption = 'Model'
     end
   end

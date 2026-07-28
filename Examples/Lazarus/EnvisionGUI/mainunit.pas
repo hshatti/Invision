@@ -30,8 +30,6 @@ type
   { THSProgressBar }
 
   THSProgressBar = class(TGraphicControl)
-    constructor Create(AOwner:TComponent);   override;
-    destructor Destroy();                    override;
     procedure paint;                         override;
   private
     FBarColor: TColor;
@@ -52,6 +50,8 @@ type
     procedure SetStyle(AValue: THSProgressStyle);
   public
     procedure StepIt();
+    constructor Create(AOwner:TComponent);   override;
+    destructor Destroy();                    override;
   published
     property Min:integer read FMin write SetMin;
     property Max:integer read FMax write SetMax;
@@ -106,9 +106,7 @@ type
     procedure FormClose(Sender: TObject; var CloseAction: TCloseAction);
     procedure FormCreate(Sender: TObject);
     procedure btnLoadPicClick(Sender: TObject);
-    {$ifdef MSWINDOWS}
     procedure applyHsButton;
-    {$endif}
   private
     procedure checkExistingModels;
   public
@@ -120,10 +118,10 @@ var
 
 implementation
 uses
+  HSButton, HSButtons
 {$ifdef MSWINDOWS}
- HSButton, HSButtons,
- DwmApi;
-{$endif}
+  , DwmApi
+{$endif};
 
 {$R *.lfm}
 
@@ -148,7 +146,11 @@ begin
 end;
 {$endif}
 
+{$if defined(MacOS) or defined(DARWIN)}
+const MODELs_DIR = '../../../../../models';
+{$else}
 const MODELs_DIR = '../../models';
+{$endif}
 
 var AppPath : RawByteString;
 
@@ -157,7 +159,9 @@ var AppPath : RawByteString;
 procedure OnStepCallback(const msg:TSubstepType; const step, steps:longint);
 begin
   MainForm.ProgressBar1.StepIt;
-  MainForm.Update;
+  MainForm.ProgressBar1.caption := format('%d/%d', [MainForm.ProgressBar1.Position, MainForm.ProgressBar1.Max]);
+  MainForm.generateThread.Synchronize(MainForm.Update);
+  //MainForm.Update;
   if MainForm.generateThread.CheckTerminated then
     abort
 end;
@@ -165,7 +169,7 @@ end;
 procedure OnTextStepCallback(const step, steps:longint);
 begin
   MainForm.ProgressBar1.StepIt;
-  MainForm.Update;
+  MainForm.generateThread.Synchronize(MainForm.Update);
   if MainForm.generateThread.CheckTerminated then
     abort
 end;
@@ -192,11 +196,15 @@ begin
     end;
   end;
   bmp.EndUpdate();
-  if MainForm.Notebook1.PageIndex=0 then
+  if MainForm.Notebook1.PageIndex=0 then begin
     mainform.Image1.Picture.Graphic:= bmp;
-  if MainForm.Notebook1.PageIndex=1 then
+    //MainForm.generateThread.Synchronize(MainForm.Image1.Repaint);
+  end;
+  if MainForm.Notebook1.PageIndex=1 then begin
     mainform.Image2.Picture.Graphic:= bmp;
-  MainForm.Update;
+    //MainForm.generateThread.Synchronize(MainForm.Image2.Repaint);
+  end;
+  MainForm.generateThread.Synchronize(MainForm.Repaint);
   img.free;
   freeAndNil(bmp)
 end;
@@ -218,12 +226,12 @@ begin
       else
         params.seed := strToInt(edtSeed.text);
 
-      MainForm.Update;
+      MainForm.generateThread.Synchronize(MainForm.Update);
 
       substep_callback:=OnStepCallback;
       text_progress_callback:= OnTextStepCallback;
       vae_progress_callback:= OnTextStepCallback;
-      flux := TQNNFlux.load(MODELs_DIR+'/'+cmbModels.Text);
+      flux := TQNNFlux.load(AppPath+MODELS_DIR+'/'+cmbModels.Text);
       ProgressBar1.Max:= 27 + params.num_steps*(5 + 20 + 2) + 16;  // text_encode_steps + steps*transformer_blocks + ve_decoder_steps
       ProgressBar1.Position := 0;
       flux.use_mmap:=true;
@@ -252,7 +260,7 @@ begin
       else
         params.seed := strToInt(edtSeed1.text);
 
-      MainForm.Update;
+      MainForm.generateThread.Synchronize(MainForm.Update);
 
       img := TQNNImage.loadFromFile(dlgImage.FileName);
       substep_callback:=OnStepCallback;
@@ -284,7 +292,7 @@ begin
        TControl(btnGenerate1).Caption := 'Generate';
     TControl(btnTxt2Img).Enabled:=True;
     TControl(btnImg2Img).Enabled:=True;
-
+    generateThread.Synchronize(MainForm.Repaint);
   end;
   inherited DoTerminate;
 end;
@@ -464,8 +472,8 @@ begin
   ProgressBar1.Align  := alBottom;
   {$ifdef MSWindows}
   SetDarkModeTitleBar(self, true);
-  applyHsButton;
   {$endif}
+  applyHsButton;
 end;
 
 procedure TMainForm.btnLoadPicClick(Sender: TObject);
@@ -492,12 +500,12 @@ begin
   end;
   bmp.EndUpdate();
   mainform.Image2.Picture.Graphic:= bmp;
-  MainForm.Update;
+  MainForm.generateThread.Synchronize(MainForm.Update);
   img.free;
   freeAndNil(bmp)
 end;
 
-  {$ifdef MSWINDOWS}
+
 procedure TMainForm.applyHsButton;
 var i:longint;
   ctrl : THSButton;
@@ -558,7 +566,6 @@ begin
       inc(i);
   end;
 end;
-  {$endif}
 
 procedure TMainForm.checkExistingModels;
 var sr : TSearchRec;
@@ -571,7 +578,7 @@ begin
 
   cmbModels.Items.Clear;;
   try
-    r := FindFirst(path +'\*.*', faDirectory, sr);
+    r := FindFirst(path +'/*', faDirectory, sr);
     while r=0 do begin
       if (sr.name<>'.') and (sr.name<>'..') then cmbModels.Items.Add(sr.Name);
       r := FindNext(sr)
