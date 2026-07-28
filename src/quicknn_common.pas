@@ -415,7 +415,7 @@ function realloc(mem:pointer; size:UIntPtr):pointer;WINAPI;external;
 procedure free(mem:pointer);WINAPI;external;
 function mmap(addr:pointer; len:UintPtr; prot, flag, fd:longint; offset: IntPtr):pointer;WINAPI;external;
 function munmap(addr:pointer; len:UIntPtr):longint;WINAPI;external;
-procedure printf(const fmt:ansistring);winapi;varargs;
+procedure printf(const fmt:ansistring);winapi;varargs;external;
 
 const
   PROT_NONE   = $00;
