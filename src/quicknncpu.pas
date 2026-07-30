@@ -92,12 +92,10 @@ type
     class function qdot(N: int64; x: PSingle; y: PSingle): single;static;
     class function qdotStrided(n: int64; x: PSingle; incx: int64; y: PSingle; incy: int64): single; winapi;static;
     class procedure qgemm(Order: CBLAS_ORDER; TransA: CBLAS_TRANSPOSE;
-  TransB: CBLAS_TRANSPOSE; M: int64; N: int64; K: int64; alpha: single;
-  A: PSingle; lda: int64; B: PSingle; ldb: int64; beta: single;
-  C: PSingle; ldc: int64); WINAPI; static;
+      TransB: CBLAS_TRANSPOSE; M: int64; N: int64; K: int64; alpha: single;
+      A: PSingle; lda: int64; B: PSingle; ldb: int64; beta: single;
+      C: PSingle; ldc: int64); WINAPI; static;
     class procedure qscale(N: int64; alpha: single; X: PSingle; incX: int64); WINAPI;static;
-    class procedure saxpy_avx2(const N: int64; const a: single; const x, y: PSingle);static;
-    class function sdot_avx2(const N: int64; const A, B: PSingle): single;static;
   public
   class var
     cblas_sgemm : procedure (Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:int64; N:int64; K:int64;
@@ -141,7 +139,7 @@ type
     class procedure QNNFusedAddMul(const dst, src, srcA, srcM:PSingle; const N:longint);overload;
     class procedure QNNFusedScaleBias(const dst, src:PSingle; const aScale, aBias:Single; const N:longint);overload;
     class procedure QNNFusedBiasScale(const dst, src:PSingle; const aBias, aScale:Single; const N:longint);overload;
-    class procedure QNNFusedMulScale(const dst, src, srcM:PSingle; const aScale:Single; const N:longint);overload;
+    class procedure QNNFusedMulScale(const dst, src1, src2:PSingle; const aScale:Single; const N:longint);overload;
     class procedure QNNFusedBiasMulScale(const dst, src, srcM:PSingle; const aBias, aScale:Single; const N:longint);overload;
     class procedure QNNFusedScaleAdd(const dst, src, srcAdd:PSingle; const aScale:Single; const N:longint); overload;
     class procedure QNNFusedBiasAdd(const dst, src, srcA:PSingle; const aBias:Single; const N:longint); overload;
@@ -281,6 +279,8 @@ uses termesc;
 
 //var vk : TQNNVulkan;
 
+{$i ops_avx2.inc}
+
 function sqr(const x:Single):Single;inline;
 begin
   exit(x*x)
@@ -378,6 +378,9 @@ begin
   result := src[0];
   if assigned(arg) then arg^ := 0;
   if stride=1 then begin
+    {$ifdef CPUX64}
+    if not assigned(arg) then exit(QNNMax_avx2(N, src));
+    {$endif}
     for i:=1 to N-1 do
       if src[i]>result then begin
         result := src[i];
@@ -399,6 +402,9 @@ begin
   result := src[0];
   if assigned(arg) then arg^ := 0;
   if stride=1 then begin
+    {$ifdef CPUX64}
+    if not assigned(arg) then exit(QNNMin_avx2(N, src));
+    {$endif}
     for i:=1 to N-1 do
       if src[i]<result then begin
         result := src[i];
@@ -498,8 +504,12 @@ begin
   // todo simdify SumSqr
   result := 0;
   if stride=1 then
+    {$if defined(CPUX64)}
+     exit(QNNSumSqr_avx2(N, src))
+    {$else}
     for i:=0 to N-1 do
       result := result + sqr(src[i])
+    {$endif}
   else
     for i:=0 to N-1 do
       result := result + sqr(src[i*stride]);
@@ -511,8 +521,12 @@ begin
   // todo simdify mean
   result := 0;
   if stride=1 then
+    {$if defined(CPUX64)}
+    exit(QNNSumSqrDiff_avx2(N, src, @amean))
+    {$else}
     for i:=0 to N-1 do
       result := result + sqr(src[i]-aMean)
+    {$endif}
   else
     for i:=0 to N-1 do
       result := result + sqr(src[i*stride]-aMean);
@@ -707,9 +721,13 @@ end;
 class procedure TQNNSingleOPS.QNNFusedScaleBias(const dst, src: PSingle; const aScale, aBias: Single; const N: longint);
 var i:integer;
 begin
-    // todo SIMDIFY QNNFusedScaleBias (Scalars)
-    for i:=0 to N-1 do
+  // todo SIMDIFY QNNFusedScaleBias (Scalars)
+  {$ifdef CPUX64}
+  QNNFusedScaleBias_avx2(N, dst, src, aScale, aBias);
+  {$else}
+  for i:=0 to N-1 do
       dst[i] := src[i]*aScale + aBias
+  {$endif}
 
 end;
 
@@ -735,15 +753,20 @@ begin
   end;
 end;
 
-class procedure TQNNSingleOPS.QNNFusedMulScale(const dst, src, srcM: PSingle; const aScale: Single; const N: longint);
+class procedure TQNNSingleOPS.QNNFusedMulScale(const dst, src1, src2: PSingle;
+  const aScale: Single; const N: longint);
 var i:integer;
 begin
     // todo priority SIMDIFY QNNFusedMulScale (Scalars)
   if aScale=1.0 then
-    QNNMul(dst, src, srcM, N)
+    QNNMul(dst, src1, src2, N)
   else
+    {$if defined(CPUX64)}
+    QNNFusedMulScale_avx2(N, dst, src1, src2, aScale);
+    {$else}
     for i:=0 to N-1 do
-      dst[i] := src[i]*srcM[i]*aScale
+      dst[i] := src1[i]*src2[i]*aScale
+    {$endif}
 end;
 
 class procedure TQNNSingleOPS.QNNFusedBiasMulScale(const dst, src, srcM: PSingle; const aBias, aScale: Single; const N: longint);
@@ -1004,127 +1027,6 @@ begin
     for i:=0 to N-1 do
       X[i*incX] := X[i*incX]* alpha
 end;
-
-{$if defined(CPUX64)}
-const
-  SIMD_REGS = 8;
-  {$ifdef FPC}
-  SIMD_SHFT  = BsfQWord(SIMD_REGS);
-  {$else}
-  {$if SIMD_REGS = 8}SIMD_SHFT = 3{$else} SIMD_SHFT = 2{$endif};
-  {$endif}
-  SIMD_OFF = SIMD_REGS * sizeof(single);
-  ymmd : array[0..7] of int32 = (0, 1, 2, 3, 4, 5, 6, 7);
-
-class function TQNNSingleOPS.sdot_avx2(const N:int64; const A,B:PSingle):single;assembler;{$ifdef FPC}nostackframe;{$endif}
-asm
-{$ifndef FPC}
-  .NOFRAME
-{$endif}
-   mov              r11     ,    N
-   vpxor            ymm0    ,    ymm0   ,   ymm0
-   shr              r11d     ,    SIMD_SHFT
-   jz               @rem
-@while:
-   vmovups          ymm1    ,    yword [A]
-   vfmadd231ps      ymm0    ,    ymm1   , yword [B]
-   add              A       ,    SIMD_OFF
-   add              B       ,    SIMD_OFF
-   dec              r11d
-   jnz              @while
-
-@rem:
-   mov              r11     ,    N
-   and              r11     ,    SIMD_REGS -1
-   jz               @done
-   vmovd            xmm3    ,    r11d
-   vpxor            ymm1    ,    ymm1    , ymm1
-   vpxor            ymm2    ,    ymm2    , ymm2
-   vpbroadcastd     ymm3    ,    xmm3
-   vpcmpgtd         ymm3    ,    ymm3    , [rip+ymmd]
-   vmaskmovps       ymm1    ,    ymm3    , [A]
-   vmaskmovps       ymm2    ,    ymm3    , [B]
-   vfmadd231ps      ymm0    ,    ymm1    , ymm2
-
-@done:
-   vextractf128     xmm1    ,    ymm0   ,   $1
-   vzeroupper
-   vaddps           xmm0    ,    xmm0   ,   xmm1
-   vhaddps          xmm0    ,    xmm0   ,   xmm0
-   vhaddps          xmm0    ,    xmm0   ,   xmm0
-
-end;
-
-class procedure TQNNSingleOPS.saxpy_avx2(const N:int64; const a:single; const x,y:PSingle);assembler;{$ifdef FPC}nostackframe;{$endif}
-asm
-  //push         r11
-  //push         N
-  {$ifndef FPC}
-  .NOFRAME
-  {$endif}
-
-//  movss         xmm2   , a
-  vbroadcastss ymm1   , a
-  mov          r11    , N
-  shr          r11    , (SIMD_SHFT + 2)    // div by 16 (4*4) = turns * SIMD_REGS
-  jz           @rem1
-
-@while:
-  vmovups      ymm0   , yword [y]
-  vmovups      ymm2   , yword [y+SIMD_OFF]
-  vmovups      ymm3   , yword [y+SIMD_OFF*2]
-  vmovups      ymm4   , yword [y+SIMD_OFF*3]
-
-  vfmadd231ps  ymm0   , ymm1       , yword [x]                 //xmm0
-  vfmadd231ps  ymm2   , ymm1       , yword [x+SIMD_OFF]  //xmm2
-  vfmadd231ps  ymm3   , ymm1       , yword [x+SIMD_OFF*2]//xmm8
-  vfmadd231ps  ymm4   , ymm1       , yword [x+SIMD_OFF*3]//xmm3
-
-  vmovups      yword [y]             , ymm0
-  vmovups      yword [y+SIMD_OFF]    , ymm2
-  vmovups      yword [y+SIMD_OFF*2]  , ymm3
-  vmovups      yword [y+SIMD_OFF*3]  , ymm4
-
-  add          x      , 4 * SIMD_OFF   // turns * offset
-  add          y      , 4 * SIMD_OFF
-  dec          r11
-  jnz          @while
-
-@rem1:
-  mov          r11    , N
-  and          r11    , (4*SIMD_REGS-1)       // mod 32  ( turns * SIMD_REGS)
-  shr          r11    , SIMD_SHFT             // div SIMD_REGS
-  jz           @rem
-
-@while1:
-  vmovups      ymm0   , yword[y]
-
-  vfmadd231ps  ymm0   , ymm1       , [x]
-  vmovups      yword [y]    , ymm0
-  add          x      , SIMD_OFF
-  add          y      , SIMD_OFF
-  dec          r11
-  jnz          @while1
-
-@rem:
-  mov          r11    , N
-  and          r11    , (SIMD_REGS -1)       // mod SIMD_REGS
-  jz           @done
-
-@while2:
-  vmovss       xmm0   , dword [y]
-  vfmadd231ss  xmm0   , xmm1, [x]
-  vmovss       dword [y]    , xmm0
-  add          x      , 4
-  add          y      , 4
-  dec          r11
-  jnz          @while2
-
-@done:
-  //pop          r11
-  //vzeroupper
-end;
-{$endif}
 
 class procedure TQNNSingleOPS.qaxpy(n:int64; alpha:single; x:PSingle; y:PSingle);
 var
@@ -2165,228 +2067,11 @@ begin
     end
 end;
 
-// todo : revisit
-{$ifdef CPUX64}
-
-procedure QNNExp_avx2(const N:NativeInt; const src:PSingle; const dst:PSingle); assembler;
-const
-  l2e :single = 1.442695041;// log2(e);
-  c0  :single = 1.00172476;
-  c1  :single = 0.657636276;
-  c2  :single = 0.3371894346;
-  //MAX_EXP =  8.8722839052068352E+001;
-  //MIN_EXP = -8.7336544750553102E+001;
-
-  MAX_EXP =  8.872283E+001;
-  MIN_EXP = -8.733654E+001;
-
-  one :array[0..7] of single = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
-  zero:array[0..7] of single = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-  mx  :array[0..7] of single = (MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP);
-  mn  :array[0..7] of single = (MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP );
-
-asm
-  sub                  rsp      , $10*2                     // making stack space to save one xmm size register
-  vmovdqu              [rsp+$00], xmm6
-  vmovdqu              [rsp+$10], xmm7
-
-  vpbroadcastd  ymm3  , [rip + l2e]
-  vpbroadcastd  ymm4  , [rip + c1]
-  vpbroadcastd  ymm5  , [rip + c0]
-
-  mov           r11   , N
-  shr           r11   , 3
-  jz            @rem
-
-@while:
-  //vxorps        ymm0  , ymm0        , ymm0              // zero
-  vmovups       ymm1  , yword [src]
-  vcmpgeps      ymm6  , ymm1        , [rip + mx]
-  vcmpleps      ymm7  , ymm1        , [rip + mn]
-  vblendvps     ymm1  , ymm1 , [rip + mx], ymm6
-  vblendvps     ymm1  , ymm1 , [rip + mn], ymm7
-  vmulps        ymm1  , ymm3        , ymm1
-  vroundps      ymm2  , ymm1        , 1
-  vsubps        ymm1  , ymm1        , ymm2
-  vcvtps2dq     ymm0  , ymm2
-  vpbroadcastd  ymm2  , [rip + c2]
-  vfmadd213ps   ymm2  , ymm1        , ymm4
-  vpslld        ymm0  , ymm0        , 23
-  vfmadd213ps   ymm1  , ymm2        , ymm5
-  vpaddd        ymm0  , ymm0        , ymm1
-  vmovups       yword [dst] , ymm0
-
-  add           src   , 32
-  add           dst   , 32
-  dec           r11
-  jnz           @while
-
-  and           N   , 7
-  jz            @done
-
-@rem:
-
-  vmovss        xmm1  , dword [src]              //-src
-  vcmpgeps      xmm6  , xmm1        , [rip + mx]
-  vcmpleps      xmm7  , xmm1        , [rip + mn]
-  vblendvps     xmm1  , xmm1 , [rip + mx], xmm6
-  vblendvps     xmm1  , xmm1 , [rip + mn], xmm7
-  vmulss        xmm1  , xmm3        , xmm1
-  roundss       xmm2  , xmm1        , 1
-  vsubss        xmm1  , xmm1        , xmm2
-  vcvtps2dq     xmm0  , xmm2
-  vmovss        xmm2  , [rip + c2]
-  vfmadd213ss   xmm2  , xmm1        , xmm4
-  vpslld        xmm0  , xmm0        , 23
-  vfmadd213ss   xmm1  , xmm2        , xmm5
-  vpaddd        xmm0  , xmm0       , xmm1
-  vmovss        dword [dst] , xmm0
-
-  add           src   , 4
-  add           dst   , 4
-  dec           N
-  jnz           @rem
-
-@done:
-  vmovdqu              xmm6     , [rsp+$00]
-  vmovdqu              xmm7     , [rsp+$10]
-  add                  rsp      , $10*2                     // restoring stack
-end;
-
-// AKA SWISH
-// sigmoid or dst can be nil
-procedure QNNSiLU_avx2(const N:NativeInt; const src, up, outSigmoid, dst:PSingle);assembler;
-const
-  L2E :single = 1.442695041;// log2(e);
-  C0  :single = 1.00172476;
-  C1  :single = 0.657636276;
-  C2  :single = 0.3371894346;
-  //MAX_EXP =  8.8722839052068352E+001;
-  //MIN_EXP = -8.7336544750553102E+001;
-
-  MAX_EXP =  8.87E+001;
-  MIN_EXP = -8.73E+001;
-
-  one :array[0..7] of single = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
-  zero:array[0..7] of single = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-  MX  :array[0..7] of single = (MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP);
-  MN  :array[0..7] of single = (MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP );
-asm
-  sub                  rsp      , $10*2                     // making stack space to save one xmm size register
-  vmovdqu              [rsp+$00], xmm6
-  vmovdqu              [rsp+$10], xmm7
-
-  vpbroadcastd  ymm3  , [rip + L2E]
-  vpbroadcastd  ymm4  , [rip + C1]
-  vpbroadcastd  ymm5  , [rip + C0]
-
-  mov           r11   , N
-  shr           r11   , 3
-  jz            @rem
-
-@while:
-  vxorps        ymm0  , ymm0        , ymm0              // zero
-  vsubps        ymm1  , ymm0        , yword [src]             // -src
-  vcmpgeps      ymm6  , ymm1        , [rip + MX]
-  vcmpleps      ymm7  , ymm1        , [rip + MN]
-  vblendvps     ymm1  , ymm1 , [rip + MX], ymm6
-  vblendvps     ymm1  , ymm1 , [rip + MN], ymm7
-  vmulps        ymm1  , ymm3        , ymm1
-  vroundps      ymm2  , ymm1        , 1
-  vsubps        ymm1  , ymm1        , ymm2
-  vcvtps2dq     ymm0  , ymm2
-  vpbroadcastd  ymm2  , [rip + C2]
-  vfmadd213ps   ymm2  , ymm1        , ymm4
-  vpslld        ymm0  , ymm0        , 23
-  vfmadd213ps   ymm1  , ymm2        , ymm5
-  vpaddd        ymm0  , ymm0        , ymm1
-  vaddps        ymm1  , ymm0        , [rip + one]       // 1 +exp(-src)
-  vrcpps        ymm1  , ymm1                            // 1/(1+exp(-src))
-  //vpcmpeqd      ymm0  , ymm0        , ymm0              // set ymm0 to to 0xffffffff
-  //vpandn        ymm6  , ymm6        , ymm0              // ymm6 := not ymm6
-  //vpandn        ymm7  , ymm7        , ymm0              // ymm6 := not ymm6
-  //vblendvps     ymm1  , ymm1  , [rip+one] , ymm6
-  //vblendvps     ymm1  , ymm1  , [rip+zero] , ymm7
-  cmp           outSigmoid   , 0
-  je            @skip1
-  vmovups       yword [outSigmoid] , ymm1
-  add           outSigmoid   , 32
-@skip1:
-  cmp           dst       , 0
-  je            @skipup1
-  vmulps        ymm1            , ymm1 ,   yword [src]
-  cmp           up        , 0
-  je            @skipdst1
-  vmulps        ymm1            , ymm1 ,   yword [up]
-  add           up              , 32
-@skipdst1:
-  vmovups       yword [dst]     , ymm1
-  add           dst             , 32
-
-@skipup1:
-  add           src       , 32
-  dec           r11
-  jnz           @while
-
-  and           N   , 7
-  jz            @done
-@rem:
-
-  vpxor         xmm0  , xmm0        , xmm0
-  vsubss        xmm1  , xmm0        , dword [src]              //-src
-  vcmpgeps      xmm6  , xmm1        , [rip + MX]
-  vcmpleps      xmm7  , xmm1        , [rip + MN]
-  vblendvps     xmm1  , xmm1 , [rip + MX], xmm6
-  vblendvps     xmm1  , xmm1 , [rip + MN], xmm7
-  vmulss        xmm1  , xmm3        , xmm1
-  roundss       xmm2  , xmm1        , 1
-  vsubss        xmm1  , xmm1        , xmm2
-  vcvtps2dq     xmm0  , xmm2
-  vmovss        xmm2  , [rip + C2]
-  vfmadd213ss   xmm2  , xmm1        , xmm4
-  vpslld        xmm0  , xmm0        , 23
-  vfmadd213ss   xmm1  , xmm2        , xmm5
-  vpaddd        xmm0  , xmm0        , xmm1
-  vaddss        xmm1  , xmm0        , [rip + one]       // 1 +exp(-src)
-  vrcpss        xmm1  , xmm1        , xmm1              // 1/(1+exp(-src))
-  //vpcmpeqd      xmm0  , xmm0        , xmm0              // set ymm0 to to 0xffffffff
-  //vpandn        xmm6  , xmm6        , xmm0              // ymm6 := not ymm6
-  //vpandn        xmm7  , xmm7        , xmm0              // ymm6 := not ymm6
-  //vblendvps     xmm1  , xmm1  , [rip+one] , xmm6
-  //vblendvps     xmm1  , xmm1  , [rip+zero]  , xmm7
-  cmp           outSigmoid   , 0   // sigmoid is NULL
-  je            @skip2
-  vmovss        dword [outSigmoid] , xmm1
-  add           outSigmoid         , 4
-@skip2:
-  cmp           dst       , 0
-  je            @skipup2
-  vmulss        xmm1            , xmm1 ,   dword [src]
-  cmp           up        , 0
-  je            @skipdst2
-  vmulss        xmm1            , xmm1 ,   dword [up]
-  add           up              , 4
-@skipdst2:
-  vmovss        dword [dst]     , xmm1
-  add           dst             , 4
-
-@skipup2:
-  add           src             , 4
-  dec           N
-  jnz           @rem
-@done:
-  vmovdqu       xmm6            , [rsp+$00]
-  vmovdqu       xmm7            , [rsp+$10]
-  add           rsp             , $10*2                     // restoring stack
-end;
-
-{$endif}
-
 class procedure TQNNSingleOPS.QNNSigmoid(const x: PSingle; const N: integer);
 var i:integer;
 begin
   // todo sigmoid inplace simdify
-  {$ifdef _CPUX64}
+  {$ifdef CPUX64}
   QNNSiLU_avx2(N, x, nil, x, nil);
   {$else}
   for i := 0 to N-1 do
@@ -2398,7 +2083,7 @@ class procedure TQNNSingleOPS.QNNSigmoid(const dst, src: PSingle; const N: integ
 var i:integer;
 begin
   // todo sigmoid simdify
-  {$ifdef _CPUX64}
+  {$ifdef CPUX64}
   QNNSiLU_avx2(N, src, nil, dst, nil);
   {$else}
   for i := 0 to N-1 do
@@ -2412,7 +2097,7 @@ var
   val :Single;
 begin
   // todo silu inplace simdify
-  {$ifdef _CPUX64}
+  {$ifdef CPUX64}
   QNNSiLU_avx2(N, x, nil, nil, x);
   {$else}
   for i := 0 to N-1 do begin
@@ -2428,7 +2113,7 @@ var
   val :Single;
 begin
   // todo silu priority simdify
-  {$ifdef _CPUX64}
+  {$ifdef CPUX64}
   QNNSiLU_avx2(N, src, nil, nil, dst);
   {$else}
     for i := 0 to N-1 do begin
@@ -2445,7 +2130,7 @@ var
 begin
 
   // todo siluMul priority simdify
-  {$ifdef _CPUX64}
+  {$ifdef CPUX64}
   QNNSiLU_avx2(N, gate, up, nil, gate);
   {$else}
   for i := 0 to N-1 do begin
@@ -2460,11 +2145,9 @@ var
   i: longint;
   max_val, sum, inv_sum: Single;
 begin
-  // todo softmax simdify
-  //max_val := x[0];
-  //for i := 1 to N -1 do
-  //    if x[i] > max_val then
-  //        max_val := x[i];
+{$ifdef _CPUX64}
+  QNNSoftmax_avx2(N, x);
+{$else}
   max_val := QNNMax(N, x);
   sum := 0.0;
   for i := 0 to N-1 do begin
@@ -2474,8 +2157,7 @@ begin
   end;
   inv_sum := single(1.0) / sum;
   QNNScaleInplace(x, inv_sum, N);
-  //for i := 0 to N-1 do
-  //    x[i] := x[i] * inv_sum
+{$endif}
 end;
 
 //procedure softmax(const N: longint ;const a:TArray<single>; const offset:longint);
@@ -3474,27 +3156,17 @@ begin
   writeln(']')
 end;
 
-(* GEMM testing
-type
-  PF = ^TF;
-  TF = array[0..7] of Single;
-const
-  batch = 1; heads = 64; seq = 64; dim = 64;
+procedure randArray(const N:longint; const dst:PSingle; const Amin:single=-5.0; Amax:Single=5.0);
+var i:longint;
+begin
+  for i:=0 to N-1 do
+    dst[i] := amin+random()*(aMax-aMin);
+end;
 
-
-  M  = 16;
-  N  = 16;
-  KK = 16;
-
+// GEMM testing
 var
   A, B, O, O2 : TMemoryBlock;
-  QPTR,KPTR,VPTR, OPTR, OPTR2 : PSingle;
-  i : longint;
-  t, t2:Int64;
 
-  d1, d2 : Single;
-  dptr : PSingle;
-*)
 var i:longint;
 
 initialization
@@ -3626,6 +3298,24 @@ initialization
   readln;
 
   *)
+
+  //randomize;
+  //A := TMemoryBlock.Create([94], 'A');
+  ////a := TArray<single>([1, 2, 3, 4, 5, 6, 7 ,8, 9, 10, 11, 12, 13, 14 , 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41]);
+  //randArray(a.count, A);
+  //writeln(TQNNSingleOPS.QNNSumSqr(A.count, A):1:6);
+  //writeln(QNNSumSqr_avx2(A.count, A):1:6);
+  //
+  //B := TMemoryBlock.Create([1000, 1000], 'B');
+  //O := TMemoryBlock.Create([1000, 1000], 'O');
+  //O2 := TMemoryBlock.Create([1000, 1000], 'O2');
+  //
+  //randArray(B.count, B);
+  //
+  //TQNNSingleOPS.QNNSilu(O, A, A.count);
+  //QNNSiLU_avx2(A.Count, A, nil, nil, O2);
+  //O.printCompare(O2, true);
+
 
 
 finalization

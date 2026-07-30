@@ -105,9 +105,8 @@ type
       procedure DoDialogChar(var Message: TCMDialogChar); message CM_DIALOGCHAR;
       procedure DoDialogKey(var Message: TCMDialogKey); message CM_DIALOGKEY;
 
-//      procedure WMPaint(var Message: TWMPaint); message WM_PAINT;
-
       procedure Paint; override;
+
       procedure DoStep(Sender: TObject);
       procedure DoClick;
       procedure MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
@@ -267,13 +266,13 @@ end;
 procedure THSButton.SetAlignment(fNew: TAlignment);
 begin
    FAlignment := fNew;
-   Paint;
+   invalidate;
 end;
 
 procedure THSButton.SetBorder(const Value: Byte);
 begin
   FBorder := Value;
-  Invalidate
+  invalidate
 end;
 
 procedure THSButton.SetDrawFocus(AValue: boolean);
@@ -292,7 +291,7 @@ end;
 procedure THSButton.SetCaption(const fNew: TCaption);
 begin
    inherited Caption := fNew;
-   Invalidate;
+   invalidate;
 end;
 
 {##############################################################################}
@@ -304,7 +303,7 @@ end;
 
 procedure THSButton.DoExit;
 begin
-  Paint;
+  invalidate;
 end;
 
 {##############################################################################}
@@ -351,7 +350,7 @@ begin
    FStyle := bsNormal; if bModern then FStyle := bsModern; if bQuicken then FStyle := bsQuicken;
    if fNew in [lcsGlassGold,lcsGlassChrome,lcsGlassBlue,lcsGlassRed,lcsGlassAqua] then
      FStyle:=bsGlass;
-   Paint;
+   invalidate;
 end;
 
 {##############################################################################}
@@ -361,7 +360,7 @@ begin
    inherited;
    FEnabled := fNew;
    bDown := false;
-   Paint;
+   invalidate;
 end;
 
 {##############################################################################}
@@ -369,7 +368,7 @@ end;
 procedure THSButton.SetFlat(fNew: boolean);
 begin
    FFlat := fNew;
-   Invalidate;
+   invalidate;
 end;
 
 {##############################################################################}
@@ -387,7 +386,7 @@ begin
       FNumGlyphs := 0;
    end;
    FKind := bkCustom;
-   Invalidate;
+   invalidate;
 end;
 
 {##############################################################################}
@@ -416,7 +415,7 @@ begin
    end;
 
    FKind := fNew;
-   Invalidate;
+   invalidate;
 end;
 
 {##############################################################################}
@@ -424,7 +423,7 @@ end;
 procedure THSButton.SetLayout(fNew: THSButtonLayout);
 begin
    FLayout := fNew;
-   Paint;
+   invalidate;
 end;
 
 {##############################################################################}
@@ -432,7 +431,7 @@ end;
 procedure THSButton.SetNumGlyphs(fNew: integer);
 begin
    FNumGlyphs := fNew;
-   Invalidate;
+   invalidate;
 end;
 
 {##############################################################################}
@@ -448,7 +447,7 @@ end;
 procedure THSButton.SetLightColor(fNew: TColor);
 begin
    FLightColor := fNew;
-   Paint;
+   invalidate;
 end;
 
 {##############################################################################}
@@ -456,7 +455,7 @@ end;
 procedure THSButton.SetShadowColor(fNew: TColor);
 begin
    FShadowColor := fNew;
-   Paint;
+   invalidate;
 end;
 
 {##############################################################################}
@@ -482,13 +481,13 @@ begin
          FTimer := nil;
       end;
    end;
-   Invalidate;
+   invalidate;
 end;
 
 procedure THSButton.SetSmooth(const Value: Smallint);
 begin
   FSmooth := Value;
-  Invalidate
+  invalidate
 end;
 
 {##############################################################################}
@@ -499,7 +498,7 @@ begin
 {$ifdef MSWINDOWS}
    if fStyle in [bsModern, bsRounded, bsGlass, bsShape, bsQuicken] then SetWindowLong(Handle, GWL_EXSTYLE, WS_EX_TRANSPARENT) else SetWindowLong(Handle, GWL_EXSTYLE, 0);
 {$endif}
-   Invalidate;
+   invalidate;
 end;
 
 {##############################################################################}
@@ -507,7 +506,7 @@ end;
 procedure THSButton.SetWordWrap(fNew: boolean);
 begin
    FWordWrap := fNew;
-   Paint;
+   invalidate;
 end;
 
 {##############################################################################}
@@ -525,7 +524,7 @@ begin
       else
        begin
          FHotTrackStep := cHotTrackSteps;
-         paint;
+         invalidate;
        end;
       if assigned(FOnMouseEnter) then FOnMouseEnter(self);
     end;
@@ -543,7 +542,7 @@ begin
    else
    begin
       FHotTrackStep := 0;
-      Paint;
+      invalidate;
    end;
    if Enabled and Visible and (Parent <> nil) and Parent.Showing then if assigned(FOnMouseExit) then FOnMouseExit(self);
 end;
@@ -557,7 +556,7 @@ begin
    begin
       bDown := true;
       SetFocus;
-      Paint;
+      invalidate;
    end;
 end;
 
@@ -569,7 +568,7 @@ begin
 //   if bCursorOnButton then Click;
    if bDown then Click;
    bDown := false;
-   Paint;
+   invalidate;
 end;
 
 {##############################################################################}
@@ -587,7 +586,7 @@ procedure THSButton.ActionChange(Sender: TObject; CheckDefaults: Boolean);
          ImageList.Draw(Canvas, 0, 0, Index);
       end;
       NumGlyphs := 1;
-      Paint;
+      invalidate;
    end;
 
 begin
@@ -607,7 +606,7 @@ end;
 
 procedure THSButton.FocusChanged(var Msg);
 begin
-   Paint;
+   invalidate;
 end;
 
 {##############################################################################}
@@ -618,7 +617,7 @@ begin
    if Enabled then if key in [32, 13] then
    begin
       bDown := true;
-      Paint;
+      invalidate;
    end;
 end;
 
@@ -628,7 +627,7 @@ procedure THSButton.KeyUp(var key: word; shift: TShiftState);
 begin
    inherited;
    if Key in [32, 13] then Click;
-   Paint;
+   invalidate;
 end;
 
 {##############################################################################}
@@ -770,7 +769,7 @@ begin
       if bCursorOnButton then FHotTrackStep:=cHotTrackSteps else FHotTrackStep := 0;
    end;
 
-   Paint;
+   invalidate;
 end;
 
 {##############################################################################}

@@ -67,10 +67,10 @@ type
   { TMainForm }
 
   TMainForm = class(TForm)
-    btnGenerate: TBitBtn;
-    btnGenerate1: TBitBtn;
-    btnImg2Img: TBitBtn;
-    btnTxt2Img: TBitBtn;
+    btnGenerate: TSpeedButton;
+    btnGenerate1: TSpeedButton;
+    btnImg2Img: TSpeedButton;
+    btnTxt2Img: TSpeedButton;
     cmbModels: TComboBox;
     edtSeed: TEdit;
     edtSeed1: TEdit;

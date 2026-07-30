@@ -153,11 +153,12 @@ end;
 //##############################################################################
 
 type
-   TRGBQuad = packed record rgbRed, rgbGreen, rgbBlue, alpha: byte end;
+   TRGBQuad = packed record case boolean of false: (rgbRed, rgbGreen, rgbBlue, alpha: byte); true: (color:TColor) end;
 
 procedure HSPaintButton(Bitmap:TBitmap ; Width, Height, RoundArc , HotTrackStep,Smooth, NumGlyphs: SmallInt; Glyph: TBitmap; Down, CursorOnButton, Transparent, Enabled, Flat, Wordwrap, PopupArrow: boolean; Style: THSButtonStyle; Color, ColorWhenDown, HotTrackColor, LightColor, ShadowColor: TColor; Font: TFont; Layout: THSButtonLayout; Caption: string; Alignment: TAlignment);
 
 var
+   clr : TRGBQuad;
    iCaptionHeight, iCaptionWidth, iGlyphHeight, iGlyphWidth, iGlyphOffset: integer;
    dtMode: TTextStyle;
    iGlyphIndex: integer;
@@ -332,7 +333,8 @@ var
       Bitmap.Canvas.Draw(iDestLeft, iDestTop, aPicture.Graphic);
       aPicture.Free;
    end;
-
+var
+  ar:array of byte; P:PByte;
 begin
   if not Enabled then Down := false;
   iOffset := 0; if Down then if Style in [bsNormal, bsModern, bsOld, bsShape, bsQuicken, bsRounded, bsGlass] then iOffset := 2;
@@ -483,6 +485,7 @@ begin
     iGlX := 0;
 
   dtMode := Bitmap.canvas.TextStyle;
+  dtMode.Clipping:=false;
   dtMode.Wordbreak:=true;
   dtMode.Layout := tlCenter;
   dtMode.Alignment:= taCenter;
@@ -505,17 +508,17 @@ begin
       iCaptionWidth := Width - 8; if iCaptionWidth < 0 then iCaptionWidth := 0;
       if not WordWrap then while Bitmap.Canvas.TextWidth(Caption) > iCaptionWidth do Caption := copy(Caption, 1, length(Caption)-1);
       aRect := Rect(0, 0, iCaptionWidth, 0);
-      dtMode.Clipping:=true;
+      //dtMode.Clipping:=true;
       dtMode.Wordbreak:=false;
       Bitmap.Canvas.TextStyle := dtMode;
       Bitmap.Canvas.TextRect(aRect, 0, 0, Caption);
       iCaptionHeight := aRect.Bottom;
-      dtMode.Clipping:=false;
+      //dtMode.Clipping:=false;
       dtMode.Wordbreak:=true;
       Bitmap.Canvas.TextStyle := dtMode;
       DrawGlyph((Width-iGlyphWidth) div 2, (Height-iGlyphHeight) div 2, iGlyphIndex, 0, iGlyphWidth, iGlyphHeight);
       aRect := Rect(iOffset, iOffset + (Height-iCaptionHeight) div 2, Width, Height);
-      dtMode.Clipping:=true;
+      //dtMode.Clipping:=true;
       dtMode.Wordbreak:=true;
       Bitmap.Canvas.TextStyle := dtMode;
       Bitmap.Canvas.TextRect(aRect, 0, 0, Caption);
@@ -528,7 +531,7 @@ begin
           if iCaptionWidth < 0 then iCaptionWidth := 0;
           if not WordWrap then while Bitmap.Canvas.TextWidth(Caption) > iCaptionWidth do Caption := copy(Caption, 1, length(Caption)-1);
           aRect := Rect(0, 0, iCaptionWidth, 0);
-          dtMode.Clipping:=true;
+          //dtMode.Clipping:=true;
           dtMode.Wordbreak:=true;
           //Bitmap.Canvas.TextStyle := dtMode;
           //Bitmap.Canvas.TextRect(aRect, 0, 0, Caption);
@@ -566,7 +569,7 @@ begin
           if iCaptionWidth < 0 then iCaptionWidth := 0;
           if not WordWrap then while Bitmap.Canvas.TextWidth(Caption) > iCaptionWidth do Caption := copy(Caption, 1, length(Caption)-1);
           aRect := Rect(0, 0, iCaptionWidth, 0);
-          dtMode.Clipping:=true;
+          //dtMode.Clipping:=true;
           dtMode.Wordbreak:=true;
           Bitmap.Canvas.TextStyle := dtMode;
           //Bitmap.Canvas.TextRect(aRect, 0, 0, Caption);
@@ -599,10 +602,25 @@ begin
       if not Enabled then Bitmap.Canvas.Font.Color := clGray;
 
       aRect := Rect(iCapX, iCapY, iCapX + iCaptionWidth, iCapY + iCaptionHeight);
-      //dtMode.Clipping:=false;
-      //dtMode.Wordbreak:=true;
+
+      //dtMode.Clipping:=true;
+      dtMode.Wordbreak:=true;
       Bitmap.Canvas.TextStyle := dtMode;
       Bitmap.Canvas.TextRect(aRect, 0, 0, Caption);
+
+      //if caption='Generate' then begin
+      //  setLength(ar, bitmap.Height*bitmap.width*3);
+      //  for iCapY:=0 to bitmap.Height-1 do begin
+      //    for iCapX:=0 to bitmap.Width-1 do begin
+      //      iOffset :=  bitmap.canvas.Pixels[iCapX, iCapY];
+      //      ar[iCapY*bitmap.width*3 + iCapX*3]   := TRGBQuad(iOffset).rgbRed;
+      //      ar[iCapY*bitmap.width*3 + iCapX*3+1] := TRGBQuad(iOffset).rgbGreen;
+      //      ar[iCapY*bitmap.width*3 + iCapX*3+2] := TRGBQuad(iOffset).rgbBlue;
+      //
+      //    end
+      //  end;
+      //  printSixel(pointer(ar), Bitmap.Width, bitmap.Height, true);
+      //end;
       DrawGlyph(iGlX, iGlY, iGlyphIndex, 0, iGlyphWidth, iGlyphHeight);
    end;
 
