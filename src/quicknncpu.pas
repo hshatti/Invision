@@ -279,7 +279,6 @@ uses termesc;
 
 //var vk : TQNNVulkan;
 
-{$i ops_avx2.inc}
 
 function sqr(const x:Single):Single;inline;
 begin
@@ -289,7 +288,7 @@ end;
 //{$macro on}
 //{$define fast_exp:=exp}
 
-function fast_exp(const x:single):single; inline;
+function fast_exp( x:single):single;inline;
 var
   n, r, p:single;
   v : record
@@ -297,10 +296,16 @@ var
       false :(i:longint);
       true  :(f:single)
   end;
+const
+  MAX_EXP = single( 8.872283E+001);
+  MIN_EXP = single(-8.733654E+001);
+
 begin
   //result := exp(x)
-    if (x < -87.3) then  exit( 0.0);
-    if (x > 88.7)  then exit( 1e38);
+    if (x < -87.33) then  exit( 0.0);
+    if (x > 88.72)  then exit( 1e38);
+    //if (x < MIN_EXP) then  x := MIN_EXP;
+    //if (x > MAX_EXP)  then  x := MAX_EXP;
     n := floor(x * 1.4426950408889634 + 0.5);
     r := x - n * 0.6931471805599453;
     p := 1.0 + r * (1.0 + r * (0.5 + r * (0.16666667 +
@@ -310,10 +315,37 @@ begin
     result := v.f;
 end;
 
+{$i ops_avx2.inc}
+
 class procedure TQNNSingleOPS.cblas_gemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:int64; N:int64; K:int64;
                       alpha:single; A:PSingle; lda:int64; B:PSingle; ldb:int64; beta:single; C:PSingle; ldc:int64);
+var
+
+  C2, C1 :TArray<single>;
+  C2_PTR, C1_PTR:PSingle ;
+var y,x:longint;
 begin
-  cblas_sgemm(Order, TransA, TransB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc)
+
+
+  //setLength(C2, M*N);
+  //C2_PTR := pointer(C2);
+  //for y:=0 to M-1 do
+  //  move(C[y*ldc], C2_PTR[y*N], N*sizeOf(single));
+
+    cblas_sgemm(Order, TransA, TransB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+
+  //setLength(C1, M*N);
+  //C1_PTR := pointer(C1);
+  //for y:=0 to M-1 do
+  //  move(C[y*ldc], C1_PTR[y*N], N*sizeOf(single));
+  //
+  //qgemm(Order, TransA, TransB, M, N, K, alpha, A, lda, B, ldb, beta, C2_PTR, N);
+  //
+  //writeln('');
+  //writeln(ifthen(TransA=CblasTrans,'T','N'), ifthen(TransB=CblasTrans,'T','N'));
+  //printCompare(M*N, C1_PTR, C2_PTR);
+  //writeln('');
+  //readln
 end;
 
 class procedure TQNNSingleOPS.cblas_axpy(n:int64; alpha:single; x:PSingle; incx:int64; y:PSingle; incy:int64);
@@ -1021,8 +1053,12 @@ var i:longint;
 begin
   // todo qscale Simdify
   if incX=1 then
+    {$ifdef CPUX64}
+    QNNScaleInplace_avx2(N, X, alpha)
+    {$else}
     for i:=0 to N-1 do
       X[i]:= X[i]*alpha
+    {$endif}
   else
     for i:=0 to N-1 do
       X[i*incX] := X[i*incX]* alpha
@@ -1116,10 +1152,139 @@ procedure cpp_sgemm(TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; const M, N, 
 //end;
 {$endif}
 
+function CEIL_DIV(const A, B:int64):longword;
+begin
+  result := (A + B-1) div B
+end;
 
+const
+  // according to my CPU this is the sweet spot
+  TILE_M = 8;
+  TILE_N = 16;
+  TILE_K = 16;
+
+procedure gemm_nn( const M, N, K:int64;
+                   const ALPHA:single;
+                   const A:PSingle; const lda:int64;
+                   const B:PSingle  ;  const ldb:int64;
+                   const BETA:single;
+                   const C:PSingle; const ldc:int64
+                   );
+
+procedure tile(tm_start:IntPtr; data:pointer);
+var
+  tm_finish, tk_start, tk_finish, tm, tk :int64;
+begin
+
+  //tm_start := 0;
+  //while tm_start < CEIL_DIV(M, TILE_M)*TILE_M do begin
+    tm_finish := tm_start + TILE_M;
+    if tm_finish>M then tm_finish := M;
+
+    for tm:=tm_start to tm_finish-1 do
+      TQNNSingleOps.qscale(N, BETA, C+tm*ldc, 1);
+
+    tk_start := 0;
+    while tk_start<CEIL_DIV(K, TILE_K)*TILE_K do begin
+      tk_finish := tk_start + TILE_K;
+      if tk_finish>K then tk_finish := K;
+
+      for tm := tm_start to tm_finish-1 do begin
+        for tk := tk_start to tk_finish-1 do begin
+          TQNNSingleOps.qaxpy(N, ALPHA*A[tm*lda + tk], B+tk*ldb, C + tm*ldc);
+        end;
+      end;
+
+      inc(tk_start, TILE_K)
+    end;
+    //inc(tm_start, TILE_M)
+  //end;
+end;
+
+var i:Int64;
+begin
+  {$ifdef USE_MULTITHREADING}
+  mp.&For(tile, 0, CEIL_DIV(M, TILE_M)*TILE_M, nil, TILE_M);
+  {$else}
+  i:=0;
+  while i<CEIL_DIV(M, TILE_M)*TILE_M-1 do begin
+    tile(i, nil);
+    inc(i, TILE_M)
+  end
+  {$endif}
+end;
+
+procedure gemm_nt( const M, N, K:int64;
+                   const ALPHA:single;
+                   const A:PSingle; const lda:int64;
+                   const B:PSingle  ;  const ldb:int64;
+                   const BETA:single;
+                   const C:PSingle; const ldc:int64
+                   );
+
+procedure tile(tm_start:IntPtr; data:pointer);
+var
+  tm_finish, tn_start, tn_finish, tm, tn, tk_start, tk_finish, k_span :int64;
+  a_part : Single;
+  AA, BB, CC : PSingle;
+  c_result : array[0..TILE_M*TILE_N-1] of single;
+begin
+
+  //tm_start := 0;
+  //while tm_start < CEIL_DIV(M, TILE_M)*TILE_M do begin
+    tm_finish := tm_start + TILE_M;
+    if tm_finish>M then tm_finish := M;
+
+    for tm:=tm_start to tm_finish-1 do
+      TQNNSingleOps.qscale(N, BETA, C+tm*ldc, 1);
+
+    tn_start := 0;
+    while tn_start<CEIL_DIV(N, TILE_N)*TILE_N do begin
+      tn_finish := tn_start + TILE_N;
+      if tn_finish>n then tn_finish := N;
+      tk_start := 0;
+      (* K tiling is slower,  perhaps we need to select TILE values
+       based on the matricies dimensions and the CPU L1/L2 sizes   *)
+      //while tk_start < K do begin
+      //  tk_finish := tk_start + TILE_K;
+      //  if tk_finish>K then tk_finish := K;
+      //  k_span := tk_finish - tk_start;
+      //  for tm:=tm_start to tm_finish-1 do begin
+      //    CC := C + tm*ldc;
+      //    for tn:= tn_start to tn_finish-1 do begin
+      //      CC[tn] := CC[tn] + ALPHA*TQNNSingleOPS.qdot(k_span, A + tm*lda + tk_start, B + tn*ldb + tk_start);
+      //    end;
+      //  end;
+      //  inc(tk_start, TILE_K)
+      //end;
+      for tm := tm_start to tm_finish-1 do begin
+        for tn := tn_start to tn_finish-1 do begin
+          a_part := ALPHA*TQNNSingleOps.qdot(K, A + tm*lda, B+tn*ldb);
+          C[tm*ldc + tn] := C[tm*ldc +tn] + a_part;
+        end;
+      end;
+      inc(tn_start, TILE_N)
+    end;
+  //  inc(tm_start, TILE_M)
+  //end;
+end;
+var i:int64;
+begin
+  {$ifdef USE_MULTITHREADING}
+  mp.&For(tile, 0, CEIL_DIV(M, TILE_M)*TILE_M, nil, TILE_M);
+  {$else}
+  i:=0;
+  while i<CEIL_DIV(M, TILE_M)*TILE_M-1 do begin
+    tile(i, nil);
+    inc(i, TILE_M)
+  end
+  {$endif}
+end;
 
 class procedure TQNNSingleOPS.qgemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:int64; N:int64; K:int64;
   alpha:single; A:PSingle; lda:int64; B:PSingle; ldb:int64; beta:single; C:PSingle; ldc:int64); WINAPI;
+
+
 
 {$ifdef FPC}
 procedure gemm_thread(const start, finish: IntPtr; const data:pointer);
@@ -1138,12 +1303,13 @@ begin
   {$ifdef USE_CPP_GEMM}
   cpp_sgemm(TransA, TransB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc, start, 1);
   {$else}
-  //writeln('gemm m:',start,' to:', finish);
+
   if (transA=CblasNoTrans) and (transB=CblasNoTrans)then begin
-    //write(#13'MATMULstart ', start,' ,finish ', finish, setClearLineEnd);
+
     for idx :=start to finish do begin
       CC := C + idx*ldc;
       AA := A + idx*lda;
+      qscale(N, BETA, CC, 1);
       for kk:= 0 to K-1 do begin
         qaxpy(N, alpha*AA[kk], B+kk*ldb, CC);
         //for nn:=0 to N-1 do
@@ -1156,6 +1322,7 @@ begin
     for idx:=start to finish do begin
       CC := C + idx*ldc;
       AA := A + idx*lda;
+      qscale(N, BETA, CC, 1);
       for nn := 0 to N-1 do begin
           BB := B + nn*ldb;
           a_part := qdot(K, AA, BB);
@@ -1171,6 +1338,7 @@ begin
   if (transA=CblasTrans) and (transB=CblasNoTrans)then begin
     for idx :=start to finish do begin
       CC := C + idx*ldc;
+      qscale(N, BETA, CC, 1);
       for kk:=0 to K-1 do begin
         a_part := ALPHA*A[kk*lda + idx];
         BB := B + kk*ldb;
@@ -1184,38 +1352,28 @@ begin
   end;
   {$endif}
 end;
-var i: longint;
+var i,j: longint;
+
 {$ifdef FPC}
 begin
 {$endif}
   // todo qgemm Simdify
   assert((order=CblasRowMajor) and not((TransA=CblasTrans) and (TransB=CblasTrans)),'ERROR : Operation is not supported using the provided arguments!');
 
-  //vk.sgemm(transA=CblasTrans, transB=CblasTrans, M, N, K, ALPHA, A, lda, B, ldb, BETA, c, ldc);
-  //exit;
+  if (transA=CblasNoTrans) and (transB=CblasNoTrans) then
+    gemm_nn(M, N, K, ALPHA, A, lda, B, ldb , BETA, C, ldc)
+  else
+  if (transA=CblasNoTrans) and (transB=CblasTrans) then
+    gemm_nt(M, N, K, ALPHA, A, lda, B, ldb , BETA, C, ldc)
+  else assert(false, 'GEMM : Operation NOT Implemeted!');
+  exit;
 
-  {$ifdef USE_CPP_GEMM}
-  //cblas_sgemm(order, transA, transB, M, N,K, alpha, A, lda, B, ldb, beta, C, ldc);
-  //exit;
-  {$endif}
-
-  //start :=0 ;
-  //finish := M-1;
-    if BETA=0 then
-      FillChar(C^, (M*N*sizeOf(Single)), 0)
-    else if BETA<>1 then
-      cblas_scal(M*N, BETA, C, 1);
+  // naive GEMM
   {$if defined(USE_MULTITHREADING)}
-    mp.&For(gemm_thread, 0, M-1);
+  mp.&For(gemm_thread, 0, M-1);
   {$else}
   gemm_thread(0, M-1, nil);
-  //for i:=0 to M-1 do gemm_thread(i, nil)
   {$endif}
-end;
-
-function CEIL_DIV(const A, B:longword):longword;
-begin
-  result := (A + B-1) div B
 end;
 
 function MIN(const a, b:longint):longint;inline;
@@ -1677,7 +1835,7 @@ begin
       mt);
 end;
 
-{$define USE_IM2Col}
+//{$define USE_IM2Col}
 class procedure TQNNSingleOPS.QNNConv2d(const dst, src, weights, bias: PSingle; const in_ch,
   out_ch, H, W, kH, kW, stride, padding: longint; const batch: longint);
 const MAX_COL_SIZE = 256 * 1024 * 1024;
@@ -2145,7 +2303,7 @@ var
   i: longint;
   max_val, sum, inv_sum: Single;
 begin
-{$ifdef _CPUX64}
+{$ifdef CPUX64}
   QNNSoftmax_avx2(N, x);
 {$else}
   max_val := QNNMax(N, x);
@@ -2325,6 +2483,7 @@ begin
                     if score > max_score then
                         begin
                             correction := fast_exp(max_score-score);
+                            //correction := exp(max_score-score);
                             sum_exp := sum_exp*correction + 1.0;
                             QNNFusedScaleAdd(o_row, o_row, v_row, correction, head_dim);
                             //for d := 0 to head_dim -1 do
@@ -2334,6 +2493,7 @@ begin
                     else
                         begin
                             weight := fast_exp(score-max_score);
+                            //weight := exp(score-max_score);
                             sum_exp := sum_exp + weight;
                             cblas_axpy(head_dim, weight, v_row, 1, o_row, 1);
                             //for d := 0 to head_dim -1 do
@@ -2416,6 +2576,7 @@ begin
                     new_max := old_max;
                 if old_max > -1 then begin
                     correction := fast_exp(old_max-new_max);
+                    //correction := exp(old_max-new_max);
                     sum_exps[i] := sum_exps[i] * correction;
                     cblas_scal(head_dim, correction, o_row, 1);
                     //for d := 0 to head_dim -1 do
@@ -2423,6 +2584,7 @@ begin
                 end;
                 for ki := 0 to k_len -1 do  begin
                     weight := fast_exp(score_row[ki]-new_max);
+                    //weight := exp(score_row[ki]-new_max);
                     sum_exps[i] := sum_exps[i] + weight;
                     v_row := V_tile+ki * head_dim;
                     cblas_axpy(head_dim, weight, v_row, 1, o_row, 1);
@@ -2701,7 +2863,8 @@ begin
   dst_ptr := result;
   for i := 0 to half_dim-1 do begin
       (* freq = exp(-log(max_period) * i / half_dim) *)
-      freq := exp(-log_max * (i / half_dim));
+      freq := fast_exp(-log_max * (i / half_dim));
+      //freq := exp(-log_max * (i / half_dim));
       angle := t * freq;
       dst_ptr[i] := cos(angle);           (* cos part first (flip_sin_to_cos=True) *)
       dst_ptr[i + half_dim] := sin(angle);    (* sin part second *)
@@ -3066,6 +3229,7 @@ end;
 
 class procedure TQNNSingleOPS.printCompare(const N:longint; const src1, src2:PSingle; const isSumSqrDiff:boolean =false);
 var md,out1,out2: single;
+const L_EPSILON = 2e-5;
 begin
   assert(assigned(src1) and assigned(src2), 'ERROR : src1 and src2 must be assigned');
   writeln('');
@@ -3073,10 +3237,10 @@ begin
   printStat(src2, N);
   if isSumSqrDiff then begin
     md := QNNSqrDistance(N, src1, src2);
-    writeln('SqrDistance :', md:1:5);
+    writeln('SqrDistance :',ifthen(md>L_EPSILON, setColor4(colorPurple),setColor4(colorLime)), md:1:5, resetColor);
   end else begin
     md := QNNMaxAbsDiff2(N, src1, src2, out1, out2);
-    writeln('MaxAbsDiff :', md:1:5, ' max src1 :', out1:1:6, ' max src2:', out2:1:6);
+    writeln('MaxAbsDiff :',ifthen(md>L_EPSILON, setColor4(colorPurple),setColor4(colorLime)), md:1:5, resetColor, ' max src1 :', out1:1:6, ' max src2:', out2:1:6);
   end;
 end;
 
@@ -3169,6 +3333,11 @@ var
 
 var i:longint;
 
+const
+  M = 512;
+  N = 512;
+  K = 512;
+
 initialization
   //SetExceptionMask([exInvalidOp, exPrecision, exUnderflow, exZeroDivide, exOverflow]);
   //for i:=0 to high(TQNNVulkan.VulkanDevices) do
@@ -3226,13 +3395,13 @@ initialization
         TQNNSingleOPS.cblas_sscal := cblas_sscal  ;
         TQNNSingleOPS.isUsingBlas := true;
   {$else}
-  hBLASLib := LoadLibrary(blaslib);
-  if hBLASLib=0 then
-    hBLASLib:=LoadLibrary('lib'+blaslib);
-  if hBLASLib=0 then
-    hBLASLib:=LoadLibrary(blaslib64);
-  if hBLASLib=0 then
-    hBLASLib:=LoadLibrary('lib'+blaslib64);
+  //hBLASLib := LoadLibrary(blaslib);
+  //if hBLASLib=0 then
+  //  hBLASLib:=LoadLibrary('lib'+blaslib);
+  //if hBLASLib=0 then
+  //  hBLASLib:=LoadLibrary(blaslib64);
+  //if hBLASLib=0 then
+  //  hBLASLib:=LoadLibrary('lib'+blaslib64);
 
   if (hBLASLib>0) then begin
     TQNNSingleOPS.cblas_sgemm   := getProcAddress(hBLASLib, 'cblas_sgemm');
@@ -3247,75 +3416,74 @@ initialization
     TQNNSingleOPS.openblas_get_config         :=  getProcAddress(hBLASLib, 'openblas_get_config');
     TQNNSingleOPS.openblas_get_corename       :=  getProcAddress(hBLASLib, 'openblas_get_corename');
   end;
-  TQNNSingleOPS.isUsingBlas := hBlaslib<>0;
+  TQNNSingleOPS.isUsingBlas := true;//hBlaslib<>0;
   if isConsole and (hBLASLIB<>0) then
     writeln('Using [', ansistring(TQNNSingleOPS.openblas_get_config()), ']');
   {$endif}
-
-
-(* //for GEMM tesing
   randomize;
-  A := TMemoryBlock.create(M*KK, 'A');
-  dptr := A;
-  for i:=0 to A.Count-1 do
-    dptr[i] := 10*(random()*2 -1);
-  B := TMemoryBlock.create(KK*N, 'B');
-  dptr := B;
-  for i:=0 to B.Count-1 do
-    dptr[i] := 10*(random()*2 -1);
+(*
+ //for GEMM tesing
+  randomize;
+  A := TMemoryBlock.create([M,K], 'A');
+  randArray(A.count, A);
+
+  B := TMemoryBlock.create([K,N], 'B');
+  randArray(B.count, B);
 
   O := TMemoryBlock.create([M, N], 'O');
-  dptr := O;
-  for i:=0 to O.Count-1 do
-    dptr[i] := 10*(random()*2 -1);
+  randArray(O.count, O);
 
   O2 := TMemoryBlock.create([M, N], 'O2');
+  randArray(O2.count, O2);
   TQNNSingleOPS.QNNCopy(O2, O, O.count);
 
   //set_prn(printf);
 
   //for i:=0 to 10 do begin
-    TQNNSingleOPS.cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, KK, 1.5, A, KK, B, N, 0, O, N) ;
-    //vk.sgemm(false, false, M, N, KK, 1.5, A, KK, B, N, 0, O2, N) ;
-         gemm1_nn(M, N, KK, 1.5, A, KK, B, N, 0, O2, N) ;
-
-   //cpp_sgemm(               CblasNoTrans, CblasNoTrans, M, N, KK, 1.5, Q, KK, K, N, 0, O2, N, 0 , M) ;
+  //  TQNNSingleOPS.cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, M, N, K, 1.5, A, K, B, N, 0, O, N) ;
+  //  //vk.sgemm(false, false, M, N, KK, 1.5, A, KK, B, N, 0, O2, N) ;
+  //                                                              gemm_nn(M, N, K, 1.5, A, K, B, N, 0, O2, N) ;
+  //
+  // //cpp_sgemm(               CblasNoTrans, CblasNoTrans, M, N, KK, 1.5, Q, KK, K, N, 0, O2, N, 0 , M) ;
   //end;
-   //for i:=0 to 10 do
-   //    TQNNSingleOPS.cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, M, N, KK, 1, A, KK, B, KK, 1, O , N) ;
-   //for i:=0 to 10 do
-   //    gemm1_nn(CblasRowMajor, CblasNoTrans, CblasTrans, M, N, KK, 1, A, KK, B, KK, 1, O2, N) ;
+  for i:=0 to 10 do begin
+    TQNNSingleOPS.cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, M, N, K, 1, A, K, B, K, 1, O , N) ;
+                                                               gemm_nt(M, N, K, 1, A, K, B, K, 1, O2, N) ;
+  end;
   //cpp_sgemm(                CblasNoTrans, CblasTrans, M, N, KK, 1.5, Q, KK, K, KK, 0, O2, N, 0, M) ;
 
   //cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, M, N, KK, 1.5, Q, M, K, N, 0, O, N) ;
   //     qgemm(CblasRowMajor, CblasTrans, CblasNoTrans, M, N, KK, 1.5, Q, M, K, N, 0, O2, N) ;
 
-  O .print();
-  O2.print();
+  //O .print();
+  //O2.print();
 
   O.printCompare(O2, false);
 
   readln;
+*)
 
-  *)
-
-  //randomize;
-  //A := TMemoryBlock.Create([94], 'A');
-  ////a := TArray<single>([1, 2, 3, 4, 5, 6, 7 ,8, 9, 10, 11, 12, 13, 14 , 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41]);
-  //randArray(a.count, A);
+(*
+  randomize;
+  A := TMemoryBlock.Create([1000], 'A');
+  //a := TArray<single>([1, 2, 3, 4, 5, 6, 7 ,8, 9, 10, 11, 12, 13, 14 , 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41]);
+  randArray(a.count, A, -15, 15);
   //writeln(TQNNSingleOPS.QNNSumSqr(A.count, A):1:6);
   //writeln(QNNSumSqr_avx2(A.count, A):1:6);
   //
   //B := TMemoryBlock.Create([1000, 1000], 'B');
-  //O := TMemoryBlock.Create([1000, 1000], 'O');
-  //O2 := TMemoryBlock.Create([1000, 1000], 'O2');
+  O := TMemoryBlock.Create([1000], 'O');
+
+  O2 := TMemoryBlock.Create([1000], 'O2');
+  TQNNSingleOPS.QNNCopy(O, A, A.Count);
+  TQNNSingleOPS.QNNCopy(O2, A, A.Count);
   //
   //randArray(B.count, B);
   //
-  //TQNNSingleOPS.QNNSilu(O, A, A.count);
-  //QNNSiLU_avx2(A.Count, A, nil, nil, O2);
-  //O.printCompare(O2, true);
-
+  TQNNSingleOPS.QNNSoftmax(O, O.count);
+  QNNSoftmax_avx2(O2.Count, O2);
+  O.printCompare(O2);
+*)
 
 
 finalization

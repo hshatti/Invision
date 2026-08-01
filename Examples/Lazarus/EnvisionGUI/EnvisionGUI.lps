@@ -10,7 +10,7 @@
         <IsPartOfProject Value="True"/>
         <EditorIndex Value="2"/>
         <CursorPos Y="18"/>
-        <UsageCount Value="94"/>
+        <UsageCount Value="98"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
@@ -20,8 +20,9 @@
         <HasResources Value="True"/>
         <ResourceBaseClass Value="Form"/>
         <UnitName Value="mainUnit"/>
-        <CursorPos X="8" Y="451"/>
-        <UsageCount Value="94"/>
+        <TopLine Value="182"/>
+        <CursorPos X="37" Y="197"/>
+        <UsageCount Value="98"/>
         <Loaded Value="True"/>
         <LoadedDesigner Value="True"/>
       </Unit>
@@ -73,10 +74,10 @@
       <Unit>
         <Filename Value="..\..\..\src\nhttp.pas"/>
         <UnitName Value="nHttp"/>
-        <EditorIndex Value="10"/>
+        <EditorIndex Value="11"/>
         <TopLine Value="25"/>
         <CursorPos X="69" Y="56"/>
-        <UsageCount Value="30"/>
+        <UsageCount Value="31"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
@@ -118,10 +119,10 @@
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\quickjson.pas"/>
-        <EditorIndex Value="11"/>
+        <EditorIndex Value="12"/>
         <TopLine Value="923"/>
         <CursorPos X="25" Y="939"/>
-        <UsageCount Value="47"/>
+        <UsageCount Value="48"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
@@ -162,7 +163,7 @@
         <Filename Value="..\..\..\src\quicknn_common.pas"/>
         <EditorIndex Value="8"/>
         <CursorPos X="64" Y="418"/>
-        <UsageCount Value="47"/>
+        <UsageCount Value="48"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
@@ -170,7 +171,7 @@
         <EditorIndex Value="7"/>
         <TopLine Value="690"/>
         <CursorPos Y="712"/>
-        <UsageCount Value="47"/>
+        <UsageCount Value="48"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
@@ -178,7 +179,7 @@
         <EditorIndex Value="4"/>
         <TopLine Value="258"/>
         <CursorPos X="3" Y="248"/>
-        <UsageCount Value="47"/>
+        <UsageCount Value="48"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
@@ -186,16 +187,16 @@
         <EditorIndex Value="5"/>
         <TopLine Value="526"/>
         <CursorPos Y="1959"/>
-        <UsageCount Value="47"/>
+        <UsageCount Value="48"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\quicknncpu.pas"/>
         <IsVisibleTab Value="True"/>
         <EditorIndex Value="9"/>
-        <TopLine Value="3608"/>
-        <CursorPos X="38" Y="3629"/>
-        <UsageCount Value="45"/>
+        <TopLine Value="3397"/>
+        <CursorPos X="19" Y="3404"/>
+        <UsageCount Value="46"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
@@ -368,7 +369,7 @@
       <Unit>
         <Filename Value="..\..\..\src\sixel.pas"/>
         <EditorIndex Value="3"/>
-        <UsageCount Value="21"/>
+        <UsageCount Value="22"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
@@ -446,7 +447,7 @@
         <UnitName Value="uMetaDarkStyle"/>
         <EditorIndex Value="1"/>
         <CursorPos X="3" Y="33"/>
-        <UsageCount Value="15"/>
+        <UsageCount Value="16"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
@@ -482,11 +483,19 @@
         <EditorIndex Value="6"/>
         <TopLine Value="311"/>
         <CursorPos X="14" Y="338"/>
-        <UsageCount Value="15"/>
+        <UsageCount Value="16"/>
+        <Loaded Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="..\..\..\src\ops_avx2.inc"/>
+        <EditorIndex Value="10"/>
+        <TopLine Value="568"/>
+        <CursorPos X="61" Y="593"/>
+        <UsageCount Value="11"/>
         <Loaded Value="True"/>
       </Unit>
     </Units>
-    <JumpHistory HistoryIndex="14">
+    <JumpHistory HistoryIndex="25">
       <Position>
         <Filename Value="mainunit.pas"/>
         <Caret Line="9" Column="24"/>
@@ -547,6 +556,50 @@
         <Filename Value="..\..\..\src\quicknncpu.pas"/>
         <Caret Line="3629" Column="33" TopLine="3608"/>
       </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknncpu.pas"/>
+        <Caret Line="3322" Column="95" TopLine="3319"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\ops_avx2.inc"/>
+        <Caret Line="17" Column="37" TopLine="3"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\ops_avx2.inc"/>
+        <Caret Line="41" Column="34" TopLine="12"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\ops_avx2.inc"/>
+        <Caret Line="593" Column="61" TopLine="568"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknncpu.pas"/>
+        <Caret Line="1371" Column="16" TopLine="1344"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknncpu.pas"/>
+        <Caret Line="1276" Column="3" TopLine="1261"/>
+      </Position>
+      <Position>
+        <Filename Value="mainunit.pas"/>
+        <Caret Line="197" Column="37" TopLine="182"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknncpu.pas"/>
+        <Caret Line="3430" Column="18" TopLine="3410"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknncpu.pas"/>
+        <Caret Line="2818" Column="66" TopLine="2805"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknncpu.pas"/>
+        <Caret Line="3385" Column="51" TopLine="3359"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknncpu.pas"/>
+        <Caret Line="94" Column="21" TopLine="76"/>
+      </Position>
     </JumpHistory>
     <RunParams>
       <FormatVersion Value="2"/>
@@ -560,7 +613,7 @@
         <WatchScope Value="wpsLocal"/>
         <WatchKind Value="wpkWrite"/>
         <Source Value="..\..\..\src\quicknncpu.pas"/>
-        <Line Value="3630"/>
+        <Line Value="3649"/>
       </Item>
     </BreakPoints>
   </Debugging>

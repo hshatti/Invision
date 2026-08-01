@@ -1537,9 +1537,9 @@ begin
         writeln('SqrDistance :', md:1:5);
       end else begin
         md := TQNNSingleOPS.QNNMaxAbsDiff2(count, self, src, src1, src2);
-        if md<>0 then begin
-          src.print(psSIXELDithered, 3);
-        end;
+        //if md<>0 then begin
+        //  src.print(psSIXELDithered, 3);
+        //end;
         writeln('MaxAbsDiff :', md:1:5, ' max src1 :', src1:1:6, ' max src2:', src2:1:6);
       end;
     end

@@ -115,6 +115,9 @@
         </Win32>
       </Options>
     </Linking>
+    <Other>
+      <CustomOptions Value="-dUSE_MULTITHREADING"/>
+    </Other>
   </CompilerOptions>
   <Debugging>
     <Exceptions>

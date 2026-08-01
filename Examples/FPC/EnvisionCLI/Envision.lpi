@@ -138,7 +138,6 @@
       <Unit>
         <Filename Value="..\..\..\src\ops_avx2.inc"/>
         <IsPartOfProject Value="True"/>
-        <UnitName Value="unit1"/>
       </Unit>
     </Units>
   </ProjectOptions>
