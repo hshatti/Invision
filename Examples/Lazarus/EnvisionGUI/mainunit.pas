@@ -1,17 +1,18 @@
+//{$apptype console}
 unit mainUnit;
 {$ifdef FPC}
 {$mode Delphi}
 {$endif}
 {$pointermath on}
+{$assertions on}
 {$H+}
 
 interface
 
 uses
-  Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ExtCtrls, StdCtrls,
-  Buttons, ComCtrls, Spin, ExtDlgs, quicknn_transformers, quicknn_common,
-  quicknn_vae, quicknn_flux, quicknn_zimage
-  , Types;
+  Classes, SysUtils, Types, LCLType, Forms, Controls, Graphics, Dialogs, ExtCtrls, StdCtrls,
+  Buttons, ComCtrls, Spin, ExtDlgs, MaskEdit, quicknn_transformers,
+  quicknn_common, quicknn_vae, quicknn_flux, quicknn_zimage;
 
 type
 
@@ -24,6 +25,57 @@ type
     procedure DoTerminate; override;
 
   end;
+
+  { THSEdit }
+
+  THSEdit = class(TCustomControl)
+  const BTN_WIDTH = 20;
+  type
+    TBtn=class(TCustomControl)
+      published
+        Property OnMouseEnter;
+        Property OnMouseLeave;
+        Property OnMouseDown;
+        Property OnMouseUp;
+    end;
+  private
+    FItemIndex: integer;
+    FItems: TStrings;
+    FText: string;
+    FEdit : TCustomEdit;
+    FBtn: TBtn;
+    FList :TCustomListBox;
+    procedure FOnBtnPaint(Sender:TObject);
+    procedure FOnItemsChange(Sender:TObject);
+    procedure FOnListSelectionChange(Sender:TObject;user:boolean);
+    procedure FOnListClick(sender:TObject);
+    procedure FOnListKeyDown(sender:TObject; var key:word; shift:TShiftState);
+    procedure FOnEditChange(Sender:TObject);
+    procedure FOnEditKeyDown(sender:TObject; var key:word; shift:TShiftState);
+    procedure FOnListExit(Sender:TObject);
+    procedure FBtnEnter(Sender:TObject);
+    procedure FBtnLeave(Sender:TObject);
+    procedure FBtnClick(Sender:TObject);
+    procedure FOnListBoxSetVisible(Sender:TObject);
+    procedure SetItemIndex(AValue: integer);
+    procedure SetItems(AValue: TStrings);
+    procedure SetText(AValue: string);
+    // gets the left and top reltive to the top form
+    function getLocation():TRect;
+  protected
+    procedure SetColor(Value: TColor); override;
+  public
+    constructor Create(AOwner: TComponent); override;
+    procedure paint;override;
+    destructor Destroy; override;
+    procedure FOnItemChange(Sender:TObject);
+  published
+    property ItemIndex:integer read FItemIndex write SetItemIndex;
+    property Text : string read FText write SetText;
+    property Items:TStrings read FItems write SetItems;
+
+  end;
+
 
   THSProgressStyle = (psNormal, psMarquee, psStrips, psPulse, psPie, psDonut);
 
@@ -72,6 +124,7 @@ type
     btnImg2Img: TSpeedButton;
     btnTxt2Img: TSpeedButton;
     cmbModels: TComboBox;
+    cmbImgRes: TComboBox;
     edtSeed: TEdit;
     edtSeed1: TEdit;
     Image1: TImage;
@@ -81,6 +134,7 @@ type
     Label3: TLabel;
     Label4: TLabel;
     Label5: TLabel;
+    Label6: TLabel;
     memoPrompt: TMemo;
     memoPrompt1: TMemo;
     Notebook1: TNotebook;
@@ -96,7 +150,7 @@ type
     Splitter1: TSplitter;
     spnSteps1: TSpinEdit;
     txt2img: TPage;
-    img2mg: TPage;
+    img2img: TPage;
     Panel1: TPanel;
     ProgressBar1:THSProgressBar;
     procedure btnGenerateClick(Sender: TObject);
@@ -106,15 +160,17 @@ type
     procedure FormClose(Sender: TObject; var CloseAction: TCloseAction);
     procedure FormCreate(Sender: TObject);
     procedure btnLoadPicClick(Sender: TObject);
-    procedure applyHsButton;
+    procedure FormShow(Sender: TObject);
   private
     procedure checkExistingModels;
   public
+    modeledit1, imgRes:THSEdit;
     generateThread : TGenerateThread
   end;
 
 var
   MainForm: TMainForm;
+
 
 implementation
 uses
@@ -169,13 +225,16 @@ end;
 procedure OnTextStepCallback(const step, steps:longint);
 begin
   MainForm.ProgressBar1.StepIt;
+  MainForm.ProgressBar1.caption := format('%d/%d', [MainForm.ProgressBar1.Position, MainForm.ProgressBar1.Max]);
   MainForm.generateThread.Synchronize(MainForm.Update);
   if MainForm.generateThread.CheckTerminated then
     abort
 end;
 
 procedure OnPreviewCallback(const step, steps:longint; const latent:TMemoryBlock);
-type TRGB = packed record r, g, b:byte end;
+type
+
+     TRGB = packed record r, g, b, a:byte end;
      PRGB = ^TRGB;
 var img:TQNNImage;
   bmp:Graphics.TBitmap;
@@ -184,7 +243,11 @@ var img:TQNNImage;
 begin
   img := PVAE(vae_ptr).preview(latent, flux2_latent_rgb_proj, latent.height(), latent.width(), latent.height(), 1, flux2_latent_rgb_bias, 2).resize(128, 128);
   bmp := Graphics.TBitmap.Create;
+{$ifdef MSWINDOWS}
+  bmp.PixelFormat:=pf32bit;
+{$else}
   bmp.PixelFormat:=pf24bit;
+{$endif}
   bmp.SetSize(img.width, img.height);
   bmp.BeginUpdate();
   for y:=0 to img.Height-1 do begin
@@ -193,6 +256,9 @@ begin
       rgb[x].r := img.data[y*img.width*3 + x*3+2];
       rgb[x].g := img.data[y*img.width*3 + x*3+1];
       rgb[x].b := img.data[y*img.width*3 + x*3];
+{$ifdef MSWINDOWS}
+      rgb[x].a := 255;
+{$endif}
     end;
   end;
   bmp.EndUpdate();
@@ -214,10 +280,17 @@ var
   params:TGenerateParams;
   img:TQNNImage;
   fn : TFileName;
+  strRes : array of string;
+  imWidth, imHeight:longInt;
 begin
+  strRes := string(MainForm.cmbImgRes.Text).Split(' ');
+
+  assert((length(strRes)=3) and (TryStrToInt(strRes[0], imWidth)) and (TryStrToInt(strRes[2], imHeight)), 'Incorrect image dimensions!');
   with MainForm do begin
     if Notebook1.PageIndex=0 then try // txt2Img
       params := default(TGenerateParams);
+      params.width:=imWidth;
+      params.height:=imHeight;
       params.num_steps := spnSteps.Value;
       params.guidance  := 0;
       params.powerAlpha:= 2.0;
@@ -231,29 +304,37 @@ begin
       substep_callback:=OnStepCallback;
       text_progress_callback:= OnTextStepCallback;
       vae_progress_callback:= OnTextStepCallback;
-      flux := TQNNFlux.load(AppPath+MODELS_DIR+'/'+cmbModels.Text);
-      ProgressBar1.Max:= 27 + params.num_steps*(5 + 20 + 2) + 16;  // text_encode_steps + steps*transformer_blocks + ve_decoder_steps
       ProgressBar1.Position := 0;
-      flux.use_mmap:=true;
-      img := flux.generate(memoPrompt.Text, params, OnPreviewCallback);
+      if LowerCase(cmbModels.Text).Contains('flux') then begin
+        flux := TQNNFlux.load(AppPath+MODELS_DIR+'/'+cmbModels.Text);
+        ProgressBar1.Max:= 27 + params.num_steps*(5 + 20 + 2) + 16;  // text_encode_steps + steps*transformer_blocks + ve_decoder_steps
+        flux.use_mmap:=true;
+        img := flux.generate(memoPrompt.Text, params, OnPreviewCallback);
+      end;
+      if lowerCase(cmbModels.Text).Contains('z-image') then begin
+        zi := TQNNZImage.load(AppPath+MODELS_DIR+'/'+cmbModels.Text);
+        ProgressBar1.Max:= 35 + params.num_steps*(2 + 2 + 44) + 15;  // text_encode_steps + steps*transformer_blocks + ve_decoder_step;
+        zi.use_mmap:=true;
+        img := zi.generate(memoPrompt.Text, params{, OnPreviewCallback});
+      end;
       fn := AppPath+FormatDateTime('yyyymmdd_hhnnss', now())+'.png';
       img.saveToFile(fn);
       image1.Picture.LoadFromFile(fn);
 
     finally
-      flux.free();
+      if flux.transformer.isLoaded() then flux.free();
+      if zi.transformer.isLoaded() then zi.free();
       img.free
     end;
 
     if Notebook1.PageIndex=1 then try // img2Img
-      if not fileExists(dlgImage.FileName) then begin
-        ShowMessage('Load an image 1st.');
-        exit
-      end;
 
       params := default(TGenerateParams);
       params.num_steps := spnSteps1.Value;
       params.guidance  := 0;
+      params.width:=imWidth;
+      params.height:=imHeight;
+
       params.powerAlpha:= 2.0;
       if (trim(edtSeed1.Text)='') or (strToInt(edtSeed1.text)<=0) then
         params.seed := random(Int64.MaxValue)
@@ -297,6 +378,232 @@ begin
   inherited DoTerminate;
 end;
 
+{ THSEdit }
+
+procedure THSEdit.FOnBtnPaint(Sender: TObject);
+var ts:TTextStyle;
+begin
+  FBtn.Canvas.Pen.Color:=$c0c0c0;
+  FBtn.Canvas.Pen.Cosmetic:=false;
+  FBtn.Canvas.Pen.Width:=1;
+  if FBtn.MouseInClient then
+    FBtn.Canvas.Brush.Color:=ColorBright(FBtn.Color, 20)
+  else
+    FBtn.Canvas.Brush.Color:=FBtn.Color;
+  FBtn.Canvas.RoundRect(FBtn.ClientRect, 0, 0);
+  FBtn.Font.Color:=parent.Font.Color;
+  with TCustomControl(Sender).Canvas do begin
+    ts := TextStyle;
+    ts.Alignment:=taCenter;
+    ts.Layout:=tlCenter;
+    TextStyle:=ts;
+    TextRect(FBtn.ClientRect, 0, 0, FBtn.Caption);
+  end
+end;
+
+procedure THSEdit.FOnItemsChange(Sender: TObject);
+begin
+  FList.Items.Text:=Items.Text;
+end;
+
+procedure THSEdit.FOnListSelectionChange(Sender: TObject; user: boolean);
+begin
+  if FList.ItemIndex>=0 then begin
+    FEdit.Text := FList.Items[FList.ItemIndex];
+  end;
+  //FList.Hide
+end;
+
+procedure THSEdit.FOnListClick(sender: TObject);
+begin
+  //FList.Hide;
+end;
+
+procedure THSEdit.FOnListKeyDown(sender: TObject; var key: word;
+  shift: TShiftState);
+begin
+  case key of
+    VK_RETURN:
+      FList.Click;
+    //VK_UP: if FList.ItemIndex>0 then
+    //  FList.ItemIndex := FList.ItemIndex -1;
+    //VK_DOWN: if FList.ItemIndex<FList.Items.Count-1 then
+    //  FList.ItemIndex := FList.ItemIndex +1;
+
+  end;
+end;
+
+procedure THSEdit.FOnEditChange(Sender: TObject);
+begin
+  Text:=FEdit.Text;
+end;
+
+procedure THSEdit.FOnEditKeyDown(sender: TObject; var key: word;
+  shift: TShiftState);
+begin
+  case key of
+    VK_RETURN: FList.Click;
+    VK_UP:begin
+      if FList.ItemIndex>0 then
+        FList.ItemIndex := FList.ItemIndex -1;
+      key := 0
+    end;
+    VK_DOWN: begin
+      if FList.ItemIndex<FList.Items.Count-1 then
+        FList.ItemIndex := FList.ItemIndex +1;
+      key := 0;
+    end;
+    VK_ESCAPE:
+      FList.Hide;
+  end;
+end;
+
+procedure THSEdit.FOnListExit(Sender: TObject);
+begin
+  //Flist.Hide
+end;
+
+procedure THSEdit.FBtnEnter(Sender: TObject);
+begin
+  FBtn.Color:=ColorBright(FBtn.Color, 20);
+end;
+
+procedure THSEdit.FBtnLeave(Sender: TObject);
+begin
+  FBtn.Color:=ColorBright(FBtn.Color, -20);
+end;
+
+procedure THSEdit.FBtnClick(Sender: TObject);
+begin
+  //FList.Items.Text := Items.Text;
+  FList.Visible := not FList.Visible;
+  if FList.Visible and FList.CanSetFocus then begin
+    FList.Update;
+    FList.SetFocus();
+  end;
+
+end;
+
+procedure THSEdit.FOnListBoxSetVisible(Sender: TObject);
+var
+  r:TRect;
+begin
+  if not Visible then exit;
+  FList.Parent := TWinControl(GetTopParent);
+  R := getLocation();
+  FList.Left:= FEdit.Left  + R.Left;
+  FList.Top:=  FEdit.Top + FEdit.height + R.Top;
+
+  Flist.Width  := FEdit.Width;
+end;
+
+procedure THSEdit.SetItemIndex(AValue: integer);
+begin
+  if FItemIndex=AValue then Exit;
+  FItemIndex:=AValue;
+  FList.ItemIndex:=AValue;
+end;
+
+procedure THSEdit.SetItems(AValue: TStrings);
+begin
+  assert(assigned(AValue), 'Items cannot be nil!');
+  if FItems=AValue then Exit;
+  if assigned(FItems) then FItems.free;
+  FItems:=AValue;
+end;
+
+procedure THSEdit.SetText(AValue: string);
+begin
+  if FText=AValue then Exit;
+  FText:=AValue;
+end;
+
+function THSEdit.getLocation(): TRect;
+var control:TWinControl;
+begin
+  result := Default(TRect);
+  result.Width  :=Width;
+  result.Height :=Height;
+  control:=Self;
+  while control.parent<>nil do begin
+    result.Left := result.Left + control.left;
+    result.Top := result.Top + control.Top;
+    control := control.parent;
+  end;
+end;
+
+procedure THSEdit.SetColor(Value: TColor);
+begin
+  inherited SetColor(Value);
+  FEdit.Color:=ColorBright(Value, -20);
+end;
+
+
+constructor THSEdit.Create(AOwner: TComponent);
+begin
+  inherited Create(AOwner);
+  width := 100;
+  height:=20;
+  FItems := TStringList.Create;
+  FItemIndex:=-1;
+  FEdit :=TCustomEdit.Create(Self);
+  FEdit.Parent:=Self;
+  FEdit.Color := Color;
+
+  FEdit.BorderStyle:=bsNone;
+  FEdit.SetBounds(1, 1, Width-BTN_WIDTH, Height-2);
+  FEdit.Anchors := [akLeft, akTop, akRight, akbottom];
+  //FEdit.Alignment:=taVerticalCenter;
+
+  FList := TCustomListBox.Create(self);
+  FList.BorderStyle:=bsNone;
+  FList.Color := ColorBright(Color, -20);
+  //FList.Font.Color:=Font.Color;
+  FList.OnSelectionChange:=FOnListSelectionChange;
+  FEdit.OnKeyDown:=FOnEditKeyDown;
+  FList.OnClick:=FOnListClick;
+  FList.OnKeyDown:=FOnListKeyDown;
+  FList.AddHandlerOnVisibleChanged(FOnListBoxSetVisible);
+  TStringList(FItems).OnChange:=FOnItemsChange;
+  FList.Visible := false;
+  Flist.Height := 100;
+
+  FBtn  :=TBtn.Create(Self);
+  FBtn.Color := $cc7700;
+  FBtn.Parent := Self;
+  FBtn.SetBounds(width - BTN_WIDTH, 1, BTN_WIDTH, height-2);
+  FBtn.Anchors:=[akTop, akRight, akBottom];
+  FBtn.OnPaint:=FOnBtnPaint;
+  FBtn.OnMouseEnter:=FBtnEnter;
+  FBtn.OnMouseLeave:=FBtnLeave;
+  FBtn.OnClick:=FBtnClick;
+
+  FBtn.Caption:='▼';
+
+
+  //FBtn.SetBounds(width - 16, 2, 16, height - 4);
+
+end;
+
+procedure THSEdit.paint;
+begin
+  inherited paint;
+end;
+
+destructor THSEdit.Destroy;
+begin
+  Fedit.free;
+  Flist.free;
+  Fbtn .free;
+  FItems.Free;
+  inherited Destroy;
+end;
+
+procedure THSEdit.FOnItemChange(Sender: TObject);
+begin
+  FList.Items.Text:=FItems.Text;
+end;
+
 { THSProgressBar }
 {$Assertions on}
 constructor THSProgressBar.Create(AOwner: TComponent);
@@ -305,7 +612,7 @@ begin
   FMin := 0;
   FMax := 10;
   FStep:= 1;
-  FBarColor := clLime;
+  FBarColor := $bb6600;
 end;
 
 destructor THSProgressBar.Destroy();
@@ -427,6 +734,10 @@ begin
 
   end;
   if Notebook1.PageIndex=1 then begin
+    if not fileExists(dlgImage.FileName) then begin
+      ShowMessage('Load an image 1st.');
+      exit
+    end;
     if btnGenerate1.Caption = 'Generate' then begin
       TControl(btnGenerate1).Caption := 'Stop';
       TControl(btnTxt2Img).Enabled:=false;
@@ -444,7 +755,7 @@ end;
 
 procedure TMainForm.btnImg2ImgClick(Sender: TObject);
 begin
-  img2mg.Show;
+  img2img.Show;
 end;
 
 procedure TMainForm.cmbModelsDropDown(Sender: TObject);
@@ -466,18 +777,39 @@ begin
   checkExistingModels;
   if cmbModels.Items.count>0 then
     cmbModels.ItemIndex:=0;
+  cmbModels.hide;
+  cmbImgRes.hide;
+
+  modelEdit1:= THSEdit.Create(Self);
+  modeledit1.Parent:=Panel4;
+  modelEdit1.SetBounds(cmbModels.Left, cmbModels.Top, cmbModels.Width, cmbModels.Height);
+  modelEdit1.Anchors:=[akLeft, akTop, akRight];
+  modeledit1.Items.Text:=cmbModels.Items.Text;
+  if modeledit1.Items.Count>0 then
+    modeledit1.ItemIndex:=0;
+
+  imgRes := THSEdit.Create(Self);
+  imgRes.parent := panel4;
+  imgRes.SetBounds(cmbImgRes.Left, cmbImgRes.Top, cmbImgRes.Width, cmbImgRes.Height);
+  modelEdit1.Anchors:=[akLeft, akTop];
+  imgRes.items.Text := cmbImgRes.items.text;
+  if imgRes.Items.Count>0 then
+    imgRes.ItemIndex:=0;
+
   progressBar1 := THSProgressBar.Create(Self);
+  progressBar1.BarShowText:=true;
   ProgressBar1.Parent := Self;
   ProgressBar1.Height := 12;
   ProgressBar1.Align  := alBottom;
   {$ifdef MSWindows}
   SetDarkModeTitleBar(self, true);
   {$endif}
-  applyHsButton;
 end;
 
 procedure TMainForm.btnLoadPicClick(Sender: TObject);
-type TRGB = packed record r, g, b:byte end;
+type
+
+     TRGB = packed record r, g, b, a:byte end;
      PRGB = ^TRGB;
 var img:TQNNImage;
   bmp:Graphics.TBitmap;
@@ -487,7 +819,11 @@ begin
   if not dlgImage.Execute  then exit;
   img := TQNNImage.loadFromFile(dlgImage.FileName);
   bmp := Graphics.TBitmap.Create;
-  bmp.PixelFormat:=pf24bit;
+  {$ifdef MSWINDOWS}
+    bmp.PixelFormat:=pf32bit;
+  {$else}
+    bmp.PixelFormat:=pf24bit;
+  {$endif}
   bmp.SetSize(img.width, img.height);
   bmp.BeginUpdate();
   for y:=0 to img.Height-1 do begin
@@ -496,6 +832,9 @@ begin
       rgb[x].r := img.data[y*img.width*3 + x*3+2];
       rgb[x].g := img.data[y*img.width*3 + x*3+1];
       rgb[x].b := img.data[y*img.width*3 + x*3];
+{$ifdef MSWINDOWS}
+      rgb[x].a := 255;
+{$endif}
     end;
   end;
   bmp.EndUpdate();
@@ -506,65 +845,10 @@ begin
 end;
 
 
-procedure TMainForm.applyHsButton;
-var i:longint;
-  ctrl : THSButton;
-  src1 : TBitBtn;
-
-  n,c : string;
+procedure TMainForm.FormShow(Sender: TObject);
 begin
-  //for i:=0 to ComponentCount-1 do
-  i :=0;
-  while i< ComponentCount do begin
-    if (Components[i] is TBitBtn) then begin
-      src1 := TBitBtn(Components[i]);
-      ctrl := THSButton.Create(Self); // the ownwer will free the button so no memory leaks in theory
-      ctrl.SetBounds(src1.Left, src1.Top, src1.Width, src1.Height);
-      ctrl.Visible := src1.Visible;
-      ctrl.Parent  := src1.Parent;
-      ctrl.anchors  := src1.anchors;
-      ctrl.Align   := src1.Align;
-      ctrl.OnClick := src1.OnClick;
-      ctrl.Glyph   := src1.Glyph;
-      ctrl.BorderSpacing.assign(src1.BorderSpacing);
-      //ctrl.Caption := src1.Caption;
-      ctrl.Layout  := src1.Layout;
-      ctrl.Color   := src1.Color;
-      ctrl.Smooth  := 0;
-      ctrl.Style   := THSButtonStyle.bsRounded;
-      ctrl.Border  := 4;
-      ctrl.TabOrder:= src1.TabOrder;
-      ctrl.SlowDecease:= sdEnterLeave;
-      ctrl.SlowDeceaseSpeed:=16;
-      ctrl.DrawFocus:=false;
-      ctrl.Hint:=src1.Hint;
-      ctrl.ShowHint := src1.ShowHint;
-      n := src1.Name;// can do? no we cant
-      c := src1.Caption;
-      Components[i].Free;
-      ctrl.Name := n;
-      ctrl.Caption:= c;
-    end
-    //else if (Components[i] is TProgressBar) then begin
-    //  src2 := TProgressBar(Components[i]);
-    //  bar := THSProgressBar.Create(Self); // the ownwer will free the button so no memory leaks in theory
-    //  bar.SetBounds(src2.Left, src2.Top, src2.Width, src2.Height);
-    //  bar.Parent  := src2.Parent;
-    //  bar.Align   := src2.Align;
-    //  bar.Visible := src2.Visible;
-    //  bar.Caption := src2.Caption;
-    //  bar.Color   := src2.Color;
-    //  bar.Step    := src2.Step;
-    //  bar.Min     := src2.Min;
-    //  bar.Max     := src2.Max;
-    //  bar.Position:= src2.Position;
-    //  n := src2.Name;
-    //  Components[i].Free;
-    //  bar.Name := n;
-    //end
-    else
-      inc(i);
-  end;
+  //modeledit1.parent := self;
+  //
 end;
 
 procedure TMainForm.checkExistingModels;

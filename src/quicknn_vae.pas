@@ -283,7 +283,7 @@ begin
             vb := V + b * ch * spatial;
             ob := attn_out + b * ch * spatial;
             QNNMatTranspose(q_t, qb, ch, spatial);
-            QNNScale(q_t, q_t, scale, spatial);
+            QNNScaleInplace(q_t, scale, ch*spatial);
             QNNMatTranspose(k_t, kb, ch, spatial);
             QNNMatTranspose(v_t, vb, ch, spatial);
 

@@ -181,6 +181,7 @@ type
 
       function isAssigned():boolean;
       function isAllocated():boolean;
+      function is_Nan():boolean;
       procedure printStat;
       procedure assignPtr(const ptr:PSingle; const aShape:TArray<int64>); overload;
       procedure assignPtr(const ptr:PBF16; const aShape:TArray<int64>); overload;
@@ -1210,6 +1211,35 @@ begin
   end;
 end;
 
+function TMemoryBlock.is_Nan():boolean;
+var i:IntPtr;
+  f:psingle;
+  d:PDouble;
+  b:PBF16;
+  s: longword;
+begin
+  result := false;
+  if not (DataType in [dtF32,dtF64]) then exit();
+  case datatype of
+    dtF32: begin
+      f := self;
+      for i:=0 to count-1 do
+        if isnan(f[i]) then exit(true);
+    end;
+    dtBF16: begin
+      b := self;
+      for i:=0 to Count-1 do begin
+        s := b[i] shl 16;
+        if isnan(PSingle(@s)^) then exit(true);
+      end;
+    end;
+    else
+      assert(false, 'is_nan : not implemented for this data type')
+
+  end;
+
+end;
+
 procedure TMemoryBlock.assignPtr(const ptr: PSingle; const aShape:TArray<int64>);
 begin
   assert(not isAllocated(), 'TMemoryBlock.assignPtr : Cannot assign a pointer to an already allocatd memory block!');
@@ -1514,12 +1544,14 @@ end;
 
 class operator TMemoryBlock.add(const src:TMemoryBlock; const aOffset:longint):TMemoryBlock  ;
 begin
+  assert(inRange(src.offset + aOffset, 0, src.Size), '[ERROR] offset is beyond the Tensor boundries.');
   result := src;
   result.offset:= src.offset + aOffset;
 end;
 
 class operator TMemoryBlock.add(const src:TMemoryBlock; const aOffset:int64):TMemoryBlock  ;
 begin
+  assert(inRange(src.offset + aOffset, 0, src.Size), '[ERROR] offset is beyond the Tensor boundries.');
   result := src;
   result.offset:= src.offset + aOffset;
 end;
@@ -1825,6 +1857,13 @@ begin
     Result := [ow, oh];
     exit;
   end;
+  write('[');
+  for i:= 0 to Count-1 do
+    if i=0 then
+      write(_Data[i]:5:4)
+    else
+      write(', ',_Data[i]:5:4);
+  writeln(']')
 
   //writeln(toString());
 end;

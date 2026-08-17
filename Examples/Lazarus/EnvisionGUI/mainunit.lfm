@@ -1,12 +1,14 @@
 object MainForm: TMainForm
   Left = 200
-  Height = 607
+  Height = 513
   Top = 100
-  Width = 904
+  Width = 783
   Caption = 'MainForm'
-  ClientHeight = 607
-  ClientWidth = 904
+  ClientHeight = 513
+  ClientWidth = 783
   Color = 3355443
+  Constraints.MinHeight = 480
+  Constraints.MinWidth = 640
   Font.CharSet = ANSI_CHARSET
   Font.Color = 13290186
   Font.Pitch = fpVariable
@@ -15,16 +17,17 @@ object MainForm: TMainForm
   LCLVersion = '4.8.0.0'
   OnClose = FormClose
   OnCreate = FormCreate
+  OnShow = FormShow
   object Panel1: TPanel
     Left = 0
-    Height = 573
+    Height = 479
     Top = 34
     Width = 48
     Align = alLeft
     BevelColor = 6710886
     BevelOuter = bvNone
     BevelWidth = 2
-    ClientHeight = 573
+    ClientHeight = 479
     ClientWidth = 48
     ParentBackground = False
     TabOrder = 0
@@ -210,39 +213,39 @@ object MainForm: TMainForm
   end
   object Notebook1: TNotebook
     Left = 48
-    Height = 573
+    Height = 479
     Top = 34
-    Width = 856
-    PageIndex = 1
+    Width = 735
+    PageIndex = 0
     Align = alClient
     TabOrder = 1
     object txt2img: TPage
       Color = 2236962
       object Panel3: TPanel
         Left = 0
-        Height = 573
+        Height = 479
         Top = 0
-        Width = 856
+        Width = 735
         Align = alClient
         BevelOuter = bvNone
-        ClientHeight = 573
-        ClientWidth = 856
+        ClientHeight = 479
+        ClientWidth = 735
         ParentBackground = False
         TabOrder = 0
         object Splitter1: TSplitter
           Cursor = crVSplit
           Left = 0
           Height = 5
-          Top = 373
-          Width = 856
+          Top = 279
+          Width = 735
           Align = alBottom
           ResizeAnchor = akBottom
         end
         object Image1: TImage
           Left = 0
-          Height = 373
+          Height = 279
           Top = 0
-          Width = 856
+          Width = 735
           Align = alClient
           Center = True
           Picture.Data = {
@@ -347,12 +350,12 @@ object MainForm: TMainForm
         object Panel2: TPanel
           Left = 0
           Height = 195
-          Top = 378
-          Width = 856
+          Top = 284
+          Width = 735
           Align = alBottom
           BevelOuter = bvNone
           ClientHeight = 195
-          ClientWidth = 856
+          ClientWidth = 735
           Color = 3355443
           ParentBackground = False
           ParentColor = False
@@ -361,7 +364,7 @@ object MainForm: TMainForm
             Left = 0
             Height = 190
             Top = 4
-            Width = 765
+            Width = 639
             Anchors = [akTop, akLeft, akRight, akBottom]
             BorderStyle = bsNone
             Color = 2236962
@@ -371,7 +374,7 @@ object MainForm: TMainForm
             TabOrder = 0
           end
           object spnSteps: TSpinEdit
-            Left = 771
+            Left = 650
             Height = 23
             Top = 104
             Width = 83
@@ -383,9 +386,9 @@ object MainForm: TMainForm
             Value = 4
           end
           object edtSeed: TEdit
-            Left = 771
+            Left = 650
             Height = 15
-            Top = 166
+            Top = 172
             Width = 82
             Anchors = [akTop, akRight]
             BorderStyle = bsNone
@@ -394,7 +397,7 @@ object MainForm: TMainForm
             Text = '0'
           end
           object Label1: TLabel
-            Left = 778
+            Left = 657
             Height = 15
             Top = 85
             Width = 28
@@ -402,7 +405,7 @@ object MainForm: TMainForm
             Caption = 'Steps'
           end
           object Label2: TLabel
-            Left = 780
+            Left = 659
             Height = 30
             Top = 133
             Width = 70
@@ -410,7 +413,7 @@ object MainForm: TMainForm
             Caption = 'Seed'#13#10'(0 = random)'
           end
           object btnGenerate: TSpeedButton
-            Left = 771
+            Left = 650
             Height = 78
             Top = 4
             Width = 82
@@ -717,33 +720,33 @@ object MainForm: TMainForm
         end
       end
     end
-    object img2mg: TPage
+    object img2img: TPage
       Color = 2236962
       object Panel5: TPanel
         Left = 0
-        Height = 573
+        Height = 479
         Top = 0
-        Width = 856
+        Width = 735
         Align = alClient
         BevelOuter = bvNone
-        ClientHeight = 573
-        ClientWidth = 856
+        ClientHeight = 479
+        ClientWidth = 735
         ParentBackground = False
         TabOrder = 0
         object Splitter2: TSplitter
           Cursor = crVSplit
           Left = 0
           Height = 5
-          Top = 373
-          Width = 856
+          Top = 279
+          Width = 735
           Align = alBottom
           ResizeAnchor = akBottom
         end
         object Image2: TImage
           Left = 0
-          Height = 373
+          Height = 279
           Top = 0
-          Width = 856
+          Width = 735
           Align = alClient
           Center = True
           Picture.Data = {
@@ -848,12 +851,12 @@ object MainForm: TMainForm
         object Panel6: TPanel
           Left = 0
           Height = 195
-          Top = 378
-          Width = 856
+          Top = 284
+          Width = 735
           Align = alBottom
           BevelOuter = bvNone
           ClientHeight = 195
-          ClientWidth = 856
+          ClientWidth = 735
           Color = 3355443
           ParentBackground = False
           ParentColor = False
@@ -862,7 +865,7 @@ object MainForm: TMainForm
             Left = 0
             Height = 190
             Top = 4
-            Width = 765
+            Width = 644
             Anchors = [akTop, akLeft, akRight, akBottom]
             BorderStyle = bsNone
             Color = 2236962
@@ -872,8 +875,8 @@ object MainForm: TMainForm
             TabOrder = 0
           end
           object spnSteps1: TSpinEdit
-            Left = 771
-            Height = 23
+            Left = 650
+            Height = 27
             Top = 104
             Width = 83
             Anchors = [akTop, akRight]
@@ -884,8 +887,8 @@ object MainForm: TMainForm
             Value = 4
           end
           object edtSeed1: TEdit
-            Left = 771
-            Height = 15
+            Left = 650
+            Height = 23
             Top = 166
             Width = 82
             Anchors = [akTop, akRight]
@@ -895,23 +898,23 @@ object MainForm: TMainForm
             Text = '0'
           end
           object Label4: TLabel
-            Left = 778
-            Height = 15
+            Left = 651
+            Height = 19
             Top = 85
-            Width = 28
+            Width = 34
             Anchors = [akTop, akRight]
             Caption = 'Steps'
           end
           object Label5: TLabel
-            Left = 780
-            Height = 30
+            Left = 651
+            Height = 38
             Top = 133
-            Width = 70
+            Width = 78
             Anchors = [akTop, akRight]
             Caption = 'Seed'#13#10'(0 = random)'
           end
           object btnGenerate1: TSpeedButton
-            Left = 771
+            Left = 650
             Height = 78
             Top = 4
             Width = 82
@@ -1217,11 +1220,11 @@ object MainForm: TMainForm
           end
         end
         object btnLoadPic: TSpeedButton
-          Left = 720
+          Left = 576
           Height = 26
           Hint = 'Load Picture'
           Top = 4
-          Width = 135
+          Width = 158
           Anchors = [akTop, akRight]
           Caption = 'Load Reference Image'
           Color = 3355443
@@ -1235,20 +1238,19 @@ object MainForm: TMainForm
     Left = 0
     Height = 34
     Top = 0
-    Width = 904
+    Width = 783
     Align = alTop
     BevelOuter = bvSpace
     ClientHeight = 34
-    ClientWidth = 904
+    ClientWidth = 783
     ParentBackground = False
     TabOrder = 2
     object cmbModels: TComboBox
       Left = 52
       Height = 23
       Top = 4
-      Width = 428
+      Width = 462
       Anchors = [akTop, akLeft, akRight]
-      BorderStyle = bsSingle
       Color = 2236962
       ItemHeight = 15
       TabOrder = 0
@@ -1260,6 +1262,32 @@ object MainForm: TMainForm
       Top = 8
       Width = 34
       Caption = 'Model'
+    end
+    object cmbImgRes: TComboBox
+      Left = 656
+      Height = 23
+      Top = 4
+      Width = 117
+      Anchors = [akTop, akRight]
+      Color = 2236962
+      ItemHeight = 15
+      ItemIndex = 0
+      Items.Strings = (
+        '256 X 256'
+        '512 X 512'
+        '1024 X 1024'
+        '1280 X 720'
+      )
+      TabOrder = 1
+      Text = '256 X 256'
+    end
+    object Label6: TLabel
+      Left = 572
+      Height = 15
+      Top = 8
+      Width = 77
+      Anchors = [akTop, akRight]
+      Caption = 'Output Image '
     end
   end
   object dlgImage: TOpenPictureDialog

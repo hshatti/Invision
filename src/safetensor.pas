@@ -24,7 +24,7 @@ uses
   , Windows
   {$elseif defined(DARWIN)} // POSIX
   {$else}
-  , unixbase
+  //, unixbase
   {$endif}
   , quicknn_common
   , quickjson

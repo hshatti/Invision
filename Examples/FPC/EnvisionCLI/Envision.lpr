@@ -5,6 +5,9 @@ program Envision;
 {$endif}
 
 uses
+  {$ifndef MSWINDOWS}
+  cthreads,
+  {$endif}
   SysUtils, Generics.Collections, TypInfo
   , quicknn_common
   , quicknn_transformers
@@ -127,7 +130,7 @@ begin
   //params.seed:= 666;
   //params.seed:=1781898218;
   params.powerAlpha := 2;
-  params.num_steps := 4;
+  params.num_steps := 2;
   substep_callback:=afterblockForward;
   step_callback := afterstep;
   text_progress_callback:=afterstep;
@@ -150,7 +153,7 @@ begin
   //img := flux.generate('تفاحة', params);
   imgFile := GetCurrentDir()+ DirectorySeparator+FormatDateTime('YYYY_MM_DD_hhnnsszzz', Now())+ '_pascal.png';
   writeln('Saving to [', imgFile ,']');
-  img.saveToFile(imgFile, 'Invision', '{"program" : "Invision , a (text to image/ image to image) generator example written in Object Pascal", "model" : "'+zimage.model_name+'"'+'"prompt" : "'+StringReplace(PROMPT, '"', '\"', [rfReplaceAll])+'", "seed" : '+IntToStr(params.seed)+'}');
+  img.saveToFile(imgFile, 'Envision', '{"program" : "Invision , a (text to image/ image to image) generator example written in Object Pascal", "model" : "'+zimage.model_name+'"'+'"prompt" : "'+StringReplace(PROMPT, '"', '\"', [rfReplaceAll])+'", "seed" : '+IntToStr(params.seed)+'}');
   zimage.free;
   {$else}
 
@@ -183,7 +186,7 @@ begin
   //img := flux.generate('تفاحة', params);
   imgFile := GetCurrentDir()+ DirectorySeparator+FormatDateTime('YYYY_MM_DD_hhnnsszzz', Now())+ '_pascal.png';
   writeln('Saving to [', imgFile ,']');
-  img.saveToFile(imgFile, 'program', 'Invision, a (txt2img/img2img) generator example written in Object Pascal (Delphi and FPC)');
+  img.saveToFile(imgFile, 'program', 'Envision, a (txt2img/img2img) generator example written in Object Pascal (Delphi and FPC)');
   img.addPngMeta(imgFile, 'json',
                           '{"model" : "'+flux.model_name+'"'+
                           ', "prompt" : "'+StringReplace(PROMPT, '"', '\"', [rfReplaceAll])+

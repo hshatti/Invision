@@ -38,8 +38,9 @@ uses
   {$if defined(MSWINDOWS)}
   , windows
   {$elseif defined(DARWIN)}
-  {$elseif defined(POSIX)}
-  , unixbase
+  {$elseif defined(UNIX)}
+  , dynlibs
+  //, unixbase
   {$endif}
   {$ifdef USE_MULTITHREADING}
   , steroids
@@ -204,7 +205,7 @@ type
     class function QNNSumAbsDiffScalar(const N: integer; const src: PSingle; const aMean:Single; const stride: integer=1): Single;  overload;
     class function QNNMean(const N:integer; const src:PSingle; const stride:integer=1):Single;
     class function QNNVariance(const N:integer; const src:PSingle; const aMean:Single; const stride:integer=1; const isPopulation:boolean=true):Single;
-    class procedure QNNSigmoid(const x: PSingle; const N:integer); overload;
+    class procedure QNNSigmoidInplace(const x: PSingle; const N:integer); overload;
     class procedure QNNSigmoid(const dst, src: PSingle; const N:integer); overload;
     class procedure QNNSiluInplace(const x:PSingle; const N:integer);     overload;
     class procedure QNNSilu(const dst, src:PSingle; const N:integer);     overload;
@@ -411,7 +412,7 @@ begin
   if assigned(arg) then arg^ := 0;
   if stride=1 then begin
     {$ifdef CPUX64}
-    if not assigned(arg) then exit(QNNMax_avx2(N, src));
+    if not assigned(arg) then exit(sMax_avx2(N, src));
     {$endif}
     for i:=1 to N-1 do
       if src[i]>result then begin
@@ -435,7 +436,7 @@ begin
   if assigned(arg) then arg^ := 0;
   if stride=1 then begin
     {$ifdef CPUX64}
-    if not assigned(arg) then exit(QNNMin_avx2(N, src));
+    if not assigned(arg) then exit(sMin_avx2(N, src));
     {$endif}
     for i:=1 to N-1 do
       if src[i]<result then begin
@@ -537,7 +538,7 @@ begin
   result := 0;
   if stride=1 then
     {$if defined(CPUX64)}
-     exit(QNNSumSqr_avx2(N, src))
+     exit(sSumSqr_avx2(N, src))
     {$else}
     for i:=0 to N-1 do
       result := result + sqr(src[i])
@@ -554,7 +555,7 @@ begin
   result := 0;
   if stride=1 then
     {$if defined(CPUX64)}
-    exit(QNNSumSqrDiff_avx2(N, src, @amean))
+    exit(sSumSqrDiff_avx2(N, src, @amean))
     {$else}
     for i:=0 to N-1 do
       result := result + sqr(src[i]-aMean)
@@ -755,7 +756,7 @@ var i:integer;
 begin
   // todo SIMDIFY QNNFusedScaleBias (Scalars)
   {$ifdef CPUX64}
-  QNNFusedScaleBias_avx2(N, dst, src, aScale, aBias);
+  sFusedScaleBias_avx2(N, dst, src, aScale, aBias);
   {$else}
   for i:=0 to N-1 do
       dst[i] := src[i]*aScale + aBias
@@ -794,7 +795,7 @@ begin
     QNNMul(dst, src1, src2, N)
   else
     {$if defined(CPUX64)}
-    QNNFusedMulScale_avx2(N, dst, src1, src2, aScale);
+    sFusedMulScale_avx2(N, dst, src1, src2, aScale);
     {$else}
     for i:=0 to N-1 do
       dst[i] := src1[i]*src2[i]*aScale
@@ -1054,7 +1055,7 @@ begin
   // todo qscale Simdify
   if incX=1 then
     {$ifdef CPUX64}
-    QNNScaleInplace_avx2(N, X, alpha)
+    sScaleInplace_avx2(N, X, alpha)
     {$else}
     for i:=0 to N-1 do
       X[i]:= X[i]*alpha
@@ -1160,8 +1161,8 @@ end;
 const
   // according to my CPU this is the sweet spot
   TILE_M = 8;
-  TILE_N = 16;
-  TILE_K = 16;
+  TILE_N = 8;
+  TILE_K = 8;
 
 procedure gemm_nn( const M, N, K:int64;
                    const ALPHA:single;
@@ -1171,7 +1172,13 @@ procedure gemm_nn( const M, N, K:int64;
                    const C:PSingle; const ldc:int64
                    );
 
+{$ifdef FPC}
 procedure tile(tm_start:IntPtr; data:pointer);
+{$else}
+var tile:TThreadProcNested;
+begin
+  tile := procedure (tm_start:IntPtr; data:pointer)
+{$endif}
 var
   tm_finish, tk_start, tk_finish, tm, tk :int64;
 begin
@@ -1185,13 +1192,13 @@ begin
       TQNNSingleOps.qscale(N, BETA, C+tm*ldc, 1);
 
     tk_start := 0;
-    while tk_start<CEIL_DIV(K, TILE_K)*TILE_K do begin
+    while tk_start<K {CEIL_DIV(K, TILE_K)*TILE_K} do begin
       tk_finish := tk_start + TILE_K;
       if tk_finish>K then tk_finish := K;
 
       for tm := tm_start to tm_finish-1 do begin
         for tk := tk_start to tk_finish-1 do begin
-          TQNNSingleOps.qaxpy(N, ALPHA*A[tm*lda + tk], B+tk*ldb, C + tm*ldc);
+          TQNNSingleOps.qaxpy(N, ALPHA*A[tm*lda + tk], B + tk*ldb, C + tm*ldc);
         end;
       end;
 
@@ -1202,7 +1209,9 @@ begin
 end;
 
 var i:Int64;
+{$ifdef fpc}
 begin
+{$endif}
   {$ifdef USE_MULTITHREADING}
   mp.&For(tile, 0, CEIL_DIV(M, TILE_M)*TILE_M, nil, TILE_M);
   {$else}
@@ -1222,9 +1231,15 @@ procedure gemm_nt( const M, N, K:int64;
                    const C:PSingle; const ldc:int64
                    );
 
+{$ifdef FPC}
 procedure tile(tm_start:IntPtr; data:pointer);
+{$else}
+var tile:TThreadProcNested;
+begin
+  tile := procedure (tm_start:IntPtr; data:pointer)
+{$endif}
 var
-  tm_finish, tn_start, tn_finish, tm, tn, tk_start, tk_finish, k_span :int64;
+  tm_finish, tn_start, tn_finish, tm, tn, tk_start, tk_finish, k_span, n_span :int64;
   a_part : Single;
   AA, BB, CC : PSingle;
   c_result : array[0..TILE_M*TILE_N-1] of single;
@@ -1239,9 +1254,10 @@ begin
       TQNNSingleOps.qscale(N, BETA, C+tm*ldc, 1);
 
     tn_start := 0;
-    while tn_start<CEIL_DIV(N, TILE_N)*TILE_N do begin
+    while tn_start<N{CEIL_DIV(N, TILE_N)*TILE_N} do begin
       tn_finish := tn_start + TILE_N;
-      if tn_finish>n then tn_finish := N;
+      if tn_finish>N then tn_finish := N;
+      n_span := tn_finish - tn_start;
       tk_start := 0;
       (* K tiling is slower,  perhaps we need to select TILE values
        based on the matricies dimensions and the CPU L1/L2 sizes   *)
@@ -1257,19 +1273,41 @@ begin
       //  end;
       //  inc(tk_start, TILE_K)
       //end;
+
+      //for tm := tm_start to tm_finish-1 do begin
+      //  CC := C + tm*ldc;
+      //  for tn := tn_start to tn_finish-1 do begin
+      //    a_part := ALPHA*TQNNSingleOps.qdot(K, A + tm*lda, B + tn*ldb);
+      //    CC[tn] := CC[tn] + a_part;
+      //  end;
+      //end;
+
       for tm := tm_start to tm_finish-1 do begin
-        for tn := tn_start to tn_finish-1 do begin
-          a_part := ALPHA*TQNNSingleOps.qdot(K, A + tm*lda, B+tn*ldb);
-          C[tm*ldc + tn] := C[tm*ldc +tn] + a_part;
+        CC := C + tm*ldc;
+        tn := tn_start;
+        while tn < tn_finish do begin
+          sDot_x4_avx2(A + tm*lda, B + tn*ldb, CC + tn, K, ldb, ALPHA);
+          inc(tn, 4)
+        end;
+        if tn>tn_finish then begin
+          dec(tn, 4);
+          while tn<tn_finish do begin
+            a_part := ALPHA*TQNNSingleOps.qdot(K, A + tm*lda, B + tn*ldb);
+            CC[tn] := CC[tn] + a_part;
+            inc(tn)
+          end;
         end;
       end;
+
       inc(tn_start, TILE_N)
     end;
   //  inc(tm_start, TILE_M)
   //end;
 end;
 var i:int64;
+{$ifdef fpc}
 begin
+{$endif}
   {$ifdef USE_MULTITHREADING}
   mp.&For(tile, 0, CEIL_DIV(M, TILE_M)*TILE_M, nil, TILE_M);
   {$else}
@@ -1281,11 +1319,70 @@ begin
   {$endif}
 end;
 
+procedure gemm_tn(const M ,N ,K : int64;
+                   const ALPHA:single; const A:PSingle; const lda: int64;
+                   const B:PSingle; const ldb:int64;
+                   const BETA:single; const C:PSingle; const ldc:int64);
+
+{$ifdef FPC}
+procedure tile(tm_start:IntPtr; data:pointer);
+{$else}
+var tile:TThreadProcNested;
+begin
+  tile := procedure (tm_start:IntPtr; data:pointer)
+{$endif}
+var
+  tm_finish, tk_start, tk_finish, tm, tk :int64;
+  AA:PSingle;
+begin
+  //tm_start := 0;
+  //while tm_start < CEIL_DIV(M, TILE_M)*TILE_M do begin
+    tm_finish := tm_start + TILE_M;
+    if tm_finish>M then tm_finish := M;
+
+    for tm:=tm_start to tm_finish-1 do
+      TQNNSingleOps.qscale(N, BETA, C+tm*ldc, 1);
+
+    tk_start := 0;
+    while tk_start<K {CEIL_DIV(K, TILE_K)*TILE_K} do begin
+      tk_finish := tk_start + TILE_K;
+      if tk_finish>K then tk_finish := K;
+
+      for tk := tk_start to tk_finish-1 do begin
+        AA := A + tk*lda;
+        for tm := tm_start to tm_finish-1 do begin
+          TQNNSingleOps.qaxpy(N, ALPHA*AA[tm], B + tk*ldb, C + tm*ldc);
+        end;
+      end;
+
+      inc(tk_start, TILE_K)
+    end;
+    //inc(tm_start, TILE_M)
+  //end;
+end;
+
+var i:Int64;
+{$ifdef fpc}
+begin
+{$endif}
+
+  {$ifdef USE_MULTITHREADING}
+  mp.&For(tile, 0, CEIL_DIV(M, TILE_M)*TILE_M, nil, TILE_M);
+  {$else}
+  i:=0;
+  while i<CEIL_DIV(M, TILE_M)*TILE_M-1 do begin
+    tile(i, nil);
+    inc(i, TILE_M)
+  end
+  {$endif}
+end;
+
+
 class procedure TQNNSingleOPS.qgemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:int64; N:int64; K:int64;
   alpha:single; A:PSingle; lda:int64; B:PSingle; ldb:int64; beta:single; C:PSingle; ldc:int64); WINAPI;
 
 
-
+(*
 {$ifdef FPC}
 procedure gemm_thread(const start, finish: IntPtr; const data:pointer);
 {$else}
@@ -1352,11 +1449,12 @@ begin
   end;
   {$endif}
 end;
-var i,j: longint;
 
 {$ifdef FPC}
 begin
 {$endif}
+*)
+begin
   // todo qgemm Simdify
   assert((order=CblasRowMajor) and not((TransA=CblasTrans) and (TransB=CblasTrans)),'ERROR : Operation is not supported using the provided arguments!');
 
@@ -1365,15 +1463,19 @@ begin
   else
   if (transA=CblasNoTrans) and (transB=CblasTrans) then
     gemm_nt(M, N, K, ALPHA, A, lda, B, ldb , BETA, C, ldc)
-  else assert(false, 'GEMM : Operation NOT Implemeted!');
+  else
+  if (transA=CblasTrans) and (transB=CblasNoTrans) then
+    gemm_tn(M, N, K, ALPHA, A, lda, B, ldb , BETA, C, ldc)
+  else
   exit;
-
+(*
   // naive GEMM
   {$if defined(USE_MULTITHREADING)}
   mp.&For(gemm_thread, 0, M-1);
   {$else}
   gemm_thread(0, M-1, nil);
   {$endif}
+  *)
 end;
 
 function MIN(const a, b:longint):longint;inline;
@@ -2225,12 +2327,13 @@ begin
     end
 end;
 
-class procedure TQNNSingleOPS.QNNSigmoid(const x: PSingle; const N: integer);
+class procedure TQNNSingleOPS.QNNSigmoidInplace(const x: PSingle;
+  const N: integer);
 var i:integer;
 begin
   // todo sigmoid inplace simdify
   {$ifdef CPUX64}
-  QNNSiLU_avx2(N, x, nil, x, nil);
+  sSiLU_avx2(N, x, nil, x, nil);
   {$else}
   for i := 0 to N-1 do
     x[i] := single(1.0) / (single(1.0) + fast_exp(-x[i]));
@@ -2242,7 +2345,7 @@ var i:integer;
 begin
   // todo sigmoid simdify
   {$ifdef CPUX64}
-  QNNSiLU_avx2(N, src, nil, dst, nil);
+  sSiLU_avx2(N, src, nil, dst, nil);
   {$else}
   for i := 0 to N-1 do
     dst[i] := single(1.0) / (single(1.0) + fast_exp(-src[i]));
@@ -2256,7 +2359,7 @@ var
 begin
   // todo silu inplace simdify
   {$ifdef CPUX64}
-  QNNSiLU_avx2(N, x, nil, nil, x);
+  sSiLU_avx2(N, x, nil, nil, x);
   {$else}
   for i := 0 to N-1 do begin
       val := x[i];
@@ -2272,7 +2375,7 @@ var
 begin
   // todo silu priority simdify
   {$ifdef CPUX64}
-  QNNSiLU_avx2(N, src, nil, nil, dst);
+  sSiLU_avx2(N, src, nil, nil, dst);
   {$else}
     for i := 0 to N-1 do begin
         val := src[i];
@@ -2289,7 +2392,7 @@ begin
 
   // todo siluMul priority simdify
   {$ifdef CPUX64}
-  QNNSiLU_avx2(N, gate, up, nil, gate);
+  sSiLU_avx2(N, gate, up, nil, gate);
   {$else}
   for i := 0 to N-1 do begin
     val := gate[i];
@@ -2302,9 +2405,13 @@ class procedure TQNNSingleOPS.QNNSoftmax(const x: PSingle; const N: integer);
 var
   i: longint;
   max_val, sum, inv_sum: Single;
+  Q:array of single;
 begin
+//setlength(Q, N);
+//move(X^, Q[0], N*sizeof(single));
+//sSoftMax_avx2(N, pointer(Q));
 {$ifdef CPUX64}
-  QNNSoftmax_avx2(N, x);
+  sSoftmax_avx2(N, x);
 {$else}
   max_val := QNNMax(N, x);
   sum := 0.0;
@@ -2316,6 +2423,7 @@ begin
   inv_sum := single(1.0) / sum;
   QNNScaleInplace(x, inv_sum, N);
 {$endif}
+//printCompare(N, x, pointer(Q));
 end;
 
 //procedure softmax(const N: longint ;const a:TArray<single>; const offset:longint);
@@ -2342,16 +2450,34 @@ end;
 
 class procedure TQNNSingleOPS.QNNSoftmaxRows(const x: PSingle; const rows, cols: integer);
 var
-    i, c: longint;
-    row: PSingle;
-    max_val, sum, inv_sum: Single;
-    //a : TArray<single>;
+    i: longint;
+    //c : longint;
+    //row: PSingle;
+    //max_val, sum, inv_sum: Single;
+    ////a : TArray<single>;
+
+{$ifdef FPC}
+procedure worker(idx:IntPtr; data:pointer);
+{$else}
+   worker:THreadProcNested;
 begin
+  worker := procedure (idx:IntPtr; data:pointer)
+{$endif}
+begin
+  QNNSoftmax(x + idx*cols, cols);
+end;
+{$ifdef FPC}
+begin
+{$endif}
   //Pointer(a) := X;
   // todo softmax simdify
+{$ifdef USE_MULTITHREADING}
+    mp.&For(worker, 0, rows);
+{$else}
     for i := 0 to rows -1 do
       //softmax(cols, TArray<Single>(x), i*cols);
       QNNSoftmax(x + i*cols, cols);
+{$endif}
       //begin
       //  row := x+ i*cols;
       //  max_val := row[0];
@@ -3162,9 +3288,11 @@ const
   blaslib = 'openblas.dll';
   blaslib64 = 'openblas_64.dll';
   {$elseif defined(LINUX)}
-  blaslib = 'libopenblas.so';
+  blaslib = 'openblas.so';
+  blaslib64 = 'openblas64.so';
   {$elseif defined(MACOS) or defined(DARWIN)}
   blaslib = 'libopenblas.dylib';
+  blaslib64 = 'libopenblas_64.dylib';
   {$endif}
 
 (*
@@ -3228,8 +3356,10 @@ begin
 end;
 
 class procedure TQNNSingleOPS.printCompare(const N:longint; const src1, src2:PSingle; const isSumSqrDiff:boolean =false);
-var md,out1,out2: single;
-const L_EPSILON = 2e-5;
+var
+  md,out1,out2: single;
+  isDiff:boolean;
+const L_EPSILON = 3e-3;
 begin
   assert(assigned(src1) and assigned(src2), 'ERROR : src1 and src2 must be assigned');
   writeln('');
@@ -3237,10 +3367,14 @@ begin
   printStat(src2, N);
   if isSumSqrDiff then begin
     md := QNNSqrDistance(N, src1, src2);
-    writeln('SqrDistance :',ifthen(md>L_EPSILON, setColor4(colorPurple),setColor4(colorLime)), md:1:5, resetColor);
+    isDiff := md>L_EPSILON;
+    writeln('SqrDistance :',ifthen(isDiff, setColor4(colorPurple),setColor4(colorLime)), md:1:5, resetColor);
+    if isDiff then readln;
   end else begin
     md := QNNMaxAbsDiff2(N, src1, src2, out1, out2);
-    writeln('MaxAbsDiff :',ifthen(md>L_EPSILON, setColor4(colorPurple),setColor4(colorLime)), md:1:5, resetColor, ' max src1 :', out1:1:6, ' max src2:', out2:1:6);
+    isDiff := md>L_EPSILON;
+    writeln('MaxAbsDiff :',ifthen(isDiff, setColor4(colorPurple),setColor4(colorLime)), md:1:5, resetColor, ' max src1 :', out1:1:6, ' max src2:', out2:1:6);
+    if isDiff then readln;
   end;
 end;
 
@@ -3331,12 +3465,13 @@ end;
 var
   A, B, O, O2 : TMemoryBlock;
 
-var i:longint;
+var i:IntPtr;
 
 const
   M = 512;
   N = 512;
   K = 512;
+
 
 initialization
   //SetExceptionMask([exInvalidOp, exPrecision, exUnderflow, exZeroDivide, exOverflow]);
@@ -3399,9 +3534,14 @@ initialization
   //if hBLASLib=0 then
   //  hBLASLib:=LoadLibrary('lib'+blaslib);
   //if hBLASLib=0 then
+  //  hBLASLib:=LoadLibrary('lib'+blaslib+'.0');
+  //
+  //if hBLASLib=0 then
   //  hBLASLib:=LoadLibrary(blaslib64);
   //if hBLASLib=0 then
   //  hBLASLib:=LoadLibrary('lib'+blaslib64);
+  //if hBLASLib=0 then
+  //  hBLASLib:=LoadLibrary('lib'+blaslib64+'.0');
 
   if (hBLASLib>0) then begin
     TQNNSingleOPS.cblas_sgemm   := getProcAddress(hBLASLib, 'cblas_sgemm');
@@ -3433,6 +3573,8 @@ initialization
   O := TMemoryBlock.create([M, N], 'O');
   randArray(O.count, O);
 
+  gemm_nt_8x8(A, B, O, 10, 10, 100, 100, 100);
+
   O2 := TMemoryBlock.create([M, N], 'O2');
   randArray(O2.count, O2);
   TQNNSingleOPS.QNNCopy(O2, O, O.count);
@@ -3462,27 +3604,35 @@ initialization
 
   readln;
 *)
-
 (*
   randomize;
-  A := TMemoryBlock.Create([1000], 'A');
+  //A := [-8.0, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7];//TMemoryBlock.Create([16], 'A');
   //a := TArray<single>([1, 2, 3, 4, 5, 6, 7 ,8, 9, 10, 11, 12, 13, 14 , 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41]);
-  randArray(a.count, A, -15, 15);
+  A := TMemoryBlock.Create([1000], 'A');
+  randArray(a.count, A, -55, 55);
   //writeln(TQNNSingleOPS.QNNSumSqr(A.count, A):1:6);
   //writeln(QNNSumSqr_avx2(A.count, A):1:6);
   //
   //B := TMemoryBlock.Create([1000, 1000], 'B');
-  O := TMemoryBlock.Create([1000], 'O');
 
-  O2 := TMemoryBlock.Create([1000], 'O2');
-  TQNNSingleOPS.QNNCopy(O, A, A.Count);
+  O := TMemoryBlock.Create([a.count()], 'O');
+
+  O2 := TMemoryBlock.Create([a.count], 'O2');
+  TQNNSingleOPS.QNNCopy(O , A, A.Count);
   TQNNSingleOPS.QNNCopy(O2, A, A.Count);
+  O.printStat;
+  O2.printStat();
+
+  TQNNSingleOPS.QNNSoftmax(O, O.count);
+  sSoftmax_avx2(O2.count, O2);
+
+  //TQNNSingleOPS.QNNCopy(O2, A, A.Count);
   //
   //randArray(B.count, B);
   //
-  TQNNSingleOPS.QNNSoftmax(O, O.count);
-  QNNSoftmax_avx2(O2.Count, O2);
+
   O.printCompare(O2);
+  readln
 *)
 
 

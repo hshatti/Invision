@@ -207,7 +207,6 @@ var
   text_seq:longint;
   text_emb : TMemoryBlock;
 begin
-  params.num_steps := 9;
   params.guidance := 0;  // always zero or no?
   (* Encode text (Z-Image mode: extraction mode 1, single layer) *)
   text_emb := encodeText(prompt, text_seq);

@@ -19,6 +19,8 @@ var
   imgFile: String;
   t, memAllocated : int64;
 
+{$stackframes on}
+
 procedure afterblockForward(const typ :TSubstepType; const i, total: longint);
 begin
   case typ of
@@ -112,6 +114,7 @@ begin
   //params.seed:= 666;
   //params.seed:=1781898218;
   params.powerAlpha := 2;
+  params.num_steps := 2;
   substep_callback:=afterblockForward;
   step_callback := afterstep;
   text_progress_callback:=afterstep;

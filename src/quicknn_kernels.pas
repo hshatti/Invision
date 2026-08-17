@@ -658,6 +658,8 @@ end;
 
 procedure QNNMatTranspose(const dst, src: TMemoryBlock; const srcRows, srcCols: longint);
 begin
+  assert(src.offset + srcRows*srcCols<= src.size, 'QNNTranspose : src dimensions out of bounds.');
+  assert(dst.offset + srcRows*srcCols<= dst.size, 'QNNTranspose : dst dimensions out of bounds.');
   case dst.DataType of
     dtF32 :
       TQNNSingleOPS.QNNMatTranspose(dst, src, srcRows, srcCols);
@@ -802,8 +804,9 @@ procedure QNNGroupNorm(const dst, src, gamma, beta: TMemoryBlock; const batch, c
 begin
 
   case dst.DataType of
-    dtF32 :
-      TQNNSingleOPS.QNNGroupNorm(dst, src, gamma, beta, batch, channels, H, W, num_groups)
+    dtF32 : begin
+      TQNNSingleOPS.QNNGroupNorm(dst, src, gamma, beta, batch, channels, H, W, num_groups);
+    end
   else
     OP_IMPL_FAIL()
   end
@@ -1023,7 +1026,7 @@ begin
 
   case x.DataType of
     dtF32 :
-      TQNNSingleOPS.QNNSigmoid(x, N);
+      TQNNSingleOPS.QNNSigmoidInplace(x, N);
   else
     OP_IMPL_FAIL()
   end

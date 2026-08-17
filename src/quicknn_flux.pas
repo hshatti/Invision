@@ -427,6 +427,8 @@ begin
 
     z := init_noise(1, QNN_LATENT_CHANNELS, out_lat_h, out_lat_w, params.seed);
     t_offset := 10;
+    //assert(not img_latent.is_Nan());
+    //img_latent.printStat;
     if is_distilled then
         latent := transformer.sampleEuler(z, 1, QNN_LATENT_CHANNELS, out_lat_h, out_lat_w, img_latent, latent_h, latent_w, t_offset, text_emb, text_seq, schedule, num_steps, progress_callback)
     else

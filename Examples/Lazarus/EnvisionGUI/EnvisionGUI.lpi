@@ -117,6 +117,10 @@
     </Linking>
     <Other>
       <CustomOptions Value="-dUSE_MULTITHREADING"/>
+      <OtherDefines Count="2">
+        <Define0 Value="USE_MULTITHREADING"/>
+        <Define1 Value="USE_CALLOC"/>
+      </OtherDefines>
     </Other>
   </CompilerOptions>
   <Debugging>

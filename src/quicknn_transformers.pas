@@ -522,6 +522,7 @@ type
       procedure timeStepEmbed(const dst:TMemoryBlock; const t:QNNFloat);
       function sampleEuler(const z:TMemoryBlock; const batch{, channels}, h, w, patch_size:longint; const cap_feats:TMemoryBlock;const cap_seq:longint; const schedule:PQNNFloat; const num_steps:longint; const progress_callback:TStepCallback = nil):TMemoryBlock;
       procedure load(const modelDir: string; const adim, an_heads, an_layers, an_refiner, acap_feat_dim, ain_channels, apatch_size: longint; const arope_theta: QNNFloat; const aAxes_dims: Plongint; const useMMAP:boolean = true);
+      function isLoaded():boolean;
       procedure free();
   end;
 
@@ -1673,7 +1674,7 @@ begin
     //        combined_transposed_ptr[(img_seq + pos)*latent_channels + c] := ref_latent_ptr[c*ref_seq + pos];
 
     QNNMatTranspose(combined_transposed, img_latent, latent_channels, img_seq);
-    QNNMatTranspose(combined_transposed + img_seq*latent_channels, ref_latent, latent_channels, img_seq);
+    QNNMatTranspose(combined_transposed + img_seq*latent_channels, ref_latent, latent_channels, ref_seq);
 
 
     combined_hidden := TMemoryBlock.Create([combined_img_seq, hidden_size], 'FLUX_FW_COMBINED_HIDDEN');
@@ -1915,6 +1916,8 @@ var
   img : TQNNImage;
   schedule_ptr : PQNNFloat;
 begin
+  //assert(not ref_latent.is_Nan());
+  //ref_latent.printStat;
   latent_size := batch * channels * h * w;
 
   (* Working buffer *)
@@ -1929,14 +1932,12 @@ begin
       (* Notify step start *)
       if assigned(step_callback) then
           step_callback(step, num_steps);
-
       (* Predict velocity with reference image conditioning *)
       v := forward(result, h, w,
                   ref_latent, ref_h, ref_w,
                   t_offset,
                   text_emb, text_seq,
                   t_curr);
-
       (* Euler step: z_next = result + dt * v *)
       QNNFusedScaleAdd(result, v, result, dt, latent_size);
 
@@ -2657,7 +2658,7 @@ begin
 
     (* 6. Context refiner: caption-only self-attention without modulation *)
     for i := 0 to n_refiner-1 do begin
-        blockForward(cap_emb, context_refiner[i], pointer(cap_pos), nil, TArray<QNNFLoat>(nil), cap_padded);
+        blockForward(cap_emb, context_refiner[i], pointer(cap_pos), nil, default(TMemoryBlock), cap_padded);
         if assigned(substep_callback) then
             substep_callback(SUBSTEP_DOUBLE_BLOCK, n_refiner + i, refiner_total);
     end;
@@ -2921,7 +2922,7 @@ begin
   (* Load final layer *)
   final_layer.adaln_weight := sf_files.getTensorDataMemBlock(format('all_final_layer.%d-1.adaLN_modulation.1.weight', [patch_size]), useMMAP);
   final_layer.adaln_bias := sf_files.getTensorDataMemBlock(format('all_final_layer.%d-1.adaLN_modulation.1.bias', [patch_size]), useMMAP);
-  final_layer.norm_weight := sf_files.getTensorDataMemBlock(format('all_final_layer.%d-1.norm_final.weight', [patch_size]), useMMAP);
+  //final_layer.norm_weight := sf_files.getTensorDataMemBlock(format('all_final_layer.%d-1.norm_final.weight', [patch_size]), useMMAP);
   final_layer.linear_weight := sf_files.getTensorDataMemBlock(format('all_final_layer.%d-1.linear.weight', [patch_size]), useMMAP);
   final_layer.linear_bias := sf_files.getTensorDataMemBlock(format('all_final_layer.%d-1.linear.bias', [patch_size]), useMMAP);
 
@@ -2937,6 +2938,11 @@ begin
   //work_ffn := nil;
   max_seq := 0;
 
+end;
+
+function TTransformerZI.isLoaded(): boolean;
+begin
+  result := assigned(sf_files)
 end;
 
 procedure TTransformerZI.free;
@@ -2974,7 +2980,7 @@ begin
 
   final_layer.adaln_weight.free;
   final_layer.adaln_bias.free;
-  final_layer.norm_weight.free;
+  //final_layer.norm_weight.free;
   final_layer.linear_weight.free;
   final_layer.linear_bias.free;
 

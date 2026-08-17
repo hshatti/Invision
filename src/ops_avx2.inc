@@ -1,4 +1,11 @@
 {$if defined(CPUX64)}
+
+
+(*
+  carful with windows and linux calling conventions, read :
+  https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention?view=msvc-170
+*)
+
 const
   SIMD_REGS = 8;
   //ONE : single =1.0;
@@ -22,15 +29,169 @@ const
   //MAX_EXP =  8.8722839052068352E+001;
   //MIN_EXP = -8.7336544750553102E+001;
 
-  MAX_EXP =  8.872283E+001;
-  MIN_EXP = -8.733654E+001;
+  MAX_EXP =  8.87E+001;
+  MIN_EXP = -8.73E+001;
 
   ONE :array[0..7] of single = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
   ZERO:array[0..7] of single = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
   MX  :array[0..7] of single = (MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP, MAX_EXP);
   MN  :array[0..7] of single = (MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP, MIN_EXP );
 
-procedure QNNExp_avx2(const N:NativeInt; const src:PSingle; const dst:PSingle); assembler;
+  S1442 = 1.4426950408889634;  //log2(e)
+  S0693 = -0.6931471805599453;
+  S0008 = 0.00833333;
+  S0041 = 0.04166667;
+  S0166 = 0.16666667;
+  S0500 = 0.5;
+
+
+  P1442: array[0..7] of single = (S1442, S1442, S1442, S1442, S1442, S1442, S1442, S1442);
+  P0693: array[0..7] of single = (S0693, S0693, S0693, S0693, S0693, S0693, S0693, S0693);
+  P0008: array[0..7] of single = (S0008, S0008, S0008, S0008, S0008, S0008, S0008, S0008);
+  P0041: array[0..7] of single = (S0041, S0041, S0041, S0041, S0041, S0041, S0041, S0041);
+  P0166: array[0..7] of single = (S0166, S0166, S0166, S0166, S0166, S0166, S0166, S0166);
+  P0500: array[0..7] of single = (S0500, S0500, S0500, S0500, S0500, S0500, S0500, S0500);
+
+procedure sExp_avx2_v2(const N:NativeInt; const src:PSingle; const dst:PSingle);assembler;
+asm
+
+//if (x < -87.33) then  exit( 0.0);
+//if (x > 88.72)  then exit( 1e38);
+  //result := exp(x)
+    //if (x < -87.33) then  exit( 0.0);
+    //if (x > 88.72)  then exit( 1e38);
+    ////if (x < MIN_EXP) then  x := MIN_EXP;
+    ////if (x > MAX_EXP)  then  x := MAX_EXP;
+    //n := floor(x * 1.4426950408889634 + 0.5);
+    //r := x - n * 0.6931471805599453;
+    //p := 1.0 + r * (1.0 + r * (0.5 + r * (0.16666667 +
+    //          r * (0.04166667 + r * 0.00833333))));
+    //v.f := p;
+    //inc(v.i, trunc(n) shl 23);
+    //result := v.f;
+  sub                  rsp      , $10*2                     // making stack space to save one xmm size register
+  vmovdqu              [rsp+$00], xmm6
+  vmovdqu              [rsp+$10], xmm7
+
+  mov           r11   , N
+  shr           r11   , 3
+  jz            @rem
+
+@while:
+//n := floor(x * 1.4426950408889634 + 0.5);
+
+  vmovups       ymm3  , yword[src]
+  vcmpgeps      ymm6  , ymm3        , [rip + mx]
+  vcmpleps      ymm7  , ymm3        , [rip + mn]
+  vblendvps     ymm3  , ymm3 , [rip + mx], ymm6
+  vblendvps     ymm3  , ymm3 , [rip + mn], ymm7
+
+
+  vmovaps       ymm2  , ymm3
+  vmulps        ymm2  , ymm2     , [rip + P1442]
+  vaddps        ymm2  , ymm2     , [rip + P0500]            // X L2E + 0.5
+  vroundps      ymm2  , ymm2     , 9          // 9 means floor()  // ymm2 is n
+
+//r := x  + n * (-0.6931471805599453);
+  vmovaps       ymm1  , ymm3
+  vfmadd231ps   ymm1  , ymm2     , [rip + P0693] // ymm1 is now r
+
+  vmovaps       ymm0  , ymm1                  // p := r
+
+//p := p * 0.00833333 + 0.04166667
+  vmovups       ymm5  , [rip +P0008]
+  vfmadd213ps   ymm0  , ymm5     , [rip +P0041]
+
+//p := r*p + 0.16666667
+  vfmadd213ps   ymm0  , ymm1     , [rip +P0166]
+
+//p := r*p + 0.5
+  vfmadd213ps   ymm0  , ymm1     , [rip +P0500]
+
+//p := r*p + 1.0
+  vfmadd213ps   ymm0  , ymm1     , [rip +ONE]
+
+//p := r*p + 1.0
+  vfmadd213ps   ymm0  , ymm1     , [rip +ONE]
+
+// all the above performs now :
+//   p := 1.0 + r*(1.0 + r*(0.5 + r*(0.16666667 + r*(0.04166667 + r*0.00833333)))); // rank 5 approximation
+
+//v.f := p;
+//inc(v.i, trunc(n) shl 23);
+  vcvtps2dq     ymm2  , ymm2
+  vpslld        ymm2  , ymm2     , 23
+  vpaddd        ymm0  , ymm0     , ymm2
+//result := v.f;
+  vmovups       yword [dst]      , ymm0
+
+  add           src   , 32
+  add           dst   , 32
+  dec           r11
+  jnz           @while
+
+@rem:
+  and           N   , 7
+  jz            @done
+  mov           rax  , N
+  vmovd         xmm3 , eax
+  vpbroadcastd  ymm3 , xmm3
+  vpcmpgtd      ymm3 , ymm3, YMMD[rip]
+  vcmpgeps      ymm6 , ymm3        , [rip + mx]
+  vcmpleps      ymm7 , ymm3        , [rip + mn]
+  vblendvps     ymm3 , ymm3 , [rip + mx], ymm6
+  vblendvps     ymm3 , ymm3 , [rip + mn], ymm7
+
+//n := floor(x * 1.4426950408889634 + 0.5);
+  vmaskmovps    ymm2  , ymm3     , yword[src]
+  vmulps        ymm2  , ymm2     , [rip +P1442]
+  vaddps        ymm2  , ymm2     , [rip +P0500]            // X L2E + 0.5
+  vroundps      ymm2  , ymm2     , 9          // 9 means floor()  // ymm2 is n
+
+//r := x  + n * (-0.6931471805599453);
+  vmaskmovps    ymm1  , ymm3     , yword[src]
+  vfmadd231ps   ymm1  , ymm2     , [rip +P0693] // ymm1 is now r
+
+
+
+  vmovaps       ymm0  , ymm1     // p := r
+
+//p := p * 0.00833333 + 0.04166667
+  vmovups       ymm5  , [rip +P0008]
+  vfmadd213ps   ymm0  , ymm5     , [rip +P0041]
+
+//p := r*p + 0.16666667
+  vfmadd213ps   ymm0  , ymm1     , [rip +P0166]
+
+//p := r*p + 0.5
+  vfmadd213ps   ymm0  , ymm1     , [rip +P0500]
+
+//p := r*p + 1.0
+  vfmadd213ps   ymm0  , ymm1     , [rip +ONE]
+
+//p := r*p + 1.0
+  vfmadd213ps   ymm0  , ymm1     , [rip +ONE]
+
+// all the above performs now :
+//   p := 1.0 + r*(1.0 + r*(0.5 + r*(0.16666667 + r*(0.04166667 + r*0.00833333)))); // rank 5 approximation
+
+//v.f := p;
+//inc(v.i, trunc(n) shl 23);
+  vcvtps2dq     ymm2  , ymm2
+  vpslld        ymm2  , ymm2     , 23
+  vpaddd        ymm0  , ymm0     , ymm2
+//result := v.f;
+  vmaskmovps    yword [dst] , ymm3 , ymm0
+
+@done:
+
+  vmovdqu       xmm6  , [rsp+$00]
+  vmovdqu       xmm7  , [rsp+$10]
+  add           rsp   , $10*2                     // making stack space to save one xmm size register
+
+end;
+
+procedure sExp_avx2(const N:NativeInt; const src:PSingle; const dst:PSingle); assembler;
 asm
   sub                  rsp      , $10*2                     // making stack space to save one xmm size register
   vmovdqu              [rsp+$00], xmm6
@@ -102,7 +263,7 @@ end;
 // AKA SWISH
 // sigmoid or dst can be nil
 
-procedure QNNSiLU_avx2(const N:NativeInt; const src, up, outSigmoid, dst:PSingle);assembler;   // a function that does sigmoid, gated and SiLU
+procedure sSiLU_avx2(const N:NativeInt; const src, up, outSigmoid, dst:PSingle);assembler;   // a function that does sigmoid, gated and SiLU
 asm
   mov                  rax      , dst
   sub                  rsp      , $10*2                     // making stack space to save one xmm size register
@@ -215,7 +376,7 @@ end;
 
 //const
 //  YMMD : array [0..7] of longword =(0,1,2,3,4,5,6,7);//: array[0..7] of single = ()
-function QNNMax_avx2(const N:NativeInt; const src:PSingle):Single;assembler;
+function sMax_avx2(const N:NativeInt; const src:PSingle):Single;assembler;
 asm
   vbroadcastss  ymm0 , dword [src]
 
@@ -276,7 +437,7 @@ asm
 
 end;
 
-function QNNMin_avx2(const N:NativeInt; const src:PSingle):Single;assembler;
+function sMin_avx2(const N:NativeInt; const src:PSingle):Single;assembler;
 asm
   vbroadcastss  ymm0 , dword [src]
 
@@ -337,7 +498,7 @@ asm
 
 end;
 
-procedure QNNScaleInplace_avx2(const N:NativeInt; const src:PSingle; const scale:single);assembler;
+procedure sScaleInplace_avx2(const N:NativeInt; const src:PSingle; const scale:single);assembler;
 asm
   vbroadcastss  xmm4 , scale
   mov           rax  , N
@@ -387,8 +548,17 @@ asm
 
 end;
 
-procedure QNNSoftmax_avx2(const N:NativeInt; const src:PSingle);assembler;
+procedure sSoftmax_avx2(const N:NativeInt; const src:PSingle);assembler;
 asm
+//exp
+  //n := floor(x * 1.4426950408889634 + 0.5);
+  //r := x - n * 0.6931471805599453;
+  //p := 1.0 + r * (1.0 + r * (0.5 + r * (0.16666667 + r * (0.04166667 + r * 0.00833333))));
+  //v.f := p;
+  //inc(v.i, trunc(n) shl 23);
+  //result := v.f;
+
+//softmax
   //max_val := QNNMax(N, x);
   //sum := 0.0;
   //for i := 0 to N-1 do begin
@@ -399,7 +569,7 @@ asm
   //inv_sum := single(1.0) / sum;
   //QNNScaleInplace(x, inv_sum, N);
   push          src
-  CALL QNNMax_avx2                              // max(src)
+  CALL sMax_avx2                              // max(src)
   pop           src
 
   sub                  rsp      , $10*4                     // making stack space to save one xmm size register
@@ -409,9 +579,11 @@ asm
   vmovdqu              [rsp+$30], xmm9
 
   mov           r8    , src
-  vbroadcastss  ymm3  , [rip + L2E]
-  vbroadcastss  ymm4  , [rip + C1]
-  vbroadcastss  ymm5  , [rip + C2]
+(*old approximation
+  //vbroadcastss  ymm3  , [rip + L2E]
+  //vbroadcastss  ymm4  , [rip + C1]
+  //vbroadcastss  ymm5  , [rip + C2]
+*)
   vbroadcastss  ymm6, xmm0                       // = max_src
   vxorps        ymm7, ymm7, ymm7                 // = sum = 0
   mov  rax , N
@@ -419,27 +591,69 @@ asm
   jz   @rem
 
 @while:
-  vmovups       ymm1  , yword[src]
-  vsubps        ymm1  , ymm1 , ymm6             // t1 = src - max_src
+  vmovups       ymm3  , yword[src]
+  vsubps        ymm3  , ymm3 , ymm6             // t1 = src - max_src
 
-  vcmpgeps      ymm8  , ymm1        , [rip + MX]        // clamp t1 to [MIN_EXP, MAX_EXP]
-  vcmpleps      ymm9  , ymm1        , [rip + MN]
-  vblendvps     ymm1  , ymm1 , [rip + MX], ymm8
-  vblendvps     ymm1  , ymm1 , [rip + MN], ymm9
+  vcmpgeps      ymm8  , ymm3        , [rip + mx]
+  vcmpleps      ymm9  , ymm3        , [rip + mn]
+  vblendvps     ymm3  , ymm3 , [rip + mx], ymm8
+  vblendvps     ymm3  , ymm3 , [rip + mn], ymm9
+  //vcmpgeps      ymm8  , ymm3        , [rip + MX]        // clamp t1 to [MIN_EXP, MAX_EXP]
+  //vcmpleps      ymm9  , ymm3        , [rip + MN]
+  //vblendvps     ymm3  , ymm3 , [rip + MX], ymm8
+  //vblendvps     ymm3  , ymm3 , [rip + MN], ymm9
 
+(* old approximation)
+  //vmulps        ymm1  , ymm3    , ymm1      // t1 = t1 * log2(e)
+  //vroundps      ymm2  , ymm1    , 9         // t2 = floor(t1 * log2(e))
+  //vsubps        ymm1  , ymm1    , ymm2      // t1 = t1 - t2
+  //vcvtps2dq     ymm0  , ymm2                // t0 = trunc(t2)
+  //vbroadcastss  ymm2  , [rip + C0]
+  //vfmadd213ps   ymm2  , ymm1    , ymm4      // t2 = C0 * t1 + C1
+  //vpslld        ymm0  , ymm0    , 23        // t0 = t0 shl 23
+  //vfmadd213ps   ymm1  , ymm2    , ymm5      // t1 = t1 * t2 + C2
+  //vpaddd        ymm0  , ymm0    , ymm1      // t0 = t0 + integer(t1) => exp(t1)
+  //
+  //vblendvps     ymm0  , ymm0 , [rip + ZERO], ymm9
+  //vmovups       yword[src]   , ymm0
+*)
 
-  vmulps        ymm1  , ymm3    , ymm1      // t1 = t1 * log2(e)
-  vroundps      ymm2  , ymm1    , 9         // t2 = floor(t1 * log2(e))
-  vsubps        ymm1  , ymm1    , ymm2      // t1 = t1 - t2
-  vcvtps2dq     ymm0  , ymm2                // t0 = trunc(t2)
-  vbroadcastss  ymm2  , [rip + C0]
-  vfmadd213ps   ymm2  , ymm1    , ymm4      // t2 = C0 * t1 + C1
-  vpslld        ymm0  , ymm0    , 23        // t0 = t0 shl 23
-  vfmadd213ps   ymm1  , ymm2    , ymm5      // t1 = t1 * t2 + C2
-  vpaddd        ymm0  , ymm0    , ymm1      // t0 = t0 + integer(t1) => exp(t1)
+  vmulps        ymm2  , ymm3     , [rip +P1442]
+  vaddps        ymm2  , ymm2     , [rip +P0500]            // X L2E + 0.5
+  vroundps      ymm2  , ymm2     , 9          // 9 means floor()  // ymm2 is n
 
-  vblendvps     ymm0  , ymm0 , [rip + ZERO], ymm9
-  vmovups       yword[src]   , ymm0
+//r := x  + n * (-0.6931471805599453);
+  vmovaps       ymm1  , ymm3
+  vfmadd231ps   ymm1  , ymm2     , [rip +P0693] // ymm1 is now r
+
+  vmovaps       ymm0  , ymm1                  // p := r
+
+//p := p * 0.00833333 + 0.04166667
+  vmovups       ymm5  , [rip +P0008]
+  vfmadd213ps   ymm0  , ymm5     , [rip +P0041]
+
+//p := r*p + 0.16666667
+  vfmadd213ps   ymm0  , ymm1     , [rip +P0166]
+
+//p := r*p + 0.5
+  vfmadd213ps   ymm0  , ymm1     , [rip +P0500]
+
+//p := r*p + 1.0
+  vfmadd213ps   ymm0  , ymm1     , [rip +ONE]
+
+//p := r*p + 1.0
+  vfmadd213ps   ymm0  , ymm1     , [rip +ONE]
+
+// all the above performs now :
+//   p := 1.0 + r*(1.0 + r*(0.5 + r*(0.16666667 + r*(0.04166667 + r*0.00833333)))); // rank 5 approximation
+
+//v.f := p;
+//inc(v.i, trunc(n) shl 23);
+  vcvtps2dq     ymm2  , ymm2
+  vpslld        ymm2  , ymm2    , 23
+  vpaddd        ymm0  , ymm0    , ymm2
+//result := v.f;
+  vmovups       yword [src]     , ymm0
   vaddps        ymm7  , ymm7    , ymm0
 
 
@@ -452,30 +666,48 @@ asm
   mov           rax , N
   and           rax , 7
   jz            @div
-  vmovd         xmm6 , eax
-  vpbroadcastd  ymm6 , xmm6
-  vpcmpgtd      ymm6 , ymm6, YMMD[rip]
-  vmaskmovps    ymm1 , ymm6, yword[src]
+  vmovd         xmm4 , eax
+  vpbroadcastd  ymm4 , xmm4
+  vpcmpgtd      ymm4 , ymm4, YMMD[rip]
+  vmaskmovps    ymm3 , ymm4, yword[src]
 
-  vsubps        ymm1  , ymm1 , ymm6         // t1 = src - max_src
+  vsubps        ymm3  , ymm3 , ymm6         // t1 = src - max_src
 
-  vcmpgeps      ymm8  , ymm1        , [rip + MX]        // clamp t1 to [MIN_EXP, MAX_EXP]
-  vcmpleps      ymm9  , ymm1        , [rip + MN]
-  vblendvps     ymm1  , ymm1 , [rip + MX], ymm8
-  vblendvps     ymm1  , ymm1 , [rip + MN], ymm9
+  vcmpgeps      ymm8  , ymm3        , [rip + mx]   // clip to [-87.3 -88.7]
+  vcmpleps      ymm9  , ymm3        , [rip + mn]
+  vblendvps     ymm3  , ymm3 , [rip + mx], ymm8
+  vblendvps     ymm3  , ymm3 , [rip + mn], ymm9
 
-  vmulps        ymm1  , ymm3    , ymm1      // t1 = t1 * log2(e)
-  vroundps      ymm2  , ymm1    , 9         // t2 = floor(t1 * log2(e))
-  vsubps        ymm1  , ymm1    , ymm2      // t1 = t1 - t2
-  vcvtps2dq     ymm0  , ymm2                // t0 = cast to integer(t2)
-  vbroadcastss  ymm2  , [rip + C0]
-  vfmadd213ps   ymm2  , ymm1    , ymm4      // t2 = C0 * t1 + C1
-  vpslld        ymm0  , ymm0    , 23        // t0 = t0 shl 23
-  vfmadd213ps   ymm1  , ymm2    , ymm5      // t1 = t1 * t2 + C2
-  vpaddd        ymm0  , ymm0    , ymm1      // t0 = t0 + integer(t1) => exp(t1)
+  vmulps        ymm2  , ymm3     , [rip +P1442]
+  vaddps        ymm2  , ymm2     , [rip +P0500]            // X L2E + 0.5
+  vroundps      ymm2  , ymm2     , 9          // 9 means floor()  // ymm2 is n
 
-  vblendvps     ymm0  , ymm0    , [rip + ZERO], ymm9
-  vmaskmovps    yword[src]      , ymm6 , ymm0
+  vmovaps       ymm1  , ymm3
+  vfmadd231ps   ymm1  , ymm2     , [rip +P0693] // ymm1 is now r
+
+  vmovaps       ymm0  , ymm1                  // p := r
+
+  vmovups       ymm5  , [rip +P0008]
+  vfmadd213ps   ymm0  , ymm5     , [rip +P0041]
+
+  vfmadd213ps   ymm0  , ymm1     , [rip +P0166]
+
+  vfmadd213ps   ymm0  , ymm1     , [rip +P0500]
+
+  vfmadd213ps   ymm0  , ymm1     , [rip +ONE]
+
+  vfmadd213ps   ymm0  , ymm1     , [rip +ONE]
+
+// all the above performs now :
+//   p := 1.0 + r*(1.0 + r*(0.5 + r*(0.16666667 + r*(0.04166667 + r*0.00833333)))); // rank 5 approximation
+
+//v.f := p;
+//inc(v.i, trunc(n) shl 23);
+
+  vcvtps2dq     ymm2  , ymm2
+  vpslld        ymm2  , ymm2    , 23
+  vpaddd        ymm0  , ymm0    , ymm2
+  vmaskmovps    yword[src]      , ymm4 , ymm0
   vaddps        ymm7  , ymm7    , ymm0
 
 @div:
@@ -484,16 +716,16 @@ asm
   vzeroupper
   vaddss        xmm0  , xmm0    , xmm7
 
-  rcpss         xmm4  ,  xmm0               // 1/sum_exp
+  rcpss         xmm3  ,  xmm0               // 1/sum_exp
 
   mov           src  , r8
-  vbroadcastss  ymm4 , xmm4
+  vbroadcastss  ymm3 , xmm3
   mov           rax  , N
   shr           rax  , 3
   jz            @remdiv
 
 @while1:
-  vmulps        ymm0 , ymm4, yword[src]
+  vmulps        ymm0 , ymm3, yword[src]
   vmovups       yword[src] , ymm0
 
   add           src  , 32
@@ -504,12 +736,10 @@ asm
   mov           rax  , N
   and           rax  , 7
   jz            @done
-  vmovd         xmm1 , eax
-  vpbroadcastd  ymm1 , xmm1
-  vpcmpgtd      ymm1 , ymm1, YMMD[rip]
-  vmaskmovps    ymm0 , ymm1, yword[src]
-  vmulps        ymm0,  ymm0, ymm4
-  vmaskmovps    yword[src] , ymm1, ymm0
+  // we aledy have the mask in ymm4
+  vmaskmovps    ymm0 , ymm4, yword[src]
+  vmulps        ymm0,  ymm0, ymm3
+  vmaskmovps    yword[src] , ymm4, ymm0
 
 @done:
   vmovdqu              xmm6     , [rsp+$00]
@@ -592,7 +822,9 @@ asm
    vextractf128     xmm1    ,    ymm0   ,   $1
    vzeroupper
    vaddps           xmm0    ,    xmm0   ,   xmm1
-   dpps             xmm0    ,    [rip+ONE] , $F1
+   //dpps             xmm0    ,    oword [rip+ONE] , $F1
+   haddps           xmm0    ,    xmm0
+   haddps           xmm0    ,    xmm0
 
    vmovdqu          xmm6    , [rsp+$00]
    vmovdqu          xmm7    , [rsp+$10]
@@ -670,7 +902,7 @@ asm
   //vzeroupper
 end;
 
-function QNNSumSqr_avx2(const N:NativeInt; const src: PSingle):single;assembler;
+function sSumSqr_avx2(const N:NativeInt; const src: PSingle):single;assembler;
 asm
 
   mov           r8   , N
@@ -736,7 +968,7 @@ asm
 
 end;
 
-function QNNSumSqrDiff_avx2(const N:NativeInt; const src, aMean: PSingle):single;assembler;
+function sSumSqrDiff_avx2(const N:NativeInt; const src, aMean: PSingle):single;assembler;
 asm
 
   mov           r9   , N
@@ -805,7 +1037,7 @@ asm
 
 end;
 
-procedure QNNFusedMulScale_avx2(const N:NativeInt; const dst, a, b: PSingle; const scale:Single);assembler;
+procedure sFusedMulScale_avx2(const N:NativeInt; const dst, a, b: PSingle; const scale:Single);assembler;
 asm
 {$ifdef MSWINDOWS}
   movss         xmm4 , dword[scale]
@@ -873,7 +1105,7 @@ asm
 
 end;
 
-procedure QNNFusedScaleBias_avx2(const N:NativeInt; const dst, src:PSingle; const scale, bias:Single);assembler;
+procedure sFusedScaleBias_avx2(const N:NativeInt; const dst, src:PSingle; const scale, bias:Single);assembler;
 asm
 {$ifdef MSWINDOWS}
   movss         xmm5 , dword[bias]
@@ -939,7 +1171,7 @@ asm
 
 end;
 
-procedure QNNScale_avx2(const N:NativeInt; dst, src:PSingle; const scale:single);assembler;
+procedure sScale_avx2(const N:NativeInt; dst, src:PSingle; const scale:single);assembler;
 asm
 
     vbroadcastss  ymm4 , scale
@@ -995,12 +1227,354 @@ asm
 
 end;
 
-procedure gemm_nt_8x8(const lda, ldb, ldc:NativeInt; const A, B, C:PSingle);assembler;
+(*
+  performs :
+  const T : array [0..7] of single = (0, 0, 0, 0, 0, 0, 0, 0);
+  begin
+
+    for j:=0 to K-1 do begin
+      for i:=0 to 7 do begin
+        t[i] += A[j]*B[j + i*ldb]
+      end;
+    end
+    for i :=0 to 7 do
+      C[i] += t[i]
+  end
+*)
+procedure sDot_x8_avx2(const A, B, C: PSingle; K, ldb:NativeInt; const alpha:single); assembler;
 asm
-  //vxorps          ymm0 , ymm0 , ymm0
-  //vxorps          ymm0 , ymm0 , ymm0
-  //vxorps          ymm0 , ymm0 , ymm0
-  //vxorps          ymm0 , ymm0 , ymm0
+  sub           rsp  , $10*7
+  vmovdqu       [rsp + $00] , xmm6
+  vmovdqu       [rsp + $01] , xmm7
+  vmovdqu       [rsp + $02] , xmm8
+  vmovdqu       [rsp + $03] , xmm9
+  vmovdqu       [rsp + $04] , xmm10
+  vmovdqu       [rsp + $05] , xmm11
+  vmovdqu       [rsp + $06] , xmm12
+
+
+  vxorps        ymm1 , ymm1 , ymm1
+  vxorps        ymm2 , ymm2 , ymm2
+  vxorps        ymm3 , ymm3 , ymm3
+  vxorps        ymm4 , ymm4 , ymm4
+  vxorps        ymm5 , ymm5 , ymm5
+  vxorps        ymm6 , ymm6 , ymm6
+  vxorps        ymm7 , ymm7 , ymm7
+  vxorps        ymm8 , ymm8 , ymm8
+
+  xor           r10  , r10
+  mov           r11  , K
+  shr           r11  , 3  // div 8
+  jz            @rem
+@loopK:
+  vmovups       ymm0 , yword [A + r10*4]
+
+  mov           rax  , r10
+
+  vfmadd231ps   ymm1 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm2 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm3 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm4 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm5 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm6 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm7 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm8 , ymm0 ,yword[B + rax*4]
+
+  add           r10  , 8
+  dec           r11
+  jnz           @loopK
+
+@rem:
+  mov           rax  , K
+  and           rax  , 7
+  jz            @final
+  vmovd         xmm5 , eax
+  vpbroadcastd  ymm5 , xmm5
+  vpcmpgtd      ymm5 , ymm5 , YMMD[rip]
+
+  vmaskmovps    ymm0 , ymm5 , yword [A + r10*4]
+  mov           rax  , r10
+
+  vmaskmovps    ymm1 , ymm5 , yword[B + rax*4]
+  add           rax  , ldb
+  vmaskmovps    ymm2 , ymm5 , yword[B + rax*4]
+  add           rax  , ldb
+  vmaskmovps    ymm3 , ymm5 , yword[B + rax*4]
+  add           rax  , ldb
+  vmaskmovps    ymm4 , ymm5 , yword[B + rax*4]
+  add           rax  , ldb
+  vmaskmovps    ymm5 , ymm5 , yword[B + rax*4]
+  add           rax  , ldb
+  vmaskmovps    ymm6 , ymm5 , yword[B + rax*4]
+  add           rax  , ldb
+  vmaskmovps    ymm7 , ymm5 , yword[B + rax*4]
+  add           rax  , ldb
+  vmaskmovps    ymm8 , ymm5 , yword[B + rax*4]
+
+  vfmadd231ps   ymm1 , ymm0 ,ymm1
+  vfmadd231ps   ymm2 , ymm0 ,ymm2
+  vfmadd231ps   ymm3 , ymm0 ,ymm3
+  vfmadd231ps   ymm4 , ymm0 ,ymm4
+  vfmadd231ps   ymm5 , ymm0 ,ymm5
+  vfmadd231ps   ymm6 , ymm0 ,ymm6
+  vfmadd231ps   ymm7 , ymm0 ,ymm7
+  vfmadd231ps   ymm8 , ymm0 ,ymm8
+
+
+
+
+@final:
+  vextractf128  xmm9  , ymm1 , $1
+  vextractf128  xmm10 , ymm2 , $1
+  vextractf128  xmm11 , ymm3 , $1
+  vextractf128  xmm12 , ymm4 , $1
+  addps         xmm1  , xmm9
+  addps         xmm2  , xmm10
+  addps         xmm3  , xmm11
+  addps         xmm4  , xmm12
+
+  vextractf128  xmm9  , ymm5  , $1
+  vextractf128  xmm10 , ymm6  , $1
+  vextractf128  xmm11 , ymm7  , $1
+  vextractf128  xmm12 , ymm8  , $1
+  vzeroupper
+  addps         xmm5  , xmm9
+  addps         xmm6  , xmm10
+  addps         xmm7  , xmm11
+  addps         xmm8  , xmm12
+
+
+
+
+  haddps        xmm1 , xmm1
+  haddps        xmm2 , xmm2
+  haddps        xmm3 , xmm3
+  haddps        xmm4 , xmm4
+  haddps        xmm5 , xmm5
+  haddps        xmm6 , xmm6
+  haddps        xmm7 , xmm7
+  haddps        xmm8 , xmm8
+
+  haddps        xmm1 , xmm1
+  haddps        xmm2 , xmm2
+  haddps        xmm3 , xmm3
+  haddps        xmm4 , xmm4
+  haddps        xmm5 , xmm5
+  haddps        xmm6 , xmm6
+  haddps        xmm7 , xmm7
+  haddps        xmm8 , xmm8
+
+  insertps      xmm0 , xmm5 , $00
+  insertps      xmm0 , xmm6 , $10
+  insertps      xmm0 , xmm7 , $20
+  insertps      xmm0 , xmm8 , $30
+  vinsertf128   ymm0 , ymm0 , xmm0, $1
+
+  insertps      xmm0 , xmm1 , $00
+  insertps      xmm0 , xmm2 , $10
+  insertps      xmm0 , xmm3 , $20
+  insertps      xmm0 , xmm4 , $30
+
+  movss         xmm1 , alpha
+  vbroadcastss  ymm1 , xmm1
+  //vmulps        ymm0 , ymm0 , ymm1
+  //vaddps        ymm0 , ymm0 , yword[C]
+  vfmadd213ps   ymm0 , ymm1 , yword[C]
+  vmovups       yword[C], ymm0
+
+
+  vmovdqu       xmm6 , [rsp + $00]
+  vmovdqu       xmm7 , [rsp + $01]
+  vmovdqu       xmm8 , [rsp + $02]
+  vmovdqu       xmm9 , [rsp + $03]
+  vmovdqu       xmm10, [rsp + $04]
+  vmovdqu       xmm11, [rsp + $05]
+  vmovdqu       xmm12, [rsp + $06]
+  add           rsp  , $10*7
+end;
+
+procedure sDot_x4_avx2(const A, B, C: PSingle; K, ldb:NativeInt; const alpha:single); assembler;
+asm
+  sub           rsp  , $10*4
+  vmovdqu       [rsp + $00] , xmm6
+  vmovdqu       [rsp + $01] , xmm7
+  vmovdqu       [rsp + $02] , xmm8
+  vmovdqu       [rsp + $03] , xmm9
+
+
+  vxorps        ymm1 , ymm1 , ymm1
+  vxorps        ymm2 , ymm2 , ymm2
+  vxorps        ymm3 , ymm3 , ymm3
+  vxorps        ymm4 , ymm4 , ymm4
+
+  xor           r10  , r10
+  mov           r11  , K
+  shr           r11  , 3  // div 8
+  jz            @rem
+@loopK:
+  vmovups       ymm0 , yword [A + r10*4]
+
+  mov           rax  , r10
+
+  vfmadd231ps   ymm1 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm2 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm3 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm4 , ymm0 ,yword[B + rax*4]
+
+  add           r10  , 8
+  dec           r11
+  jnz           @loopK
+
+@rem:
+  mov           rax  , K
+  and           rax  , 7
+  jz            @final
+  vmovd         xmm5 , eax
+  vpbroadcastd  ymm5 , xmm5
+  vpcmpgtd      ymm5 , ymm5 , YMMD[rip]
+
+  vmaskmovps    ymm0 , ymm5 , yword [A + r10*4]
+  mov           rax  , r10
+
+  vmaskmovps    ymm1 , ymm5 , yword[B + rax*4]
+  add           rax  , ldb
+  vmaskmovps    ymm2 , ymm5 , yword[B + rax*4]
+  add           rax  , ldb
+  vmaskmovps    ymm3 , ymm5 , yword[B + rax*4]
+  add           rax  , ldb
+  vmaskmovps    ymm4 , ymm5 , yword[B + rax*4]
+
+  vfmadd231ps   ymm1 , ymm0 ,ymm1
+  vfmadd231ps   ymm2 , ymm0 ,ymm2
+  vfmadd231ps   ymm3 , ymm0 ,ymm3
+  vfmadd231ps   ymm4 , ymm0 ,ymm4
+
+
+@final:
+  vextractf128  xmm6 , ymm1 , $1
+  vextractf128  xmm7 , ymm2 , $1
+  vextractf128  xmm8 , ymm3 , $1
+  vextractf128  xmm9 , ymm4 , $1
+  vzeroupper
+  addps         xmm1  , xmm6
+  addps         xmm2  , xmm7
+  addps         xmm3  , xmm8
+  addps         xmm4  , xmm9
+
+
+
+  haddps        xmm1 , xmm1
+  haddps        xmm2 , xmm2
+  haddps        xmm3 , xmm3
+  haddps        xmm4 , xmm4
+
+  haddps        xmm1 , xmm1
+  haddps        xmm2 , xmm2
+  haddps        xmm3 , xmm3
+  haddps        xmm4 , xmm4
+
+  insertps      xmm0 , xmm1 , $00
+  insertps      xmm0 , xmm2 , $10
+  insertps      xmm0 , xmm3 , $20
+  insertps      xmm0 , xmm4 , $30
+
+  movss         xmm1 , alpha
+  vbroadcastss  xmm1 , xmm1
+  //vmulps        ymm0 , ymm0 , ymm1
+  //vaddps        ymm0 , ymm0 , yword[C]
+  vfmadd213ps   xmm0 , xmm1 , oword[C]
+  vmovups       oword[C], xmm0
+
+
+  vmovdqu       xmm6 , [rsp + $00]
+  vmovdqu       xmm7 , [rsp + $01]
+  vmovdqu       xmm8 , [rsp + $02]
+  vmovdqu       xmm9 , [rsp + $03]
+  add           rsp  , $10*4
+end;
+
+procedure sDot_x2_avx2(const A, B, C: PSingle; K, ldb:NativeInt; const alpha:single); assembler;
+asm
+
+
+  vxorps        ymm1 , ymm1 , ymm1
+  vxorps        ymm2 , ymm2 , ymm2
+
+  xor           r10  , r10
+  mov           r11  , K
+  shr           r11  , 3  // div 8
+  jz            @rem
+@loopK:
+  vmovups       ymm0 , yword [A + r10*4]
+
+  mov           rax  , r10
+
+  vfmadd231ps   ymm1 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm2 , ymm0 ,yword[B + rax*4]
+
+  add           r10  , 8
+  dec           r11
+  jnz           @loopK
+
+@rem:
+  mov           rax  , K
+  and           rax  , 7
+  jz            @final
+  vmovd         xmm5 , eax
+  vpbroadcastd  ymm5 , xmm5
+  vpcmpgtd      ymm5 , ymm5 , YMMD[rip]
+
+  vmaskmovps    ymm0 , ymm5 , yword [A + r10*4]
+  mov           rax  , r10
+
+  vmaskmovps    ymm1 , ymm5 , yword[B + rax*4]
+  add           rax  , ldb
+  vmaskmovps    ymm2 , ymm5 , yword[B + rax*4]
+
+  vfmadd231ps   ymm1 , ymm0 ,ymm1
+  vfmadd231ps   ymm2 , ymm0 ,ymm2
+
+
+@final:
+  vextractf128  xmm3 , ymm1 , $1
+  vextractf128  xmm4 , ymm2 , $1
+
+  vzeroupper
+  addps         xmm1  , xmm3
+  addps         xmm2  , xmm4
+
+
+
+  haddps        xmm1 , xmm1
+  haddps        xmm2 , xmm2
+
+  haddps        xmm1 , xmm1
+  haddps        xmm2 , xmm2
+
+  //insertps      xmm0 , xmm1 , $00
+  //insertps      xmm0 , xmm2 , $10
+  //insertps      xmm0 , xmm3 , $20
+  //insertps      xmm0 , xmm4 , $30
+
+  movss         xmm0 , alpha
+  //vbroadcastss  xmm1 , xmm1
+  //vmulps        ymm0 , ymm0 , ymm1
+  //vaddps        ymm0 , ymm0 , yword[C]
+  vfmadd213ss   xmm1 , xmm0 , dword[C]
+  movss         dword[C], xmm1
+  vfmadd213ss   xmm2 , xmm0 , dword[C+4]
+  movss         dword[C+4], xmm2
 
 end;
 
@@ -1026,5 +1600,5 @@ procedure QNNExp(const N:NativeInt; const src:Psingle);
 var i:NativeInt;
 begin
   for i := 0 to N-1 do
-    src[i] := fast_exp(src[i])
+    src[i] := exp(src[i])
 end;
