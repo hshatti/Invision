@@ -81,8 +81,10 @@ type
     procedure loadVAE();                             overload;
     function generateLatent(const text_emb: TMemoryBlock; const text_seq, height, width, num_steps: longint; const seed:int64; const progress_callback:TProgressCallback):TMemoryBlock;
     function generate(const prompt: rawbytestring; var params: TGenerateParams; const progress_callback:TProgressCallback=nil): TQNNImage;                        overload;
+    function generate(const prompt,negPrompt: rawbytestring; var params: TGenerateParams; const progress_callback:TProgressCallback=nil): TQNNImage;                        overload;
+    function generate(const prompt,negPrompt: rawbytestring; var params: TGenerateParams; const image:TQNNImage; const progress_callback:TProgressCallback=nil): TQNNImage; overload;
     function generate(const prompt: rawbytestring; var params: TGenerateParams; const image:TQNNImage; const progress_callback:TProgressCallback=nil): TQNNImage; overload;
-    function generate(const prompt: rawbytestring; var params: TGenerateParams; const images:TArray<TQNNImage>; const progress_callback:TProgressCallback=nil): TQNNImage; overload;
+    function generate(const prompt,negPrompt: rawbytestring; var params: TGenerateParams; const images:TArray<TQNNImage>; const progress_callback:TProgressCallback=nil): TQNNImage; overload;
     //function generate(const prompt: rawbytestring; const images:TArray<TQNNImage>;params: TGenerateParams): TQNNImage; overload;
     function encodeText(const prompt: rawbytestring; var out_seq_len: longint): TMemoryBlock;
     procedure free();
@@ -233,11 +235,16 @@ begin
 
 end;
 
+function TQNNFlux.generate(const prompt: rawbytestring; var params: TGenerateParams; const progress_callback: TProgressCallback): TQNNImage;
+begin
+  result := generate(prompt, '', params, progress_callback)
+end;
+
 //type TSingleArray= array of single;
 //    TFloatArray = array[0..MaxLongint div 32] of single;
 //    PFloatArray = ^TFloatArray;
 
-function TQNNFlux.generate(const prompt: rawbytestring;
+function TQNNFlux.generate(const prompt, negPrompt: rawbytestring;
   var params: TGenerateParams; const progress_callback: TProgressCallback
   ): TQNNImage;
 var
@@ -254,8 +261,11 @@ begin
   assert((params.width<=QNN_VAE_MAX_DIM) and (params.height<=QNN_VAE_MAX_DIM), 'ERROR : Image maximum dimensions exceeded (1792x1792)!') ;
   text_emb := encodeText(prompt, text_seq);
 
-  if not is_distilled then
-     text_emb_uncond := encodeText('', text_seq_uncond);
+  if params.guidance=1.0 then begin
+    if not is_distilled then
+       text_emb_uncond := encodeText('', text_seq_uncond);
+  end else
+    text_emb_uncond := encodeText(negPrompt, text_seq_uncond);
   qwen3Encoder.free;
 
   latent_h := params.height div 16;
@@ -276,7 +286,7 @@ begin
      if assigned(phase_callback) then
         phase_callback('Loading FLUX.2 transformer', true);
   end;
-  if is_distilled then
+  if (params.guidance =1.0) and is_distilled then
       latent := transformer.sampleEuler(z, 1, QNN_LATENT_CHANNELS, latent_h, latent_w, text_emb, text_seq, schedule, params.num_steps, progress_callback)
   else
       latent := transformer.sampleEuler(z, 1, QNN_LATENT_CHANNELS, latent_h, latent_w, text_emb, text_seq, text_emb_uncond, text_seq_uncond, params.guidance, schedule, params.num_steps, progress_callback);
@@ -345,7 +355,7 @@ begin
 end;
 
 
-function TQNNFlux.generate(const prompt: rawbytestring;
+function TQNNFlux.generate(const prompt, negPrompt: rawbytestring;
   var params: TGenerateParams; const image: TQNNImage;
   const progress_callback: TProgressCallback): TQNNImage;
 var
@@ -387,8 +397,11 @@ begin
     text_emb := encodeText(prompt, text_seq);
     //text_emb_uncond := nil;
     //text_seq_uncond := 0;
-    if not is_distilled  then
-        text_emb_uncond := encodeText('',  text_seq_uncond);
+    if params.guidance=1.0 then begin
+      if not is_distilled then
+         text_emb_uncond := encodeText('', text_seq_uncond);
+    end else
+      text_emb_uncond := encodeText(negPrompt, text_seq_uncond);
     qwen3Encoder.free;
 
     if not transformer.isLoaded() then begin
@@ -429,7 +442,7 @@ begin
     t_offset := 10;
     //assert(not img_latent.is_Nan());
     //img_latent.printStat;
-    if is_distilled then
+    if (params.guidance=1.0) and is_distilled then
         latent := transformer.sampleEuler(z, 1, QNN_LATENT_CHANNELS, out_lat_h, out_lat_w, img_latent, latent_h, latent_w, t_offset, text_emb, text_seq, schedule, num_steps, progress_callback)
     else
         latent := transformer.sampleEuler(z, 1, QNN_LATENT_CHANNELS, out_lat_h, out_lat_w, img_latent, latent_h, latent_w, t_offset, text_emb, text_seq, text_emb_uncond, text_seq_uncond, params.guidance, schedule, num_steps, progress_callback);
@@ -450,6 +463,13 @@ begin
 end;
 
 function TQNNFlux.generate(const prompt: rawbytestring;
+  var params: TGenerateParams; const image: TQNNImage;
+  const progress_callback: TProgressCallback): TQNNImage;
+begin
+  result := generate(prompt, '', params, image, progress_callback)
+end;
+
+function TQNNFlux.generate(const prompt, negPrompt: rawbytestring;
   var params: TGenerateParams; const images: TArray<TQNNImage>;
   const progress_callback: TProgressCallback): TQNNImage;
 var
@@ -466,7 +486,7 @@ begin
 
     (* Single reference - use optimized path *)
     if length(images)=1 then
-        exit(generate(prompt, params, Images[0]));
+        exit(generate(prompt, negPrompt, params, Images[0]));
 
 
     (* Use first reference dimensions if not specified *)
@@ -490,8 +510,11 @@ begin
     (* Encode text *)
     text_emb := encodeText(prompt, text_seq);
 
-    if not is_distilled then
-        text_emb_uncond := encodeText('', text_seq_uncond);
+    if params.guidance=1.0 then begin
+      if not is_distilled then
+         text_emb_uncond := encodeText('', text_seq_uncond);
+    end else
+      text_emb_uncond := encodeText(negPrompt, text_seq_uncond);
 
     qwen3Encoder.free;
 
@@ -564,7 +587,7 @@ begin
     z := init_noise(1, QNN_LATENT_CHANNELS, latent_h, latent_w, params.seed);
 
     (* Sample with multi-reference conditioning *)
-    if is_distilled then begin
+    if (params.guidance=1.0) and is_distilled then begin
         latent := transformer.sampleEuler(
             z, 1, QNN_LATENT_CHANNELS, latent_h, latent_w,
             ref_latents,

@@ -36,7 +36,7 @@ type
     conv2_weight, conv2_bias,                (* [out_ch, out_ch, 3, 3] *)
     skip_weight , skip_bias : TMemoryBlock;  (* [out_ch, in_ch, 1, 1] if in_ch != out_ch *)
     in_channels, out_channels : longint;
-    procedure forward(const dst, src, work: TMemoryBlock; const batch, H, W, num_groups: longint);
+    procedure forward(var dst:TMemoryBlock; const src, work: TMemoryBlock; const batch, H, W, num_groups: longint);
     //procedure load(var f: file);                                     overload;
     procedure load(const sf: TSafetensorFiles; const aPrefix:string; const in_ch, out_ch:longint; const useMMap:boolean = false);    overload;
     procedure free();
@@ -51,7 +51,7 @@ type
     v_weight, v_bias,                         (* [channels, channels, 1, 1] *)
     out_weight, out_bias : TMemoryBlock;      (* [channels, channels, 1, 1] *)
     channels : longint;
-    procedure forward(const dst, src, work: TMemoryBlock; const batch, H, W, num_groups: longint);
+    procedure forward(var dst:TMemoryBlock; const src:TMemoryBlock; var work: TMemoryBlock; const batch, H, W, num_groups: longint);
     //procedure load(var f:file);                                    overload;
     procedure load(const sf:TSafetensorFiles; const aPrefix:string; const aChannels:longint; const useMMap:boolean = false);   overload;
     procedure free();
@@ -161,8 +161,8 @@ end;
 
 { TVAEResBlock }
 
-procedure TVAEResBlock.forward(const dst, src, work: TMemoryBlock; const batch,
-  H, W, num_groups: longint);
+procedure TVAEResBlock.forward(var dst: TMemoryBlock; const src,
+  work: TMemoryBlock; const batch, H, W, num_groups: longint);
 var
     spatial: longint;
     conv1_out: TMemoryBlock;
@@ -252,8 +252,8 @@ end;
 
 { TVAEAttnBlock }
 
-procedure TVAEAttnBlock.forward(const dst, src, work: TMemoryBlock;
-  const batch, H, W, num_groups: longint);
+procedure TVAEAttnBlock.forward(var dst: TMemoryBlock; const src: TMemoryBlock;
+  var work: TMemoryBlock; const batch, H, W, num_groups: longint);
 var
     ch, spatial, c, i, b: longint;
     q, k, v, qb, kb, vb, ob, attn_out{, q_ptr, k_ptr, v_ptr, o_ptr}: TMemoryBlock;
@@ -388,6 +388,14 @@ var
 begin
     if assigned(phase_callback) then
         phase_callback('VAE Encode', false);
+
+    if not work1.isAllocated() then
+        work1 := TMemoryBlock.Create([batch, 4, base_channels, H, W],'VAE_WORK1');
+    if not work2.isAllocated() then
+        work2 := TMemoryBlock.Create([batch, 4, base_channels, H, W],'VAE_WORK2');
+    if not work3.isAllocated() then
+        work3 := TMemoryBlock.Create([batch, 4, base_channels, H, W],'VAE_WORK3');
+
     x := work1;
     work := work2;
     cur_h := H; cur_w := W;
@@ -451,14 +459,16 @@ begin
     latent_h := cur_h;
     latent_w := cur_w;
     z_spatial := latent_h * latent_w;
-    mean := TMemoryBlock.Create([batch, z_channels, latent_h, latent_w], 'VAE_ENCODE_MEAN '+ TGUID.NewGuid.ToString());
+    mean := TMemoryBlock.Create([batch, z_channels, latent_h div 2, 2, latent_w div 2, 2], 'VAE_ENCODE_MEAN '+ TGUID.NewGuid.ToString());
     for b := 0 to batch -1 do
         QNNCopy(mean + b*z_channels*z_spatial, x + b*z_ch*z_spatial, z_channels*z_spatial);
     patch_h := latent_h div 2;
     patch_w := latent_w div 2;
     lat_ch := latent_channels;
-    result := TMemoryBlock.Create([batch, lat_ch, patch_h, patch_w], 'VAE_ENCODE_RESULT '+ TGUID.NewGuid.ToString());
-    QNNPatchify(result, mean, batch, z_channels, latent_h, latent_w, 2);
+    //result := TMemoryBlock.Create([batch, lat_ch, patch_h, patch_w], 'VAE_ENCODE_RESULT '+ TGUID.NewGuid.ToString());
+    //QNNPatchify(result, mean, batch, z_channels, latent_h, latent_w, 2);
+    mean.reshape([batch, z_channels, latent_h div 2, 2, latent_w div 2, 2]);
+    result := QNNPermut(mean, [0, 1, 3, 5, 2, 4]);
     mean.free;
     if scaling_factor <> 0.0 then begin
         n := batch * lat_ch * patch_h * patch_w;
@@ -487,10 +497,21 @@ var
 begin
     if assigned(phase_callback) then
         phase_callback('VAE Decode', false);
+    //if not work1.isAssigned() then work1:=TMemoryBlock.Create( , 'VAE_WORK1');
+    //if not work2.isAssigned() then work1:=TMemoryBlock.Create( , 'VAE_WORK1');
+    if not work1.isAllocated() then
+        work1 := TMemoryBlock.Create([batch, 4, base_channels, latent_h*16, latent_w*16],'VAE_WORK1');
+    if not work2.isAllocated() then
+        work2 := TMemoryBlock.Create([batch, 4, base_channels, latent_h*16, latent_w*16],'VAE_WORK2');
+    if not work3.isAllocated() then
+        work3 := TMemoryBlock.Create([batch, 4, base_channels, latent_h*16, latent_w*16],'VAE_WORK3');
+
     x := work1;
     work := work2;
     lat_ch := latent_channels;
     z_spatial := latent_h * latent_w;
+    x.shape := [batch, lat_ch, latent_h, latent_w];
+    //if x.size < product(x.shape) then x.reSize(x.shape, latent.DataType);
     QNNCopy(x, latent, batch * lat_ch * z_spatial);
 //printCompare( batch * lat_ch * z_spatial, x, readTensor());
     if scaling_factor <> 0.0 then
@@ -520,16 +541,25 @@ begin
 //printCompare(batch * lat_ch * z_spatial, x, readTensor());
     unpatch_h := latent_h * 2;
     unpatch_w := latent_w * 2;
-    QNNUnpatchify(work, x, batch, z_channels, latent_h, latent_w, 2);
+    //QNNUnpatchify(work, x, batch, z_channels, latent_h, latent_w, 2);
+    x.shape := [batch, z_channels, 2, 2, latent_h, latent_w];
+    //if work.size<x.size then
+    //    work.resize(x.shape, x.DataType)
+    //else
+        work.shape := x.shape;
+    QNNPermut(work, x, [0, 1, 4, 2, 5, 3]);
     QNNCopy(x, work, batch * z_channels * unpatch_h * unpatch_w);
 //printCompare(batch * z_channels * unpatch_h * unpatch_w, x, readTensor());
     cur_h := unpatch_h; cur_w := unpatch_w;
+
     if boolean(post_quant_conv_weight) then begin
       QNNConv2d(work, x, post_quant_conv_weight, post_quant_conv_bias, z_channels, z_channels, cur_h, cur_w, 1, 1, 1, 0, batch);
+      //if x.size<work.size then x.reSize(work.shape, work.DataType);
       QNNCopy(x, work, batch*z_channels*cur_h*cur_w)
     end;
     mid_ch := base_channels * ch_mult[3];
     QNNConv2d(work, x, dec_conv_in_weight, dec_conv_in_bias, z_channels, mid_ch, cur_h, cur_w, 3, 3, 1, 1, batch);
+    //if x.size<work.size then x.reSize(work.shape, work.DataType);
     QNNCopy(x, work, batch*mid_ch*cur_h*cur_w);
 //printCompare(batch*mid_ch*cur_h*cur_w, x, readTensor());
 
@@ -549,6 +579,7 @@ begin
         inc(progress)
     end;
     dec_mid_block2.forward(work, x, work3, batch, cur_h, cur_w, num_groups);
+    //if x.size<work.size then x.reSize(work.shape, work.DataType);
     QNNCopy(x, work, batch*mid_ch*cur_h*cur_w);
     if assigned(vae_progress_callback) then begin
         vae_progress_callback(progress, total_blocks);
@@ -563,6 +594,7 @@ begin
             begin
                 dec_up_blocks[block_idx].forward(work, x, work3, batch, cur_h, cur_w, num_groups);
                 inc(block_idx);
+                //if x.size<work.size then x.reSize(work.shape, work.dataType);
                 QNNCopy(x, work, batch * ch_out * cur_h * cur_w);
                 if assigned(vae_progress_callback) then begin
                     vae_progress_callback(progress, total_blocks);
@@ -573,6 +605,9 @@ begin
             begin
                 new_h := cur_h * 2;
                 new_w := cur_w * 2;
+                work.shape := [batch, ch_out, new_h, new_w];
+                //if work.size<product(work.shape) then
+                //  work.resize(work.shape, work.dataType);
                 QNNUpSampleNearest(work, x, batch, ch_out, cur_h, cur_w, 2, 2);
                 QNNConv2d(x, work, dec_upsample[up_idx].conv_weight, dec_upsample[up_idx].conv_bias, ch_out, ch_out, new_h, new_w, 3, 3, 1, 1, batch);
                 inc(up_idx);
@@ -582,6 +617,11 @@ begin
         dec(level)
     end;
     out_ch := base_channels;
+
+    work.shape := [batch, out_ch, cur_h, cur_w];
+    //if work.size<product(work.shape) then
+    //  work.reSize(work.shape, work.DataType);
+
     QNNGroupNorm(work, x, dec_norm_out_weight, dec_norm_out_bias, batch, out_ch, cur_h, cur_w, num_groups);
     QNNSiluInplace(work, batch * out_ch * cur_h * cur_w);
     QNNConv2d(x, work, dec_conv_out_weight, dec_conv_out_bias, out_ch, 3, cur_h, cur_w, 3, 3, 1, 1, batch);
@@ -650,7 +690,10 @@ begin
     end;
     unpatch_h := latent_h * 2;
     unpatch_w := latent_w * 2;
-    QNNUnpatchify(work, x, batch, z_channels, latent_h, latent_w, 2);
+    //QNNUnpatchify(work, x, batch, z_channels, latent_h, latent_w, 2);
+    x.shape := [batch, z_channels, 2, 2, latent_h, latent_w];
+    work.shape := x.shape;
+    QNNPermut(work, x, [0, 1, 4, 2, 5, 3]);
     QNNCopy(x, work, batch * z_channels * unpatch_h * unpatch_w);
     // x and work is [batch, z_channels, unpatch_h, unpatch_w]
     cur_h := unpatch_h; cur_w := unpatch_w;
@@ -996,10 +1039,10 @@ begin
     max_spatial := max_h * max_w;
     max_channels := base_channels;
     work_size := 4 * max_channels * max_spatial;
-
-    work1 := TMemoryBlock.Create([work_size], 'VAE_WORK1');//calloc(work_size, sizeof(single));//;
-    work2 := TMemoryBlock.Create([work_size], 'VAE_WORK2');//calloc(work_size, sizeof(single));//;
-    work3 := TMemoryBlock.Create([work_size], 'VAE_WORK3');//calloc(work_size, sizeof(single));//
+    //
+    //work1 := TMemoryBlock.Create([work_size], 'VAE_WORK1');//calloc(work_size, sizeof(single));//;
+    //work2 := TMemoryBlock.Create([work_size], 'VAE_WORK2');//calloc(work_size, sizeof(single));//;
+    //work3 := TMemoryBlock.Create([work_size], 'VAE_WORK3');//calloc(work_size, sizeof(single));//
 end;
 
 class procedure TVAE.padRightBottom(const dst, src: TMemoryBlock; batch,

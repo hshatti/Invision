@@ -47,7 +47,9 @@ type
   TGroupProc    = procedure(const _start,_end:IntPtr;const params:Pointer);
 {$endif}
 
-const EPSILON = 1e-6;
+const
+  EPSILON = 1e-6;
+  printDigits : longint = 5;
 
 type
   blasint = longint;
@@ -109,7 +111,7 @@ type
 const
   DATATYPE_BITS : array[low(TQNNDataType)..high(TQNNDataType)] of byte=
         (0, 16, 16, 32, 32, 8, 8, 64, 1, 8, 8, 4, 4, 8, 4, 4, 16, 16) ;
-  QNN_DATATYPE = dtF32;
+  QNN_DEFAULT_DATATYPE = dtF32;
 
 type
 
@@ -167,17 +169,18 @@ type
       ERRSTR_CAST_ARRAY = 'MemoryBlock with non zero offset cannot be casted to an Array';
       ERRSTR_CAST_TYPE = 'ERROR : Data is not of ';
   private
-      constructor Create(const aSize:NativeInt; const aName:string; const dType:TQNNDataType = QNN_DATATYPE; const src : pointer =nil);           overload;// do not use
+      constructor Create(const aSize:NativeInt; const aName:string; const dType:TQNNDataType = QNN_DEFAULT_DATATYPE; const src : pointer =nil);           overload;// do not use
   public
-      constructor Create(const aShape : TArray<Int64>; const aName:string ; const dType:TQNNDataType = QNN_DATATYPE; const aData : pointer =nil);  overload;
-      procedure reSize(const aSize:NativeInt);  overload;
-      procedure reSize(const aShape:TArray<Int64>);  overload;
+      constructor Create(const aShape : TArray<Int64>; const aName:string ; const dType:TQNNDataType = QNN_DEFAULT_DATATYPE; const aData : pointer =nil);  overload;
+      procedure reSize(const aSize:NativeInt; const aDataType:TQNNDataType);  overload;
+      procedure reSize(const aShape:TArray<Int64>; const aDataType:TQNNDataType);  overload;
       procedure free();
       function count:NativeInt;
 
       function channels():longint;
       function height():longint;
       function width():longint;
+      procedure reshape(const newShape:TArray<int64>);
 
       function isAssigned():boolean;
       function isAllocated():boolean;
@@ -265,7 +268,7 @@ type
       class function calcPngCRC(const buf :PByte; const len : NativeInt; const initCRC : longword = $ffffffff): longword;static;
       function resize(const w, h:longint):TQNNImage;
       constructor Create(const aWidth, aHeight:longint; const aChannels : longint =3; const aData:PQNNFloat =nil);
-      function asMemoryBlock(const aDataType:TQNNDataType=QNN_DATATYPE; const aPixelOrder: TQNNPixelOrder= poCHW):TMemoryBlock;
+      function asMemoryBlock(const aDataType:TQNNDataType=QNN_DEFAULT_DATATYPE; const aPixelOrder: TQNNPixelOrder= poCHW):TMemoryBlock;
       procedure saveToFile(const filename:string; const tagKey:string = ''; const tagDesc :string ='');
       procedure printSixel();
       procedure free();
@@ -507,6 +510,10 @@ var
 
   function IndexOf(const needle:string; const haystack:TArray<string>):nativeInt;  overload;
 
+  function getIndex(const idx, Strides: TArray<int64>): int64;
+  function getStrides(const shape:TArray<int64>):TArray<int64>;
+
+
 implementation
 uses SysUtils, Math
   {$ifdef MSWINDOWS}
@@ -531,6 +538,31 @@ type
 
 var
   PNG_CRC_TABLE : array[0..255] of longword;
+
+
+function getIndex(const idx, Strides: TArray<int64>): int64;
+var
+  i: SizeInt;
+begin
+  Assert(length(Strides) = Length(Idx), '[getIndex]: idx and Tensor shape must be identical.');
+  Result := 0;
+  for i := 0 to high(Strides) do
+    Inc(Result, idx[i] * Strides[i]);
+end;
+
+function getStrides(const shape:TArray<int64>):TArray<int64>;
+var
+  n, i: int64;
+begin
+  n := Length(Shape);
+  SetLength(Result, n);
+  if n = 0 then exit;
+
+  Result[n-1] := 1;
+  for i := n-2 downto 0 do
+    Result[i] := Result[i+1] * Shape[i+1];
+end;
+
 
 function LCase(const c:ansichar):ansichar;
 begin
@@ -1031,9 +1063,20 @@ begin
   shape := aShape
 end;
 
-procedure TMemoryBlock.reSize(const aSize:NativeInt);
+procedure TMemoryBlock.reSize(const aSize:NativeInt; const aDataType:TQNNDataType);
+var status : string;
 begin
-  assert(isAllocated(), 'TMemoryBlock.resize : cannot resize a pointer assigned memory!');
+  assert(not assigned(DataPtr), 'TMemoryBlock.resize : cannot resize a pointer assigned memory!');
+  assert((aDataType<>dtUndef), 'TMemoryBlock.resize : Invalide DataType!');
+  if DataType<>aDataType then begin
+    self.Free;
+    status := 'new';
+  end;
+  if isAllocated() then status := 'resize' else status := 'new';
+  if name='' then
+    name := TGUID.NewGuid.ToString();
+
+  DataType := aDataType;
   case DATATYPE_BITS[DataType] of
     //1 : setlength(Data1, aSize);
     4  : begin
@@ -1043,7 +1086,7 @@ begin
       setLength(Data4 , aSize);
       {$endif}
       if assigned(onMemoryUpdate) then
-        onMemoryUpdate('resize', (size*DATATYPE_BITS[DataType]+4) div 8, (aSize*DATATYPE_BITS[DataType]+4) div 8, self);
+        onMemoryUpdate(status, (size*DATATYPE_BITS[DataType]+4) div 8, (aSize*DATATYPE_BITS[DataType]+4) div 8, self);
       size := aSize;
       assert(assigned(data4), 'ERROR : TMemoryBlock.Create, not enough memory!');
     end;
@@ -1055,7 +1098,7 @@ begin
       setLength(Data8 , aSize);
       {$endif}
       if assigned(onMemoryUpdate) then
-        onMemoryUpdate('resize', size*DATATYPE_BITS[DataType] div 8, (aSize*DATATYPE_BITS[DataType]) div 8, self);
+        onMemoryUpdate(status, size*DATATYPE_BITS[DataType] div 8, (aSize*DATATYPE_BITS[DataType]) div 8, self);
       size := aSize;
       assert(assigned(data8), 'ERROR : TMemoryBlock.Create, not enough memory!');
     end;
@@ -1067,7 +1110,7 @@ begin
       setLength(Data16, aSize);
       {$endif}
       if assigned(onMemoryUpdate) then
-        onMemoryUpdate('resize', size*DATATYPE_BITS[DataType] div 8, (aSize*DATATYPE_BITS[DataType]) div 8, self);
+        onMemoryUpdate(status, size*DATATYPE_BITS[DataType] div 8, (aSize*DATATYPE_BITS[DataType]) div 8, self);
       size := aSize;
       assert(assigned(data16), 'ERROR : TMemoryBlock.Create, not enough memory!');
     end;
@@ -1079,7 +1122,7 @@ begin
       setLength(Data32, aSize);
       {$endif}
       if assigned(onMemoryUpdate) then
-        onMemoryUpdate('resize', size*DATATYPE_BITS[DataType] div 8, (aSize*DATATYPE_BITS[DataType]) div 8, self);
+        onMemoryUpdate(status, size*DATATYPE_BITS[DataType] div 8, (aSize*DATATYPE_BITS[DataType]) div 8, self);
       size := aSize;
       assert(assigned(data32), 'ERROR : TMemoryBlock.Create, not enough memory!');
     end;
@@ -1088,9 +1131,9 @@ begin
   end;
 end;
 
-procedure TMemoryBlock.reSize(const aShape:TArray<int64>);
+procedure TMemoryBlock.reSize(const aShape:TArray<int64>; const aDataType:TQNNDataType);
 begin
-  resize(product(aShape));
+  resize(product(aShape), aDataType);
   shape := aShape;
 end;
 
@@ -1168,6 +1211,12 @@ end;
 function TMemoryblock.width():longint;
 begin
   result := shape[high(shape)]
+end;
+
+procedure TMemoryblock.reshape(const newShape:TArray<int64>);
+begin
+  assert(product(newShape)<=Size, 'ERROR [reshape] : new Tensor size shape not match the current Tensor size');
+  shape := newShape
 end;
 
 function TMemoryBlock.isAssigned():boolean;
@@ -1615,6 +1664,36 @@ begin
   Str(f, result)
 end;
 
+procedure printTensor(const data:PSingle; const shape:TArray<int64>; const offset:int64 = 0; const depth:int64 = 0; strides:TArray<int64> = nil);
+var
+  i:int64;
+  indent, indent_1 : string;
+begin
+
+  assert(depth<length(shape), 'ERROR Print : tensor depth is out of boundries.');
+  indent := string.Create(' ', depth);
+  indent_1 := string.Create(' ', depth-1);
+
+  if not assigned(strides) then
+    strides := getStrides(shape);
+  if depth=high(shape) then begin
+    for i:=offset to offset+shape[depth]-1 do begin
+      if i=offset then begin
+        write(indent,'[', data[i]:1:printDigits)
+      end
+      else
+        write(', ', data[i]:1:printDigits)
+    end;
+    writeln(']');
+  end else begin
+    writeln(indent, '[');
+    for i := 0 to shape[depth]-1 do begin
+      printTensor(data, shape, offset + i*strides[depth], depth+1, strides);
+    end;
+    writeln(indent, ']');
+  end;
+end;
+
 function TMemoryBlock.print(const consolePixel: TTensorPrintStyle; tile: Integer; minVal: double; maxVal: double): TArray<NativeInt>;
 const
   csi = #$1B'[';
@@ -1857,13 +1936,14 @@ begin
     Result := [ow, oh];
     exit;
   end;
-  write('[');
-  for i:= 0 to Count-1 do
-    if i=0 then
-      write(_Data[i]:5:4)
-    else
-      write(', ',_Data[i]:5:4);
-  writeln(']')
+  printTensor(_Data, shape)
+  //write('[');
+  //for i:= 0 to Count-1 do
+  //  if i=0 then
+  //    write(_Data[i]:5:printDigits)
+  //  else
+  //    write(', ',_Data[i]:5:printDigits);
+  //writeln(']')
 
   //writeln(toString());
 end;
@@ -1912,8 +1992,18 @@ var
   i: NativeInt;
   cdst:PConversionBits absolute dst;
 begin
+{$if defined(CPUX64) and defined(USE_AVX2)}
+  i:=0;
+  while i+8 <= N do begin
+    BF16ToSingle_x8_avx2(src+i, dst+i);
+    inc(i, 8)
+  end;
+  for i:=i to N-1 do
+    cdst[i].i32 := src[i] shl 16;
+{$else}
   for i:=0 to N-1 do
     cdst[i].i32 := src[i] shl 16;
+{$endif}
 end;
 
 procedure SingleToBF16(const N: NativeInt; const src: PSingle; dst: PBF16);
@@ -1921,8 +2011,18 @@ var
   i: NativeInt;
   csrc:PConversionBits absolute src;
 begin
+  {$if defined(CPUX64) and defined(USE_AVX2)}
+  i:=0;
+  while i+8 <= N do begin
+    SingleToBF16_x8_avx2(src+i, dst+i);
+    inc(i, 8)
+  end;
+  for i:=i to N-1 do
+    dst[i] := csrc[i].i32 shr 16;
+  {$else}
   for i:=0 to N-1 do
     dst[i] := csrc[i].i32 shr 16;
+  {$endif}
 end;
 
 procedure FP16ToSingle(const N: NativeInt; const src: PFP16; dst: PSingle);

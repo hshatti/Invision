@@ -1,3 +1,4 @@
+//{$if defined(CPUX64) and defined(USE_AVX2)}
 {$if defined(CPUX64)}
 
 
@@ -376,7 +377,7 @@ end;
 
 //const
 //  YMMD : array [0..7] of longword =(0,1,2,3,4,5,6,7);//: array[0..7] of single = ()
-function sMax_avx2(const N:NativeInt; const src:PSingle):Single;assembler;
+function sMax_avx2(const N:NativeInt; const src:PSingle):Single;assembler;{$ifdef fpc}nostackframe;{$endif}
 asm
   vbroadcastss  ymm0 , dword [src]
 
@@ -545,7 +546,7 @@ asm
   vmulps        ymm0,  ymm0, ymm4
   vmaskmovps    yword[src] , ymm1, ymm0
 @done:
-
+  vzeroupper
 end;
 
 procedure sSoftmax_avx2(const N:NativeInt; const src:PSingle);assembler;
@@ -569,7 +570,9 @@ asm
   //inv_sum := single(1.0) / sum;
   //QNNScaleInplace(x, inv_sum, N);
   push          src
-  CALL sMax_avx2                              // max(src)
+  push          N
+  CALL sMax_avx2// max(src)
+  pop           N
   pop           src
 
   sub                  rsp      , $10*4                     // making stack space to save one xmm size register
@@ -742,6 +745,7 @@ asm
   vmaskmovps    yword[src] , ymm4, ymm0
 
 @done:
+  vzeroupper
   vmovdqu              xmm6     , [rsp+$00]
   vmovdqu              xmm7     , [rsp+$10]
   vmovdqu              xmm8     , [rsp+$20]
@@ -882,8 +886,8 @@ asm
   add          y      , SIMD_OFF
   dec          r11
   jnz          @while1
-
 @rem:
+  vzeroupper
   mov          r11    , N
   and          r11    , (SIMD_REGS -1)       // mod SIMD_REGS
   jz           @done
@@ -898,8 +902,8 @@ asm
   jnz          @while2
 
 @done:
-  //pop          r11
   //vzeroupper
+  //pop          r11
 end;
 
 function sSumSqr_avx2(const N:NativeInt; const src: PSingle):single;assembler;
@@ -1102,7 +1106,7 @@ asm
   vmulps        ymm0,  ymm0, ymm1
   vmaskmovps    yword[dst] , ymm5, ymm0
 @done:
-
+  vzeroupper
 end;
 
 procedure sFusedScaleBias_avx2(const N:NativeInt; const dst, src:PSingle; const scale, bias:Single);assembler;
@@ -1168,7 +1172,7 @@ asm
   vfmadd132ps   ymm0 , ymm5 , ymm4
   vmaskmovps    yword[dst] , ymm1, ymm0
 @done:
-
+  vzeroupper
 end;
 
 procedure sScale_avx2(const N:NativeInt; dst, src:PSingle; const scale:single);assembler;
@@ -1224,7 +1228,7 @@ asm
     vmulps        ymm0 , ymm4, ymm0
     vmaskmovps    yword[dst] , ymm1, ymm0
   @done:
-
+    vzeroupper
 end;
 
 (*
@@ -1389,7 +1393,7 @@ asm
   vfmadd213ps   ymm0 , ymm1 , yword[C]
   vmovups       yword[C], ymm0
 
-
+  vzeroupper
   vmovdqu       xmm6 , [rsp + $00]
   vmovdqu       xmm7 , [rsp + $01]
   vmovdqu       xmm8 , [rsp + $02]
@@ -1503,6 +1507,281 @@ asm
   add           rsp  , $10*4
 end;
 
+procedure sDot_4x4_avx2(const A, B, C: PSingle; K, lda, ldb, ldc:NativeInt; const alpha:single); assembler;
+var c4x4 : array[0..4*4*8-1] of single;
+asm
+  push          r12
+  sub           rsp  , $10*4
+  vmovdqu       [rsp + $00] , xmm6
+  vmovdqu       [rsp + $01] , xmm7
+  vmovdqu       [rsp + $02] , xmm8
+  vmovdqu       [rsp + $03] , xmm9
+
+  vxorps        ymm1 , ymm1 , ymm1
+  vxorps        ymm2 , ymm2 , ymm2
+  vxorps        ymm3 , ymm3 , ymm3
+  vxorps        ymm4 , ymm4 , ymm4
+  xor           rax              , rax
+@resetC:
+  vmovups       [c4x4 + rax*4]         , ymm1
+  vmovups       [c4x4 + rax*4 + $20]   , ymm2
+  vmovups       [c4x4 + rax*4 + $40]   , ymm3
+  vmovups       [c4x4 + rax*4 + $60]   , ymm4
+  add           rax                    , $8*4
+  cmp           rax                    , 4*4*8
+  jl            @resetC
+
+
+  xor           r12  , r12
+  mov           r11  , K
+  shr           r11  , 3  // div 8
+  jz            @rem
+
+@loopK:
+  mov           r10  , r12
+  vmovups       ymm0 , yword [A + r10*4]
+  mov           rax  , r12
+  vmovups       ymm1 , yword [c4x4       ]
+  vmovups       ymm2 , yword [c4x4 + $20 ]
+  vmovups       ymm3 , yword [c4x4 + $40 ]
+  vmovups       ymm4 , yword [c4x4 + $60 ]
+
+  vfmadd231ps   ymm1 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm2 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm3 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm4 , ymm0 ,yword[B + rax*4]
+  vmovups       yword [c4x4       ]       ,ymm1
+  vmovups       yword [c4x4 + $20 ]       ,ymm2
+  vmovups       yword [c4x4 + $40 ]       ,ymm3
+  vmovups       yword [c4x4 + $60 ]       ,ymm4
+  add           r10  , lda
+
+  vmovups       ymm0 , yword [A + r10*4]
+  mov           rax  , r12
+  vmovups       ymm1 , yword [c4x4 + $80]
+  vmovups       ymm2 , yword [c4x4 + $A0]
+  vmovups       ymm3 , yword [c4x4 + $C0]
+  vmovups       ymm4 , yword [c4x4 + $E0]
+
+  vfmadd231ps   ymm1 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm2 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm3 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm4 , ymm0 ,yword[B + rax*4]
+  vmovups       yword [c4x4 + $80]       ,ymm1
+  vmovups       yword [c4x4 + $A0]       ,ymm2
+  vmovups       yword [c4x4 + $C0]       ,ymm3
+  vmovups       yword [c4x4 + $E0]       ,ymm4
+  add           r10  , lda
+
+  vmovups       ymm0 , yword [A + r10*4]
+  mov           rax  , r12
+  vmovups       ymm1 , yword [c4x4 + $100]
+  vmovups       ymm2 , yword [c4x4 + $120]
+  vmovups       ymm3 , yword [c4x4 + $140]
+  vmovups       ymm4 , yword [c4x4 + $160]
+
+  vfmadd231ps   ymm1 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm2 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm3 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm4 , ymm0 ,yword[B + rax*4]
+  vmovups       yword [c4x4 + $100]       ,ymm1
+  vmovups       yword [c4x4 + $120]       ,ymm2
+  vmovups       yword [c4x4 + $140]       ,ymm3
+  vmovups       yword [c4x4 + $160]       ,ymm4
+  add           r10  , lda
+
+  vmovups       ymm0 , yword [A + r10*4]
+  mov           rax  , r12
+  vmovups       ymm1 , yword [c4x4 + $180]
+  vmovups       ymm2 , yword [c4x4 + $1A0]
+  vmovups       ymm3 , yword [c4x4 + $1C0]
+  vmovups       ymm4 , yword [c4x4 + $1E0]
+
+  vfmadd231ps   ymm1 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm2 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm3 , ymm0 ,yword[B + rax*4]
+  add           rax  , ldb
+  vfmadd231ps   ymm4 , ymm0 ,yword[B + rax*4]
+  vmovups       yword [c4x4 + $180]       ,ymm1
+  vmovups       yword [c4x4 + $1A0]       ,ymm2
+  vmovups       yword [c4x4 + $1C0]       ,ymm3
+  vmovups       yword [c4x4 + $1E0]       ,ymm4
+  add           r12  , 8
+
+  dec           r11
+  jnz           @loopK
+
+
+@rem:
+  mov           rax  , K
+  and           rax  , 7
+  jz            @final
+  vmovd         xmm5 , eax
+  vpbroadcastd  ymm5 , xmm5
+  vpcmpgtd      ymm5 , ymm5 , YMMD[rip]
+
+  mov           r10  , r12
+  vmaskmovps    ymm0 , ymm5 , yword [A + r10*4]
+
+  vmovups       ymm1 , yword [c4x4       ]
+  vmovups       ymm2 , yword [c4x4 + $20 ]
+  vmovups       ymm3 , yword [c4x4 + $40 ]
+  vmovups       ymm4 , yword [c4x4 + $60 ]
+
+  mov           rax  , r12
+  vmaskmovps    ymm6 , ymm5 ,yword[B + rax*4]
+  vfmadd231ps   ymm1 , ymm0 ,ymm6
+  add           rax  , ldb
+  vmaskmovps    ymm6 , ymm5 ,yword[B + rax*4]
+  vfmadd231ps   ymm2 , ymm0 ,ymm6
+  add           rax  , ldb
+  vmaskmovps    ymm6 , ymm5 ,yword[B + rax*4]
+  vfmadd231ps   ymm3 , ymm0 ,ymm6
+  add           rax  , ldb
+  vmaskmovps    ymm6 , ymm5 ,yword[B + rax*4]
+  vfmadd231ps   ymm4 , ymm0 ,ymm6
+  vmovups       yword [c4x4       ]       ,ymm1
+  vmovups       yword [c4x4 + $20 ]       ,ymm2
+  vmovups       yword [c4x4 + $40 ]       ,ymm3
+  vmovups       yword [c4x4 + $60 ]       ,ymm4
+  add           r10  , lda
+
+  vmovups       ymm0 , yword [A + r10*4]
+  mov           rax  , r12
+  vmovups       ymm1 , yword [c4x4 + $80]
+  vmovups       ymm2 , yword [c4x4 + $A0]
+  vmovups       ymm3 , yword [c4x4 + $C0]
+  vmovups       ymm4 , yword [c4x4 + $E0]
+
+  vmaskmovps    ymm6 , ymm5 ,yword[B + rax*4]
+  vfmadd231ps   ymm1 , ymm0 ,ymm6
+  add           rax  , ldb
+  vmaskmovps    ymm6 , ymm5 ,yword[B + rax*4]
+  vfmadd231ps   ymm2 , ymm0 ,ymm6
+  add           rax  , ldb
+  vmaskmovps    ymm6 , ymm5 ,yword[B + rax*4]
+  vfmadd231ps   ymm3 , ymm0 ,ymm6
+  add           rax  , ldb
+  vmaskmovps    ymm6 , ymm5 ,yword[B + rax*4]
+  vfmadd231ps   ymm4 , ymm0 ,ymm6
+  vmovups       yword [c4x4 + $80]       ,ymm1
+  vmovups       yword [c4x4 + $A0]       ,ymm2
+  vmovups       yword [c4x4 + $C0]       ,ymm3
+  vmovups       yword [c4x4 + $E0]       ,ymm4
+  add           r10  , lda
+
+  vmovups       ymm0 , yword [A + r10*4]
+  mov           rax  , r12
+  vmovups       ymm1 , yword [c4x4 + $100]
+  vmovups       ymm2 , yword [c4x4 + $120]
+  vmovups       ymm3 , yword [c4x4 + $140]
+  vmovups       ymm4 , yword [c4x4 + $160]
+
+  vmaskmovps    ymm6 , ymm5 ,yword[B + rax*4]
+  vfmadd231ps   ymm1 , ymm0 ,ymm6
+  add           rax  , ldb
+  vmaskmovps    ymm6 , ymm5 ,yword[B + rax*4]
+  vfmadd231ps   ymm2 , ymm0 ,ymm6
+  add           rax  , ldb
+  vmaskmovps    ymm6 , ymm5 ,yword[B + rax*4]
+  vfmadd231ps   ymm3 , ymm0 ,ymm6
+  add           rax  , ldb
+  vmaskmovps    ymm6 , ymm5 ,yword[B + rax*4]
+  vfmadd231ps   ymm4 , ymm0 ,ymm6
+  vmovups       yword [c4x4 + $100]       ,ymm1
+  vmovups       yword [c4x4 + $120]       ,ymm2
+  vmovups       yword [c4x4 + $140]       ,ymm3
+  vmovups       yword [c4x4 + $160]       ,ymm4
+  add           r10  , lda
+
+  vmovups       ymm0 , yword [A + r10*4]
+  mov           rax  , r12
+  vmovups       ymm1 , yword [c4x4 + $180]
+  vmovups       ymm2 , yword [c4x4 + $1A0]
+  vmovups       ymm3 , yword [c4x4 + $1C0]
+  vmovups       ymm4 , yword [c4x4 + $1E0]
+
+  vmaskmovps    ymm6 , ymm5 ,yword[B + rax*4]
+  vfmadd231ps   ymm1 , ymm0 ,ymm6
+  add           rax  , ldb
+  vmaskmovps    ymm6 , ymm5 ,yword[B + rax*4]
+  vfmadd231ps   ymm2 , ymm0 ,ymm6
+  add           rax  , ldb
+  vmaskmovps    ymm6 , ymm5 ,yword[B + rax*4]
+  vfmadd231ps   ymm3 , ymm0 ,ymm6
+  add           rax  , ldb
+  vmaskmovps    ymm6 , ymm5 ,yword[B + rax*4]
+  vfmadd231ps   ymm4 , ymm0 ,ymm6
+  vmovups       yword [c4x4 + $180]       ,ymm1
+  vmovups       yword [c4x4 + $1A0]       ,ymm2
+  vmovups       yword [c4x4 + $1C0]       ,ymm3
+  vmovups       yword [c4x4 + $1E0]       ,ymm4
+
+  xor           rax  , rax
+  xor           r10  , r10
+
+@final:
+
+  vmovups       ymm1 , [c4x4 + rax]
+  vmovups       ymm2 , [c4x4 + rax + $20]
+  vmovups       ymm3 , [c4x4 + rax + $40]
+  vmovups       ymm4 , [c4x4 + rax + $60]
+
+  vextractf128  xmm6 , ymm1 , $1
+  vextractf128  xmm7 , ymm2 , $1
+  vextractf128  xmm8 , ymm3 , $1
+  vextractf128  xmm9 , ymm4 , $1
+  vzeroupper
+  addps         xmm1  , xmm6
+  addps         xmm2  , xmm7
+  addps         xmm3  , xmm8
+  addps         xmm4  , xmm9
+
+  haddps        xmm1 , xmm1
+  haddps        xmm2 , xmm2
+  haddps        xmm3 , xmm3
+  haddps        xmm4 , xmm4
+
+  haddps        xmm1 , xmm1
+  haddps        xmm2 , xmm2
+  haddps        xmm3 , xmm3
+  haddps        xmm4 , xmm4
+
+  insertps      xmm0 , xmm1 , $00
+  insertps      xmm0 , xmm2 , $10
+  insertps      xmm0 , xmm3 , $20
+  insertps      xmm0 , xmm4 , $30
+
+  movss         xmm1 , alpha
+  vbroadcastss  xmm1 , xmm1
+  //vmulps        ymm0 , ymm0 , ymm1
+  //vaddps        ymm0 , ymm0 , yword[C]
+  vfmadd213ps   xmm0 , xmm1 , oword[C + r10*4]
+  vmovups       oword[C + r10*4], xmm0
+  add           r10 , ldc
+  add           rax , $80
+  cmp           rax , $200
+  jl            @final
+@done:
+  vmovdqu       xmm6 , [rsp + $00]
+  vmovdqu       xmm7 , [rsp + $01]
+  vmovdqu       xmm8 , [rsp + $02]
+  vmovdqu       xmm9 , [rsp + $03]
+  add           rsp  , $10*4
+  pop           r12
+end;
+
 procedure sDot_x2_avx2(const A, B, C: PSingle; K, ldb:NativeInt; const alpha:single); assembler;
 asm
 
@@ -1576,6 +1855,35 @@ asm
   vfmadd213ss   xmm2 , xmm0 , dword[C+4]
   movss         dword[C+4], xmm2
 
+end;
+
+procedure SingleToBF16_x8_avx2(const src: PSingle; const dst:PBF16);assembler; {$ifdef fpc} nostackframe;{$endif}
+asm
+  vmovups       ymm0        , yword [src]
+  vpsrld        ymm0        , ymm0 , 16
+  vextractf128  xmm1        , ymm0 , 1
+  vpackusdw     xmm0        , xmm0 , xmm1
+  vmovups       oword [dst] , xmm0
+end;
+
+procedure BF16ToSingle_x8_avx2(const src:PBF16 ; const dst:PSingle);assembler; {$ifdef fpc} nostackframe;{$endif}
+asm
+  vpmovzxwd     ymm0        , oword [src]
+  vpslld        ymm0        , ymm0 , 16
+  vmovups       yword [dst] , ymm0
+end;
+
+
+// test
+procedure sDot_4x4(const A, B, C: PSingle; K, lda, ldb, ldc:NativeInt; const alpha:single);
+var l, i, j:int64;CC:PSingle;
+begin
+  for i:=0 to 3 do begin
+    CC := C + i*ldc;
+    for j :=0 to 3 do begin
+      CC[j]  := CC[j] + ALPHA*sdot_avx2(K, A + i*lda, B + j*ldb);
+    end
+  end;
 end;
 
 {$endif}

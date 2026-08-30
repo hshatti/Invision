@@ -211,6 +211,9 @@ begin
   (* Encode text (Z-Image mode: extraction mode 1, single layer) *)
   text_emb := encodeText(prompt, text_seq);
 
+  (* Release text encoder to free memory before loading transformer *)
+  qwen3Encoder.free;
+
   result := generateFromEmbeddings(text_emb, text_seq, params);
   text_emb.free
 
@@ -234,9 +237,6 @@ begin
   if params.width < 64 then params.width := 64;
   if params.height < 64 then params.height := 64;
   assert((params.width <= QNN_VAE_MAX_DIM) and (params.height <= QNN_VAE_MAX_DIM), 'Image size must be maximum of 1792 X 1792');
-
-  (* Release text encoder to free memory before loading transformer *)
-  qwen3Encoder.free;
 
 
   (* Load Z-Image transformer on-demand (persistent across generations). *)
@@ -280,10 +280,17 @@ begin
   (* Patchify transformer output for VAE decode:
    * [1, in_channels, H/8, W/8] -> [1, latent_ch, H/16, W/16]
    * where latent_ch = in_channels * zi_patch_size * zi_patch_size = 64 *)
-  latent_ch := zi_in_channels * zi_patch_size * zi_patch_size;
-  latent := TMemoryBlock.Create([latent_ch, post_h, post_w ], 'ZI_GENERATE_FROM_EMBEDDINGS_LATENT');
+  //latent_ch := zi_in_channels * zi_patch_size * zi_patch_size;
+  //latent := TMemoryBlock.Create([1, zi_in_channels, zi_patch_size ,zi_patch_size, post_h, post_w ], 'ZI_GENERATE_FROM_EMBEDDINGS_LATENT');
 //printCompare(latent_ch*post_h*post_w, denoised, readTensor());
-  QNNPatchify(latent, denoised, 1, zi_in_channels, pre_h, pre_w, zi_patch_size);
+
+  //transpose :
+     // in : [batch, channels, outH, patch_size, outW, patch_size]
+     // out: [batch, channels, patch_size ,patch_size, outH ,outW]
+     //axis : 0, 1, 3, 5, 2, 4
+  denoised.reshape([1, zi_in_channels, post_h, zi_patch_size, post_w, zi_patch_size]);
+  QNNPermut(latent, denoised, [0, 1, 3, 5, 2, 4]);
+  //QNNPatchify(latent, denoised, 1, zi_in_channels, pre_h, pre_w, zi_patch_size);
 //printCompare(latent_ch*post_h*post_w, latent, readTensor());
 
   denoised.free;

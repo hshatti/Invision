@@ -526,8 +526,8 @@ type
       procedure free();
   end;
 
-procedure patchifyZi(const dst : PQNNFloat; const src:PQNNFloat; const in_ch, Height, Width, ps:longint);
-procedure UnPatchifyZi(const dst:PQNNFloat; const src: PQNNFloat; const in_ch, Height, Width, ps:longint);
+procedure patchifyZi(const dst : PQNNFloat; const src:PQNNFloat; const in_ch, Height, Width, patch_size:longint);
+procedure UnPatchifyZi(const dst:PQNNFloat; const src: PQNNFloat; const in_ch, Height, Width, patch_size:longint);
 function loadShards(const modelDir: string):TSafeTensorFiles;
 
 implementation
@@ -863,7 +863,7 @@ begin
 
     if product(attn_scores_need) > attn_scores_alloc then begin
       if attn_scores.isAssigned() then
-        attn_scores.reSize(attn_scores_need)
+        attn_scores.reSize(attn_scores_need, QNN_DEFAULT_DATATYPE)
       else
         attn_scores := TMemoryBlock.Create(attn_scores_need, 'FLUX_INIT_ATTN_SCORES');
       attn_scores_alloc := product(attn_scores_need);
@@ -2464,29 +2464,32 @@ end;
  * Gathers each ps x ps spatial block into a flat vector, ordering as
  * (ph, pw, channel). This is the inverse of unpatchify and creates the
  * token sequence the transformer operates on. *)
-procedure patchifyZi(const dst : PQNNFloat; const src:PQNNFloat; const in_ch, Height, Width, ps:longint);
+procedure patchifyZi(const dst: PQNNFloat; const src: PQNNFloat; const in_ch,
+  Height, Width, patch_size: longint);
 var
-  H_tokens, W_tokens, patch_feat, patch_idx, h, w, di, c, ph, pw, sx, sy:longint;
-  d : PQNNFloat;
+  H_tokens, W_tokens,
+    //patch_feat, patch_idx, di, sx, sy
+    h, w, c, ph, pw, in_idx, out_idx:longint;
 begin
-    H_tokens := Height div ps;
-    W_tokens := Width div ps;
-    patch_feat := ps * ps * in_ch;
+    H_tokens := Height div patch_size;
+    W_tokens := Width div patch_size;
+    //patch_feat := patch_size * patch_size * in_ch;
 
     for h := 0 to H_tokens-1 do begin
       for w := 0 to W_tokens-1 do begin
-        patch_idx := h*W_tokens + w;
-        d         := dst + patch_idx*patch_feat;
-        di        := 0;
+
+        //di        := h*W_tokens*patch_size*patch_size*in_ch + w*patch_size*patch_size*in_ch;
 
         (* Gather patch: iterate (ph, pw, c) *)
-        for ph := 0 to ps-1 do
-          for pw := 0 to ps-1 do
+        for ph := 0 to patch_size-1 do
+          for pw := 0 to patch_size-1 do
             for c := 0 to in_ch-1 do begin
-                sy := h * ps + ph;
-                sx := w * ps + pw;
-                d[di] := src[c*Height*Width + sy*Width + sx];
-                inc(di)
+                in_idx := c*H_tokens*patch_size*W_tokens*patch_size + h*patch_size*W_tokens*patch_size + ph*W_tokens*patch_size + w*patch_size + pw;
+                        //  [in_ch, H_Tokens, patch_size, W_tokens, patch_size]
+                out_idx := h*W_tokens*patch_size*patch_size*in_ch + w*patch_size*patch_size*in_ch + ph*patch_size*in_ch + pw*in_ch + c;
+                        //  [H_Tokens, W_tokens, patch_size, patch_size, in_ch]
+                          //transpose -> [1, 3, 2, 4, 0]
+                dst[out_idx] := src[in_idx];
             end
       end
     end
@@ -2494,27 +2497,30 @@ end;
 
 (* Unpatchify: [n_patches, patch_feat_dim] -> [in_ch, H, W] *)
 procedure UnPatchifyZi(const dst: PQNNFloat; const src: PQNNFloat; const in_ch,
-  Height, Width, ps: longint);
+  Height, Width, patch_size: longint);
 var
-  H_tokens, W_Tokens, patch_feat, h, w, patch_idx, si, ph, pw, sy, sx, c : longint;
-  d : PQNNFloat;
+  //patch_idx, patch_feat, si, sy, sx
+  in_idx, out_idx, H_tokens, W_Tokens, h, w, ph, pw, c : longint;
+  //d : PQNNFloat;
 begin
-    H_tokens := Height div ps;
-    W_tokens := Width div ps;
-    patch_feat := ps * ps * in_ch;
+    H_tokens := Height div patch_size;
+    W_tokens := Width div patch_size;
+    //patch_feat := patch_size * patch_size * in_ch;
 
     for h := 0 to H_tokens-1 do
         for w := 0 to W_tokens-1 do begin
-            patch_idx := h*W_tokens + w;
-            d         := src + patch_idx * patch_feat;
-            si := 0;
-            for ph := 0 to ps-1 do
-                for pw := 0 to ps-1 do
+            //patch_idx := h*W_tokens + w;
+            //si := 0;
+            for ph := 0 to patch_size-1 do
+                for pw := 0 to patch_size-1 do
                     for c := 0 to in_ch-1 do begin
-                        sy := h * ps + ph;
-                        sx := w * ps + pw;
-                        dst[c*Height*Width + sy*Width + sx] := d[si];
-                        inc(si)
+                        in_idx := h*W_tokens*patch_size*patch_size*in_ch + w*patch_size*patch_size*in_ch + ph*patch_size*in_ch + pw*in_ch + c;
+                           //[H_tokens, W_tokens, patch_size, patch_size, in_ch]
+                        out_idx := c*H_tokens*patch_size*W_tokens*patch_size + h*patch_size*W_tokens*patch_size + ph*W_tokens*patch_size + w*patch_size + pw;
+                           // [in_ch, H_tokens, patch_size, W_tokens, patch_size]
+                           // transpose -> [4, 0, 2, 1, 3]
+                        dst[out_idx] := src[in_idx];
+                        //inc(si)
                     end
        end
 end;
@@ -2568,10 +2574,15 @@ begin
     timeStepEmbed(t_embMem, timestep);
 
     (* 2. Patchify image -> [img_seq, patch_feat] *)
-    img_patches := TMemoryBlock.Create([img_padded, patch_feat], 'ZI_FW_IMG_PATCHES');
-    //img_patches_ptr := img_patches;
+    // transpose tensor :
+    //   in shape : [in_ch, latent_h div patch_size, patch_size, latent_w div patch_size, patch_size]
+    //   out shape : [latent_h div patch_size, latent_w div patch_size, patch_size, patch_size, in_channels]
 
-    patchifyZi(img_patches, latent, in_channels, latent_h, latent_w, patch_size);
+    //img_patches := TMemoryBlock.Create([img_padded, patch_feat], 'ZI_FW_IMG_PATCHES');
+    //patchifyZi(img_patches, latent, in_channels, latent_h, latent_w, patch_size);
+    latent.reshape([in_channels, latent_h div patch_size, patch_size, latent_w div patch_size, patch_size]);
+    QNNPermut(img_patches, latent, [1, 3, 2, 4, 0]);
+    //img_patches_ptr := img_patches;
 
     (* Pad image patches (repeat last token) *)
     // todo ZI.Forward  use QNNBroadcast instead of copy loop
@@ -2695,8 +2706,16 @@ begin
     if assigned(substep_callback) then
         substep_callback(SUBSTEP_FINAL_LAYER, 0, 1);
     (* 10. Unpatchify: [n_patches, 64] -> [16, latent_h, latent_w] *)
-    result := TMemoryBlock.Create([in_channels, latent_h, latent_w], 'ZI_FW_RESULT');
-    UnpatchifyZi(result, final_out, in_channels, latent_h, latent_w, patch_size);
+    //result := TMemoryBlock.Create([in_channels, latent_h, latent_w], 'ZI_FW_RESULT');
+    //transpose:
+       //in shape   :  //[H_tokens, W_tokens, patch_size, patch_size, in_ch]
+       //out shape  :  //[in_ch, H_tokens, patch_size, W_tokens, patch_size]
+    final_out.reshape([latent_h div patch_size, latent_w div patch_size, patch_size, patch_size, in_channels]);
+    result := QNNPermut(final_out, [4, 0, 2, 1, 3]);
+                // transpose -> [4, 0, 2, 1, 3]
+//    UnpatchifyZi(result, final_out, in_channels, latent_h, latent_w, patch_size);
+
+
     final_out.free();
 end;
 
@@ -2780,7 +2799,7 @@ function TTransformerZI.sampleEuler(const z: TMemoryBlock; const batch, h, w,
 var
     latent_size, step_h, step_w, step_ch, step_latent_size, step, i, decode_h, decode_w: longint;
     sigma, sigma_next, dt, timestep: QNNFloat;
-    step_latent, model_out, decode_latent: TMemoryBlock;
+    step_latent, model_out: TMemoryBlock;
     img: TQNNImage;
 begin
     latent_size := batch * in_channels{channels} * h * w;
@@ -2815,18 +2834,18 @@ begin
             if assigned(progress_callback) then
                 progress_callback(step+1, num_steps);
             if assigned(step_image_callback) and assigned(vae_ptr) and (step+1 < num_steps) then begin
-              decode_latent := result;
               decode_h := h;
               decode_w := w;
               if patch_size > 1 then begin
                   if not step_latent.isAssigned() then
                       continue;
-                  QNNPatchify(step_latent, result, batch, in_channels{channels}, h, w, patch_size);
-                  decode_latent := step_latent;
+                  //QNNPatchify(step_latent, result, batch, in_channels{channels}, h, w, patch_size);
+                  result.reshape([batch, in_channels, h div patch_size, patch_size, w div patch_size, patch_size]);
+                  QNNPermut(step_latent, result, [0, 1, 3, 5, 2, 4]);
                   decode_h := step_h;
                   decode_w := step_w
               end;
-              img := PVAE(vae_ptr).decode(decode_latent, 1, decode_h, decode_w);
+              img := PVAE(vae_ptr).decode(step_latent, 1, decode_h, decode_w);
               step_image_callback(step, num_steps, img);
               img.free
             end

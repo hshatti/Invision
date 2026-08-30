@@ -221,6 +221,7 @@ type
     class procedure QNNUpSample(const dst, src: PSingle; const batch, channels, H, W:longint; const scale_h, scale_w: Single; const interpolation:TInterpolation = iNearest);
     class procedure QNNPatchify(const dst, src: PSingle; const batch, channels, H, W, patch_size: longint);
     class procedure QNNUnpatchify(const dst, src: PSingle; const batch, channels, H, W, patch_size: longint);
+    class procedure QNNPermut(const dst, src:PSingle; const axisPerm:TArray<byte>; const inShape:TArray<int64>; outShape:TArray<int64> = nil; inIdx:TArray<int64> = nil; outIdx: TArray<int64> = nil; const lvl: int64 = 0; inStrides:TArray<int64> = nil; outStrides:TArray<int64> = nil);
     class procedure QNNCopy(const dst, src:PSingle; const N:integer); overload;
     class procedure QNNCopyStrided(const dst:PSingle; const dstStride:integer; const src:PSingle; const srcStride: integer; const N:integer); overload;
     class procedure QNNFill(const dst:PSingle; const val:Single; const N:integer; const stride:integer=1);
@@ -247,6 +248,11 @@ type
     class procedure QNNLINEAR_BF16_OR_F32(const dst, src:PSingle; const weight:TMemoryBlock; const weight_bf16:TMemoryBlock; const seq, srcDim, dstDim:integer);inline;
   end;
 
+{$if defined(CPUX64) and defined(USE_AVX2)}
+procedure SingleToBF16_x8_avx2(const src: PSingle; const dst:PBF16);
+procedure BF16ToSingle_x8_avx2(const src: PBF16; const dst:PSingle);
+{$endif}
+
 procedure printStat(const src:TMemoryBlock);                overload;
 //procedure writeTensor(const buf:TMemoryBlock);
 //function readTensor():TMemoryBlock;
@@ -254,7 +260,11 @@ procedure printStat(const src:TMemoryBlock);                overload;
 procedure compareArray(const a, b:TArray<Integer>);             overload;
 procedure compareArray(const a, b: PInteger; const N:longint);  overload;
 procedure compareArray(const a, b: PSingle; const N:longint);  overload;
-{$if defined(MACOS) or defined(DARWIN) or defined(USE_STATIC_LINK)}
+procedure printArray(const src:PSingle; const N:longint);     overload;
+procedure printArray(const src:PLongint; const N:longint);    overload;
+procedure printArray(const src:PInt64; const N:longint);    overload;
+procedure randArray(const N:longint; const dst:PSingle; const Amin:single=-5.0; Amax:Single=5.0);  {$if defined(MACOS) or defined(DARWIN) or defined(USE_STATIC_LINK)}
+
 procedure cblas_saxpy(n:int64; alpha:single; x:Psingle; incx:int64; y:Psingle; incy:int64); winapi ; external;
 function  cblas_sdot (n:int64; x:Psingle; incx:int64; y:Psingle; incy:int64):single; winapi ; external;
 function  cblas_sasum(n:int64; x:Psingle; incx:int64):single; winapi ; external;
@@ -270,6 +280,7 @@ procedure cblas_dgemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TR
                       alpha:double; A:PDouble; lda:int64; B:PDouble; ldb:int64; beta:double; C:PDouble; ldc:int64); winapi ; external;
 {$endif}
 
+procedure AltPermut(const dst, src : PSingle; const InShape:TArray<int64>; const AxisPerm: TArray<byte>);
 
 var
   hBLASLib : HMODULE;
@@ -317,6 +328,7 @@ begin
 end;
 
 {$i ops_avx2.inc}
+{$i ops_avx512_bf16.inc}
 
 class procedure TQNNSingleOPS.cblas_gemm(Order:CBLAS_ORDER; TransA:CBLAS_TRANSPOSE; TransB:CBLAS_TRANSPOSE; M:int64; N:int64; K:int64;
                       alpha:single; A:PSingle; lda:int64; B:PSingle; ldb:int64; beta:single; C:PSingle; ldc:int64);
@@ -334,6 +346,7 @@ begin
   //  move(C[y*ldc], C2_PTR[y*N], N*sizeOf(single));
 
     cblas_sgemm(Order, TransA, TransB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+    //qgemm(Order, TransA, TransB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
 
   //setLength(C1, M*N);
   //C1_PTR := pointer(C1);
@@ -411,7 +424,7 @@ begin
   result := src[0];
   if assigned(arg) then arg^ := 0;
   if stride=1 then begin
-    {$ifdef CPUX64}
+    {$if defined(CPUX64) and defined(USE_AVX2)}
     if not assigned(arg) then exit(sMax_avx2(N, src));
     {$endif}
     for i:=1 to N-1 do
@@ -435,7 +448,7 @@ begin
   result := src[0];
   if assigned(arg) then arg^ := 0;
   if stride=1 then begin
-    {$ifdef CPUX64}
+    {$if defined(CPUX64) and defined(USE_AVX2)}
     if not assigned(arg) then exit(sMin_avx2(N, src));
     {$endif}
     for i:=1 to N-1 do
@@ -537,7 +550,7 @@ begin
   // todo simdify SumSqr
   result := 0;
   if stride=1 then
-    {$if defined(CPUX64)}
+    {$if defined(CPUX64) and defined(USE_AVX2)}
      exit(sSumSqr_avx2(N, src))
     {$else}
     for i:=0 to N-1 do
@@ -554,7 +567,7 @@ begin
   // todo simdify mean
   result := 0;
   if stride=1 then
-    {$if defined(CPUX64)}
+    {$if defined(CPUX64) and defined(USE_AVX2)}
     exit(sSumSqrDiff_avx2(N, src, @amean))
     {$else}
     for i:=0 to N-1 do
@@ -755,7 +768,7 @@ class procedure TQNNSingleOPS.QNNFusedScaleBias(const dst, src: PSingle; const a
 var i:integer;
 begin
   // todo SIMDIFY QNNFusedScaleBias (Scalars)
-  {$ifdef CPUX64}
+  {$if defined(CPUX64) and defined(USE_AVX2)}
   sFusedScaleBias_avx2(N, dst, src, aScale, aBias);
   {$else}
   for i:=0 to N-1 do
@@ -794,7 +807,7 @@ begin
   if aScale=1.0 then
     QNNMul(dst, src1, src2, N)
   else
-    {$if defined(CPUX64)}
+    {$if defined(CPUX64) and defined(USE_AVX2)}
     sFusedMulScale_avx2(N, dst, src1, src2, aScale);
     {$else}
     for i:=0 to N-1 do
@@ -1054,7 +1067,7 @@ var i:longint;
 begin
   // todo qscale Simdify
   if incX=1 then
-    {$ifdef CPUX64}
+    {$if defined(CPUX64) and defined(USE_AVX2)}
     sScaleInplace_avx2(N, X, alpha)
     {$else}
     for i:=0 to N-1 do
@@ -1070,7 +1083,7 @@ var
   i:longint;
 begin
   // todo qaxpy Simdify
-    {$if defined(CPUX64)}
+    {$if defined(CPUX64) and defined(USE_AVX2)}
     saxpy_avx2(N, alpha, x, y)
     {$else}
     for i:=0 to N-1 do
@@ -1084,7 +1097,7 @@ var
 begin
   // todo qaxpy Simdify
   if (incx=1) and (incy=1) then
-    {$if defined(CPUX64)}
+    {$if defined(CPUX64) and defined(USE_AVX2)}
     saxpy_avx2(N, alpha, x, y)
     {$else}
     for i:=0 to N-1 do
@@ -1101,7 +1114,7 @@ var
 begin
   // todo qdot Simdify
 
-    {$if defined(CPUX64)}
+    {$if defined(CPUX64) and defined(USE_AVX2)}
     result := sdot_avx2(N, x, y)
     {$else}
     result := 0;
@@ -1116,7 +1129,7 @@ var
 begin
   // todo qdot Simdify
   if (incx=1) and (incy=1) then begin
-    {$if defined(CPUX64)}
+    {$if defined(CPUX64) and defined(USE_AVX2)}
     result := sdot_avx2(N, x, y)
     {$else}
     result := 0;
@@ -1239,7 +1252,9 @@ begin
   tile := procedure (tm_start:IntPtr; data:pointer)
 {$endif}
 var
-  tm_finish, tn_start, tn_finish, tm, tn, tk_start, tk_finish, k_span, n_span :int64;
+  tm_finish, tn_start, tn_finish, tm, tn
+  //, tk_start, tk_finish, k_span, n_span
+     :int64;
   a_part : Single;
   AA, BB, CC : PSingle;
   c_result : array[0..TILE_M*TILE_N-1] of single;
@@ -1257,8 +1272,8 @@ begin
     while tn_start<N{CEIL_DIV(N, TILE_N)*TILE_N} do begin
       tn_finish := tn_start + TILE_N;
       if tn_finish>N then tn_finish := N;
-      n_span := tn_finish - tn_start;
-      tk_start := 0;
+      //n_span := tn_finish - tn_start;
+      //tk_start := 0;
       (* K tiling is slower,  perhaps we need to select TILE values
        based on the matricies dimensions and the CPU L1/L2 sizes   *)
       //while tk_start < K do begin
@@ -1285,20 +1300,18 @@ begin
       for tm := tm_start to tm_finish-1 do begin
         CC := C + tm*ldc;
         tn := tn_start;
-        while tn < tn_finish do begin
+        {$if defined(CPUX64) and defined(USE_AVX2)}
+        while tn + 4 <= tn_finish do begin
           sDot_x4_avx2(A + tm*lda, B + tn*ldb, CC + tn, K, ldb, ALPHA);
           inc(tn, 4)
         end;
-        if tn>tn_finish then begin
-          dec(tn, 4);
-          while tn<tn_finish do begin
-            a_part := ALPHA*TQNNSingleOps.qdot(K, A + tm*lda, B + tn*ldb);
-            CC[tn] := CC[tn] + a_part;
-            inc(tn)
-          end;
+        {$endif}
+        while tn<tn_finish do begin
+          a_part := ALPHA*TQNNSingleOps.qdot(K, A + tm*lda, B + tn*ldb);
+          CC[tn] := CC[tn] + a_part;
+          inc(tn)
         end;
       end;
-
       inc(tn_start, TILE_N)
     end;
   //  inc(tm_start, TILE_M)
@@ -1308,6 +1321,8 @@ var i:int64;
 {$ifdef fpc}
 begin
 {$endif}
+  //TQNNSingleOPS.cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, M, N, K, alpha, A, lda, B, ldb, BETA, C, ldc);
+  //exit;
   {$ifdef USE_MULTITHREADING}
   mp.&For(tile, 0, CEIL_DIV(M, TILE_M)*TILE_M, nil, TILE_M);
   {$else}
@@ -2332,7 +2347,7 @@ class procedure TQNNSingleOPS.QNNSigmoidInplace(const x: PSingle;
 var i:integer;
 begin
   // todo sigmoid inplace simdify
-  {$ifdef CPUX64}
+  {$if defined(CPUX64) and defined(USE_AVX2)}
   sSiLU_avx2(N, x, nil, x, nil);
   {$else}
   for i := 0 to N-1 do
@@ -2344,7 +2359,7 @@ class procedure TQNNSingleOPS.QNNSigmoid(const dst, src: PSingle; const N: integ
 var i:integer;
 begin
   // todo sigmoid simdify
-  {$ifdef CPUX64}
+  {$if defined(CPUX64) and defined(USE_AVX2)}
   sSiLU_avx2(N, src, nil, dst, nil);
   {$else}
   for i := 0 to N-1 do
@@ -2358,7 +2373,7 @@ var
   val :Single;
 begin
   // todo silu inplace simdify
-  {$ifdef CPUX64}
+  {$if defined(CPUX64) and defined(USE_AVX2)}
   sSiLU_avx2(N, x, nil, nil, x);
   {$else}
   for i := 0 to N-1 do begin
@@ -2374,7 +2389,7 @@ var
   val :Single;
 begin
   // todo silu priority simdify
-  {$ifdef CPUX64}
+  {$if defined(CPUX64) and defined(USE_AVX2)}
   sSiLU_avx2(N, src, nil, nil, dst);
   {$else}
     for i := 0 to N-1 do begin
@@ -2391,7 +2406,7 @@ var
 begin
 
   // todo siluMul priority simdify
-  {$ifdef CPUX64}
+  {$if defined(CPUX64) and defined(USE_AVX2)}
   sSiLU_avx2(N, gate, up, nil, gate);
   {$else}
   for i := 0 to N-1 do begin
@@ -2410,7 +2425,7 @@ begin
 //setlength(Q, N);
 //move(X^, Q[0], N*sizeof(single));
 //sSoftMax_avx2(N, pointer(Q));
-{$ifdef CPUX64}
+{$if defined(CPUX64) and defined(USE_AVX2)}
   sSoftmax_avx2(N, x);
 {$else}
   max_val := QNNMax(N, x);
@@ -3207,33 +3222,35 @@ end;
  * The transformer operates on these patch tokens, not individual spatial
  * positions, reducing sequence length by ps*ps (4x for ps=2). *)
 class procedure TQNNSingleOPS.QNNPatchify(const dst, src: PSingle; const batch, channels, H, W, patch_size: longint);
-var outH, outW, out_ch, b, c, ph, pw, pi, pj, ih, iw, in_idx, out_c, out_idx: longint;
+var outH, outW, {out_ch, }b, c, ph, pw, pi, pj, {ih, iw, }in_idx, {out_c, }out_idx: longint;
 begin
     outH := H div patch_size;
     outW := W div patch_size;
-    out_ch := channels * patch_size * patch_size;
     for b := 0 to batch -1 do
       for c := 0 to channels -1 do
-        for ph := 0 to outH -1 do
-          for pw := 0 to outW -1 do
-            for pi := 0 to patch_size -1 do
-              for pj := 0 to patch_size -1 do
+        for pi := 0 to patch_size -1 do
+          for pj := 0 to patch_size -1 do
+            for ph := 0 to outH -1 do
+              for pw := 0 to outW -1 do
                 begin
-                  ih := ph * patch_size+pi;
-                  iw := pw * patch_size+pj;
-                  in_idx := b * channels * H * W + c * H * W + ih * W + iw;
-                  out_c := c * patch_size * patch_size + pi * patch_size + pj;
-                  out_idx := b * out_ch * outH * outW+out_c * outH * outW+ph * outW+pw;
+                  //ih := ph * patch_size+pi;
+                  //iw := pw * patch_size+pj;
+                  in_idx := b*channels*outH*patch_size*outW*patch_size + c*outH*patch_size*outW*patch_size + ph*patch_size*outW*patch_size + pi*outW*patch_size + pw*patch_size + pj;
+                  out_idx := b*channels*patch_size*patch_size*outH*outW + c*patch_size*patch_size*outH*outW + pi*patch_size*outH*outW + pj*outH*outW + ph*outW + pw;
+                  // [batch, channels, outH, patch_size, outW, patch_size]
+                  // [batch, channels, patch_size ,patch_size, outH ,outW]
+                        //transpose : 0, 1, 3, 5, 2, 4
                   dst[out_idx] := src[in_idx]
-                end
+                end;
+                // [b*channels*H*W + c*H*W + ph*patch_size*W + pw*patch_size + pi*W + pj]
 end;
 
 class procedure TQNNSingleOPS.QNNUnpatchify(const dst, src: PSingle; const batch, channels, H, W, patch_size: longint);
-var in_ch, outH, outW, b, c, ph, pw, pi, pj, in_c, in_idx, oh, ow, out_idx: longint;
+var {in_ch, outH, outW, }b, c, ph, pw, pi, pj, {in_c, }in_idx, {oh, ow, }out_idx: longint;
 begin
-    in_ch := channels * patch_size * patch_size;
-    outH := H * patch_size;
-    outW := W * patch_size;
+    //in_ch := channels * patch_size * patch_size;
+    //outH := H * patch_size;
+    //outW := W * patch_size;
     for b := 0 to batch -1 do
       for c := 0 to channels -1 do
         for ph := 0 to H -1 do
@@ -3241,14 +3258,106 @@ begin
             for pi := 0 to patch_size -1 do
               for pj := 0 to patch_size -1 do
                 begin
-                  in_c := c*patch_size*patch_size + pi*patch_size + pj;
-                  in_idx := b*in_ch*H*W + in_c*H*W + ph*W + pw;
-                  oh := ph*patch_size + pi;
-                  ow := pw*patch_size + pj;
-                  out_idx := b*channels*outH*outW + c*outH*outW + oh*outW + ow;
+                  in_idx  := b*channels*patch_size*patch_size*H*W + c*patch_size*patch_size*H*W + pi*patch_size*H*W + pj*H*W + ph*W + pw;
+                     // [batch, channels, patch_size, patch_size ,H, W]
+                  out_idx := b*channels*H*patch_size*W*patch_size + c*H*patch_size*W*patch_size + ph*patch_size*W*patch_size + pi*W*patch_size + pw*patch_size + pj;
+                     // [batch, channels, H, patch_size, W, patch_size]
+                         // transpose [0, 1, 4, 2, 5, 3]
                   dst[out_idx] := src[in_idx]
                 end
 end;
+
+class procedure TQNNSingleOPS.QNNPermut(
+  const dst, src: PSingle;
+  const axisPerm: TArray<byte>;
+  const inShape: TArray<int64>; outShape: TArray<int64>;
+  inIdx: TArray<int64>; outIdx: TArray<int64>; const lvl: int64;
+  inStrides:TArray<int64> = nil; outStrides:TArray<int64> = nil);
+var
+  i: int64;
+  outLinear, inLinear: int64;
+begin
+  { Iterate all values for this output axis }
+
+  if not assigned(inStrides)  then inStrides := getStrides(inShape);
+  if not assigned(outStrides) then outStrides := getStrides(outShape);
+  if not assigned(outShape) then setLength(outShape, length(inShape));
+  for i:=0 to high(inShape) do
+    outShape[i]:= inShape[axisPerm[i]];
+  if not assigned(inIdx)  then setLength(inIdx, length(inShape));
+  if not assigned(outIdx) then setLength(outIdx, length(outShape));
+
+  if lvl<high(outshape) then begin
+    for i := 0 to OutShape[lvl]-1 do
+      begin
+        OutIdx[lvl] := i;
+        InIdx[AxisPerm[lvl]] := i;
+        QNNPermut(dst, src,  axisPerm, inShape, OutShape, InIdx, outIdx, lvl+1, inStrides, outStrides);
+      end
+  end
+    else begin
+      for i := 0 to OutShape[lvl]-1 do
+        begin
+          OutIdx[lvl] := i;
+          InIdx[AxisPerm[lvl]] := i;
+          inLinear := getIndex(InIdx, InStrides);
+          outLinear := getIndex(OutIdx, OutStrides);
+          dst[outLinear] := src[inLinear];
+        end;
+
+      //inLinear  := StridesToLastIndex(InIdx , InStrides);
+      //outLinear := StridesToLastIndex(OutIdx, OutStrides);
+      //if lvl>1 then lastStride := inStrides[lvl-1] else lastStride := 1;
+      //for i := 0 to OutShape[lvl]-1 do
+      //  begin
+      //    dst[outLinear+i] := src[inLinear + i*lastStride];
+      //  end;
+    end;
+end;
+
+//var
+//  i, newLvl, dst_stride: int64;
+//  src_start, dst_start:PSingle;
+//  newStrides, oldStrides: Tarray<int64>;
+//begin
+{  if not assigned(newShape) then begin
+    setLength(newShape, length(oldShape));
+    setLength(indicies, length(oldShape));
+    setLength(newIndicies, length(oldShape));
+    for i := 0 to High(axis) do
+      newShape[axis[i]] := oldShape[i];
+  end;
+  newStrides := getStrides(newShape);
+  oldStrides := getStrides(oldShape);
+  if lvl < high(oldShape) then
+    for i := 0 to oldShape[lvl] - 1 do begin
+      indicies[lvl] := i;
+      newIndicies[axis[lvl]] := i;
+      QNNPermute(dst, src, axis, oldShape, newShape, Indicies, newIndicies, lvl + 1)
+    end
+  else begin// lvl == high(FShape)
+    newLvl := axis[lvl];
+
+    indicies[lvl] := 0;
+    src_start := src + getIndex(indicies, oldStrides);
+
+    newIndicies[newLvl] := 0;
+    i := getIndex(newIndicies, newStrides);
+    dst_start := dst + i;
+
+    newIndicies[newLvl] := oldShape[lvl];
+    dst_stride := (getIndex(newIndicies, newStrides) - i) div oldShape[lvl];
+
+    for i := 0 to oldShape[lvl] - 1 do begin
+      //indicies[lvl] := i;
+      //newIndicies[newLvl] := i;
+      //dst.Data[dst.getIndex(newIndicies)] := src.Data[src.getIndex(indicies)];
+     dst_start[i*dst_stride] := src_start[i];
+    end;
+  end;
+}
+//end;
+
 
 class procedure TQNNSingleOPS.QNNCopy(const dst, src:PSingle; const N:integer);
 begin
@@ -3454,12 +3563,122 @@ begin
   writeln(']')
 end;
 
+procedure printArray(const src: PLongint; const N: longint);
+var i:longint;
+begin
+  write('[');
+  if N>0 then begin
+    write(src[0]);
+    for i:=1 to N-1 do
+      write(', ', src[i])
+
+  end;
+  writeln(']')
+end;
+
+procedure printArray(const src: PInt64; const N: longint);
+var i:longint;
+begin
+  write('[');
+  if N>0 then begin
+    write(src[0]);
+    for i:=1 to N-1 do
+      write(', ', src[i])
+
+  end;
+  writeln(']')
+end;
+
 procedure randArray(const N:longint; const dst:PSingle; const Amin:single=-5.0; Amax:Single=5.0);
 var i:longint;
 begin
   for i:=0 to N-1 do
     dst[i] := amin+random()*(aMax-aMin);
 end;
+
+procedure WriteTransposeRec(
+  Dim: int64;
+  const OutShape: TArray<int64>;
+  const OutStrides: TArray<int64>;     { not strictly needed if we compute out linear index directly }
+  const InStrides: TArray<int64>;
+  const AxisPerm: TArray<byte>;       { out axis k gets in axis AxisPerm[k] }
+  const InShape: TArray<int64>;
+  var OutIdx: TArray<int64>;
+  var InIdx: TArray<int64>;
+  const src, dst: PSingle
+);
+var
+  i: int64;
+  lastStride, outLinear, inLinear, inLinear1, offet: int64;
+begin
+  { Iterate all values for this output axis }
+  if dim<high(outshape) then begin
+    for i := 0 to OutShape[dim]-1 do
+      begin
+        OutIdx[dim] := i;
+        InIdx[AxisPerm[dim]] := i;
+        WriteTransposeRec( Dim + 1, OutShape, OutStrides, InStrides, AxisPerm, InShape, OutIdx, InIdx, src, dst);
+      end
+  end
+    else begin
+      for i := 0 to OutShape[dim]-1 do
+        begin
+          OutIdx[dim] := i;
+          InIdx[AxisPerm[dim]] := i;
+          inLinear := getIndex(InIdx, InStrides);
+          outLinear := getIndex(OutIdx, OutStrides);
+          dst[outLinear] := src[inLinear];
+        end;
+
+      //inLinear  := StridesToLastIndex(InIdx , InStrides);
+      //outLinear := StridesToLastIndex(OutIdx, OutStrides);
+      //if dim>1 then lastStride := inStrides[dim-1] else lastStride := 1;
+      //for i := 0 to OutShape[dim]-1 do
+      //  begin
+      //    dst[outLinear+i] := src[inLinear + i*lastStride];
+      //  end;
+    end;
+end;
+
+procedure AltPermut(const dst, src: PSingle; const InShape: TArray<int64>; const AxisPerm: TArray<byte>);
+var
+  Rank, NumElems, k: int64;
+  OutShape, InStrides, OutStrides, OutIdx, InIdx: TArray<int64>;
+begin
+  Rank := Length(AxisPerm);
+
+  { Build output shape: out shape on axis k is in shape on axis AxisPerm[k] }
+  SetLength(OutShape, Rank);
+  for k := 0 to Rank - 1 do
+    OutShape[k] := InShape[AxisPerm[k]];
+
+  NumElems := Product(OutShape);
+
+  { Strides for linearization }
+  InStrides := getStrides(InShape);
+  OutStrides := getStrides(OutShape);
+
+
+  { Allocate index arrays }
+  SetLength(OutIdx, Rank);
+  SetLength(InIdx, Rank);
+
+  { Start recursion to enumerate all output index tuples }
+  WriteTransposeRec(
+    0,
+    OutShape,
+    OutStrides,
+    InStrides,
+    AxisPerm,
+    InShape,
+    OutIdx,
+    InIdx,
+    src,
+    dst
+  );
+
+end;
+
 
 // GEMM testing
 var
@@ -3530,18 +3749,18 @@ initialization
         TQNNSingleOPS.cblas_sscal := cblas_sscal  ;
         TQNNSingleOPS.isUsingBlas := true;
   {$else}
-  //hBLASLib := LoadLibrary(blaslib);
-  //if hBLASLib=0 then
-  //  hBLASLib:=LoadLibrary('lib'+blaslib);
-  //if hBLASLib=0 then
-  //  hBLASLib:=LoadLibrary('lib'+blaslib+'.0');
-  //
-  //if hBLASLib=0 then
-  //  hBLASLib:=LoadLibrary(blaslib64);
-  //if hBLASLib=0 then
-  //  hBLASLib:=LoadLibrary('lib'+blaslib64);
-  //if hBLASLib=0 then
-  //  hBLASLib:=LoadLibrary('lib'+blaslib64+'.0');
+  hBLASLib := LoadLibrary(blaslib);
+  if hBLASLib=0 then
+    hBLASLib:=LoadLibrary('lib'+blaslib);
+  if hBLASLib=0 then
+    hBLASLib:=LoadLibrary('lib'+blaslib+'.0');
+
+  if hBLASLib=0 then
+    hBLASLib:=LoadLibrary(blaslib64);
+  if hBLASLib=0 then
+    hBLASLib:=LoadLibrary('lib'+blaslib64);
+  if hBLASLib=0 then
+    hBLASLib:=LoadLibrary('lib'+blaslib64+'.0');
 
   if (hBLASLib>0) then begin
     TQNNSingleOPS.cblas_sgemm   := getProcAddress(hBLASLib, 'cblas_sgemm');

@@ -10,6 +10,7 @@ uses
   {$endif}
   SysUtils, Generics.Collections, TypInfo
   , quicknn_common
+  , quicknn_kernels
   , quicknn_transformers
   , quicknn_vae
   , quicknn_flux
@@ -135,8 +136,8 @@ begin
   step_callback := afterstep;
   text_progress_callback:=afterstep;
   vae_progress_callback := afterstep;
-  PROMPT := 'a cute realistic panda holding a "I will code for food!" signboard';
-  //PROMPT := 'A Delphi with gargoyles on the top of it, a fron view of the whole delphi building';
+  //PROMPT := 'a cute realistic panda holding a "I will code for food!" signboard';
+  PROMPT := 'a cute little realistic cheeta holding a "I will code for food!" signboard';
   //PROMPT := 'cartimaphoble hembrashel';
   {$define _ZIMAGE}
   {$ifdef ZIMAGE}
@@ -170,8 +171,15 @@ begin
 
   //img := flux.generate('a realistic pink grisly bear wearing a blue hat holding (will code for food) signboard.', params);
   //img := flux.generate('On a desk, a laptop displays a wallpaper of a countryside landscape with a small river. The landscape extends beyond the computer screen, invading the desk, the walls, and the room. The river overflows the screen, and plants and trees grow beyond its boundaries, blending seamlessly with the surrounding environment. The style is a stunning 3D rendering, with deep, cinematic lighting.', params);
+  {$ifdef USE_PROFILING}
+  metrics.reset;
+  {$endif}
 
   img := flux.generate(PROMPT, params, previewProgress);
+  {$ifdef USE_PROFILING}
+  metrics.print();
+  {$endif}
+
   //img := flux.generate('a young lady with sunglasses, red hair and little frickles', params);
   //img := flux.generate('A mechanical dog made of brass gears and copper pipes, steampunk style, highly detailed.', params);
   //img := flux.generate('Tom and Jerry', params);

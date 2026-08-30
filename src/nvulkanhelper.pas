@@ -100,6 +100,8 @@ type
     size   : VkDeviceSize;
     precision : TVulkanPrecision;
     isStaging : boolean;
+    scaler    : TArray<TVulkanMemory>;
+    blockSize : int64;
     class operator initialize({$ifdef FPC}var{$else}out{$endif} mem:TVulkanMemory);
   end;
 

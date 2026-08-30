@@ -11,7 +11,7 @@ interface
 
 uses
   Classes, SysUtils, Types, LCLType, Forms, Controls, Graphics, Dialogs, ExtCtrls, StdCtrls,
-  Buttons, ComCtrls, Spin, ExtDlgs, MaskEdit, quicknn_transformers,
+  Buttons, ComCtrls, Spin, ExtDlgs, quicknn_transformers,
   quicknn_common, quicknn_vae, quicknn_flux, quicknn_zimage;
 
 type
@@ -45,6 +45,7 @@ type
     FEdit : TCustomEdit;
     FBtn: TBtn;
     FList :TCustomListBox;
+    FOnChange : TNotifyEvent;
     procedure FOnBtnPaint(Sender:TObject);
     procedure FOnItemsChange(Sender:TObject);
     procedure FOnListSelectionChange(Sender:TObject;user:boolean);
@@ -57,6 +58,7 @@ type
     procedure FBtnLeave(Sender:TObject);
     procedure FBtnClick(Sender:TObject);
     procedure FOnListBoxSetVisible(Sender:TObject);
+    function GetText: string;
     procedure SetItemIndex(AValue: integer);
     procedure SetItems(AValue: TStrings);
     procedure SetText(AValue: string);
@@ -71,7 +73,7 @@ type
     procedure FOnItemChange(Sender:TObject);
   published
     property ItemIndex:integer read FItemIndex write SetItemIndex;
-    property Text : string read FText write SetText;
+    property Text : string read GetText write SetText;
     property Items:TStrings read FItems write SetItems;
 
   end;
@@ -120,63 +122,82 @@ type
 
   TMainForm = class(TForm)
     btnGenerate: TSpeedButton;
-    btnGenerate1: TSpeedButton;
     btnImg2Img: TSpeedButton;
+    btnLoadPic1: TLabel;
     btnTxt2Img: TSpeedButton;
-    cmbModels: TComboBox;
     cmbImgRes: TComboBox;
+    cmbModels: TComboBox;
+    cmbSchedular: TComboBox;
+    edtCFG: TEdit;
+    edtPowerAlpha: TEdit;
     edtSeed: TEdit;
-    edtSeed1: TEdit;
     Image1: TImage;
     Image2: TImage;
+    ImageList1: TImageList;
     Label1: TLabel;
+    btnLoadPic: TLabel;
+    lblSetAsRef: TLabel;
     Label2: TLabel;
     Label3: TLabel;
+    dlgImage: TOpenPictureDialog;
     Label4: TLabel;
     Label5: TLabel;
     Label6: TLabel;
+    Label7: TLabel;
+    Label8: TLabel;
+    Label9: TLabel;
     memoPrompt: TMemo;
-    memoPrompt1: TMemo;
-    Notebook1: TNotebook;
-    dlgImage: TOpenPictureDialog;
+    memoNegPrompt: TMemo;
     Panel2: TPanel;
     Panel3: TPanel;
     Panel4: TPanel;
+    Panel1: TPanel;
     Panel5: TPanel;
     Panel6: TPanel;
-    btnLoadPic: TSpeedButton;
-    Splitter2: TSplitter;
-    spnSteps: TSpinEdit;
-    Splitter1: TSplitter;
-    spnSteps1: TSpinEdit;
-    txt2img: TPage;
-    img2img: TPage;
-    Panel1: TPanel;
+    Panel7: TPanel;
+    pnlPrompt: TPanel;
+    pnlNegative: TPanel;
     ProgressBar1:THSProgressBar;
+    Splitter1: TSplitter;
+    Splitter2: TSplitter;
+    Splitter3: TSplitter;
+    spnSteps: TSpinEdit;
     procedure btnGenerateClick(Sender: TObject);
+    procedure btnLoadPic1Click(Sender: TObject);
     procedure btnTxt2ImgClick(Sender: TObject);
     procedure btnImg2ImgClick(Sender: TObject);
     procedure cmbModelsDropDown(Sender: TObject);
+    procedure edtCFGChange(Sender: TObject);
+    procedure edtCFGMouseWheel(Sender: TObject; Shift: TShiftState;
+      WheelDelta: Integer; MousePos: TPoint; var Handled: Boolean);
     procedure FormClose(Sender: TObject; var CloseAction: TCloseAction);
     procedure FormCreate(Sender: TObject);
     procedure btnLoadPicClick(Sender: TObject);
     procedure FormShow(Sender: TObject);
+    procedure btnLoadPicMouseEnter(Sender: TObject);
+    procedure btnLoadPicMouseLeave(Sender: TObject);
+    procedure Image1DblClick(Sender: TObject);
+    procedure lblSetAsRefClick(Sender: TObject);
   private
     procedure checkExistingModels;
   public
-    modeledit1, imgRes:THSEdit;
+    modeledit1, imgRes, schedularEdit1:THSEdit;
     generateThread : TGenerateThread
   end;
 
 var
   MainForm: TMainForm;
+  gotImage:boolean = false;
+  gotImage2:boolean = false;
+  lastGenerated : string = '';
 
+  procedure QNNImageToBitmap(const img:TQNNImage; var bmp:TBitmap);
 
 implementation
 uses
-  HSButton, HSButtons
+  math
 {$ifdef MSWINDOWS}
-  , DwmApi
+  ,DwmApi
 {$endif};
 
 {$R *.lfm}
@@ -203,9 +224,9 @@ end;
 {$endif}
 
 {$if defined(MacOS) or defined(DARWIN)}
-const MODELs_DIR = '../../../../../models';
+const MODELS_DIR = '../../../../../models';
 {$else}
-const MODELs_DIR = '../../models';
+const MODELS_DIR = '../../models';
 {$endif}
 
 var AppPath : RawByteString;
@@ -232,47 +253,72 @@ begin
 end;
 
 procedure OnPreviewCallback(const step, steps:longint; const latent:TMemoryBlock);
-type
-
-     TRGB = packed record r, g, b, a:byte end;
-     PRGB = ^TRGB;
-var img:TQNNImage;
+var
+  img:TQNNImage;
   bmp:Graphics.TBitmap;
-  y, x:longint;
-  rgb : PRGB;
 begin
   img := PVAE(vae_ptr).preview(latent, flux2_latent_rgb_proj, latent.height(), latent.width(), latent.height(), 1, flux2_latent_rgb_bias, 2).resize(128, 128);
   bmp := Graphics.TBitmap.Create;
-{$ifdef MSWINDOWS}
-  bmp.PixelFormat:=pf32bit;
-{$else}
-  bmp.PixelFormat:=pf24bit;
-{$endif}
-  bmp.SetSize(img.width, img.height);
-  bmp.BeginUpdate();
-  for y:=0 to img.Height-1 do begin
-    RGB := bmp.ScanLine[y];
-    for x :=0 to img.width-1 do begin
-      rgb[x].r := img.data[y*img.width*3 + x*3+2];
-      rgb[x].g := img.data[y*img.width*3 + x*3+1];
-      rgb[x].b := img.data[y*img.width*3 + x*3];
-{$ifdef MSWINDOWS}
-      rgb[x].a := 255;
-{$endif}
-    end;
-  end;
-  bmp.EndUpdate();
-  if MainForm.Notebook1.PageIndex=0 then begin
+  QNNImageToBitmap(img, bmp);
+  if MainForm.btnTxt2Img.Down then begin
     mainform.Image1.Picture.Graphic:= bmp;
     //MainForm.generateThread.Synchronize(MainForm.Image1.Repaint);
   end;
-  if MainForm.Notebook1.PageIndex=1 then begin
+  if MainForm.btnImg2Img.Down then begin
     mainform.Image2.Picture.Graphic:= bmp;
     //MainForm.generateThread.Synchronize(MainForm.Image2.Repaint);
   end;
   MainForm.generateThread.Synchronize(MainForm.Repaint);
   img.free;
   freeAndNil(bmp)
+end;
+
+function Limit(V,Min,Max:Integer):Integer;
+begin
+  if V>Max then
+    Result:=Max
+  else if V<Min then
+    Result:=Min
+  else Result:=V
+
+end;
+
+function ColorBright(C:TColor;B:Integer):TColor;
+begin
+//  C:=ColorToRGB(C);
+  Result:=RGBToColor(EnsureRange(red(c)+B, 0, 255), EnsureRange(green(c)+B, 0, 255), EnsureRange(blue(c)+B, 0, 255))
+end;
+
+procedure QNNImageToBitmap(const img: TQNNImage; var bmp: TBitmap);
+type
+  TRGB = packed record r, g, b, a:byte end;
+  PRGB = ^TRGB;
+var
+  y, x:longint;
+  rgb:PRGB;
+begin
+    assert(assigned(bmp), 'ERROR [QNNImageToBMP]: target cannot be nil');
+    assert(assigned(img.data), 'ERROR [QNNImageToBMP]: source cannot be nil');
+    bmp.Clear;
+  {$ifdef MSWINDOWS}
+    bmp.PixelFormat:=pf32bit;
+  {$else}
+    bmp.PixelFormat:=pf24bit;
+  {$endif}
+    bmp.SetSize(img.width, img.height);
+    bmp.BeginUpdate();
+    for y:=0 to img.Height-1 do begin
+      RGB := bmp.ScanLine[y];
+      for x :=0 to img.width-1 do begin
+        rgb[x].r := img.data[y*img.width*3 + x*3+2];
+        rgb[x].g := img.data[y*img.width*3 + x*3+1];
+        rgb[x].b := img.data[y*img.width*3 + x*3];
+  {$ifdef MSWINDOWS}
+        rgb[x].a := 255;
+  {$endif}
+      end;
+    end;
+    bmp.EndUpdate();
 end;
 
 procedure TGenerateThread.Execute;
@@ -283,21 +329,25 @@ var
   strRes : array of string;
   imWidth, imHeight:longInt;
 begin
-  strRes := string(MainForm.cmbImgRes.Text).Split(' ');
+  strRes := string(MainForm.imgRes.Text).Split(' ');
 
   assert((length(strRes)=3) and (TryStrToInt(strRes[0], imWidth)) and (TryStrToInt(strRes[2], imHeight)), 'Incorrect image dimensions!');
+
+
   with MainForm do begin
-    if Notebook1.PageIndex=0 then try // txt2Img
-      params := default(TGenerateParams);
-      params.width:=imWidth;
-      params.height:=imHeight;
-      params.num_steps := spnSteps.Value;
-      params.guidance  := 0;
-      params.powerAlpha:= 2.0;
-      if (trim(edtSeed.Text)='') or (strToInt(edtSeed.text)<=0) then
-        params.seed := random(Int64.MaxValue)
-      else
-        params.seed := strToInt(edtSeed.text);
+    params := default(TGenerateParams);
+    params.width:=imWidth;
+    params.height:=imHeight;
+    params.num_steps := spnSteps.Value;
+    params.guidance  := strToFloat(edtCFG.Text);
+    params.powerAlpha:= strToFloat(edtPowerAlpha.Text);
+    params.schedule  := TQNNSchedule(schedularEdit1.ItemIndex);
+    if (trim(edtSeed.Text)='') or (strToInt(edtSeed.text)<=0) then
+      params.seed := random(Int64.MaxValue)
+    else
+      params.seed := strToInt(edtSeed.text);
+
+    if btnTxt2Img.Down then try // txt2Img
 
       MainForm.generateThread.Synchronize(MainForm.Update);
 
@@ -305,41 +355,31 @@ begin
       text_progress_callback:= OnTextStepCallback;
       vae_progress_callback:= OnTextStepCallback;
       ProgressBar1.Position := 0;
-      if LowerCase(cmbModels.Text).Contains('flux') then begin
-        flux := TQNNFlux.load(AppPath+MODELS_DIR+'/'+cmbModels.Text);
-        ProgressBar1.Max:= 27 + params.num_steps*(5 + 20 + 2) + 16;  // text_encode_steps + steps*transformer_blocks + ve_decoder_steps
+      if LowerCase(ModelEdit1.Text).Contains('flux') then begin
+        flux := TQNNFlux.load(AppPath+MODELS_DIR+'/'+modeledit1.Text);
+        ProgressBar1.Max:= 27 + params.num_steps*(5 + 20 + 2) + 16+100;  // text_encode_steps + steps*transformer_blocks + ve_decoder_steps
         flux.use_mmap:=true;
-        img := flux.generate(memoPrompt.Text, params, OnPreviewCallback);
+        img := flux.generate(memoPrompt.Text, memoNegPrompt.Text, params, OnPreviewCallback);
       end;
-      if lowerCase(cmbModels.Text).Contains('z-image') then begin
-        zi := TQNNZImage.load(AppPath+MODELS_DIR+'/'+cmbModels.Text);
-        ProgressBar1.Max:= 35 + params.num_steps*(2 + 2 + 44) + 15;  // text_encode_steps + steps*transformer_blocks + ve_decoder_step;
+      if lowerCase(ModelEdit1.Text).Contains('z-image') then begin
+        zi := TQNNZImage.load(AppPath+MODELS_DIR+'/'+modeledit1.Text);
+        ProgressBar1.Max:= 35 + params.num_steps*(2 + 2 + 44) + 15+100;  // text_encode_steps + steps*transformer_blocks + ve_decoder_step;
         zi.use_mmap:=true;
         img := zi.generate(memoPrompt.Text, params{, OnPreviewCallback});
       end;
       fn := AppPath+FormatDateTime('yyyymmdd_hhnnss', now())+'.png';
+      lastGenerated := fn;
       img.saveToFile(fn);
       image1.Picture.LoadFromFile(fn);
-
+      dlgImage.FileName := fn;
+      gotImage := true;
     finally
       if flux.transformer.isLoaded() then flux.free();
       if zi.transformer.isLoaded() then zi.free();
       img.free
     end;
 
-    if Notebook1.PageIndex=1 then try // img2Img
-
-      params := default(TGenerateParams);
-      params.num_steps := spnSteps1.Value;
-      params.guidance  := 0;
-      params.width:=imWidth;
-      params.height:=imHeight;
-
-      params.powerAlpha:= 2.0;
-      if (trim(edtSeed1.Text)='') or (strToInt(edtSeed1.text)<=0) then
-        params.seed := random(Int64.MaxValue)
-      else
-        params.seed := strToInt(edtSeed1.text);
+    if btnImg2Img.Down then try // img2Img
 
       MainForm.generateThread.Synchronize(MainForm.Update);
 
@@ -347,15 +387,17 @@ begin
       substep_callback:=OnStepCallback;
       text_progress_callback:= OnTextStepCallback;
       vae_progress_callback:= OnTextStepCallback;
-      flux := TQNNFlux.load(MODELs_DIR+'/'+cmbModels.Text);
-      ProgressBar1.Max:= 27 + params.num_steps*(5 + 20 + 2) + 16;  // text_encode_steps + steps*transformer_blocks + ve_decoder_steps
+      flux := TQNNFlux.load(MODELs_DIR+'/'+modeledit1.Text);
+      ProgressBar1.Max:= 27 + params.num_steps*(5 + 20 + 2) + 16 + 100;  // text_encode_steps + steps*transformer_blocks + ve_decoder_steps
       ProgressBar1.Position := 0;
       flux.use_mmap:=true;
-      img := flux.generate(memoPrompt1.Text, params, img, OnPreviewCallback);
+      img := flux.generate(memoPrompt.Text, memoNegPrompt.Text, params, img, OnPreviewCallback);
       fn := AppPath+FormatDateTime('yyyymmdd_hhnnss', now())+'.png';
+      lastGenerated := fn;
       img.saveToFile(fn);
       image2.Picture.LoadFromFile(fn);
-
+      gotImage2 := true;
+      lblSetAsRef.Show;
     finally
       flux.free();
       img.free
@@ -367,12 +409,9 @@ procedure TGenerateThread.DoTerminate;
 begin
   with MainForm do begin
     ProgressBar1.Position := 0;
-    if Notebook1.PageIndex=0 then
-       TControl(btnGenerate).Caption := 'Generate';
-    if Notebook1.PageIndex=1 then
-       TControl(btnGenerate1).Caption := 'Generate';
-    TControl(btnTxt2Img).Enabled:=True;
-    TControl(btnImg2Img).Enabled:=True;
+    btnGenerate.Caption := 'Generate';
+    btnTxt2Img.Enabled:=True;
+    btnImg2Img.Enabled:=True;
     generateThread.Synchronize(MainForm.Repaint);
   end;
   inherited DoTerminate;
@@ -409,14 +448,15 @@ end;
 procedure THSEdit.FOnListSelectionChange(Sender: TObject; user: boolean);
 begin
   if FList.ItemIndex>=0 then begin
-    FEdit.Text := FList.Items[FList.ItemIndex];
+    if FEdit.Text<>FList.Items[FList.ItemIndex] then
+      FEdit.Text := FList.Items[FList.ItemIndex];
   end;
   //FList.Hide
 end;
 
 procedure THSEdit.FOnListClick(sender: TObject);
 begin
-  //FList.Hide;
+  FList.Hide;
 end;
 
 procedure THSEdit.FOnListKeyDown(sender: TObject; var key: word;
@@ -434,8 +474,12 @@ begin
 end;
 
 procedure THSEdit.FOnEditChange(Sender: TObject);
+var i : longint;
 begin
-  Text:=FEdit.Text;
+  i := FList.items.IndexOf(FEdit.Text);
+  if ItemIndex <> i then
+    ItemIndex := i;
+  if assigned(FOnChange) then FOnChange(Self)
 end;
 
 procedure THSEdit.FOnEditKeyDown(sender: TObject; var key: word;
@@ -497,6 +541,11 @@ begin
   Flist.Width  := FEdit.Width;
 end;
 
+function THSEdit.GetText: string;
+begin
+  result := FEdit.Text;
+end;
+
 procedure THSEdit.SetItemIndex(AValue: integer);
 begin
   if FItemIndex=AValue then Exit;
@@ -514,8 +563,7 @@ end;
 
 procedure THSEdit.SetText(AValue: string);
 begin
-  if FText=AValue then Exit;
-  FText:=AValue;
+  FEdit.text := text;
 end;
 
 function THSEdit.getLocation(): TRect;
@@ -553,6 +601,9 @@ begin
   FEdit.BorderStyle:=bsNone;
   FEdit.SetBounds(1, 1, Width-BTN_WIDTH, Height-2);
   FEdit.Anchors := [akLeft, akTop, akRight, akbottom];
+  FEdit.OnKeyDown:=FOnEditKeyDown;
+  FEdit.OnChange:=FOnEditChange;
+
   //FEdit.Alignment:=taVerticalCenter;
 
   FList := TCustomListBox.Create(self);
@@ -560,7 +611,6 @@ begin
   FList.Color := ColorBright(Color, -20);
   //FList.Font.Color:=Font.Color;
   FList.OnSelectionChange:=FOnListSelectionChange;
-  FEdit.OnKeyDown:=FOnEditKeyDown;
   FList.OnClick:=FOnListClick;
   FList.OnKeyDown:=FOnListKeyDown;
   FList.AddHandlerOnVisibleChanged(FOnListBoxSetVisible);
@@ -714,13 +764,14 @@ end;
 
 procedure TMainForm.btnTxt2ImgClick(Sender: TObject);
 begin
-  txt2img.Show;
+  image2.Hide;
+  btnLoadPic.Hide;
 end;
 
 procedure TMainForm.btnGenerateClick(Sender: TObject);
 var params : TGenerateParams;
 begin
-  if Notebook1.PageIndex=0 then begin
+  if btnTxt2Img.Down then begin
     if (btnGenerate.Caption = 'Generate') then begin
       TControl(btnGenerate).Caption := 'Stop';
       TControl(btnTxt2Img).Enabled:=false;
@@ -733,13 +784,13 @@ begin
     end;
 
   end;
-  if Notebook1.PageIndex=1 then begin
+  if btnImg2Img.Down then begin
     if not fileExists(dlgImage.FileName) then begin
       ShowMessage('Load an image 1st.');
       exit
     end;
-    if btnGenerate1.Caption = 'Generate' then begin
-      TControl(btnGenerate1).Caption := 'Stop';
+    if btnGenerate.Caption = 'Generate' then begin
+      TControl(btnGenerate).Caption := 'Stop';
       TControl(btnTxt2Img).Enabled:=false;
       TControl(btnImg2Img).Enabled:=false;
       generateThread := TGenerateThread.Create(false);
@@ -753,14 +804,54 @@ begin
 
 end;
 
+procedure TMainForm.btnLoadPic1Click(Sender: TObject);
+var fn: string;
+begin
+  fn := AppPath+FormatDateTime('yyyymmdd_hhnnss', now())+'.png';
+
+  if not ((btnTxt2Img.Down and gotImage) or (btnImg2Img.Down and gotImage2)) then begin
+    ShowMessage('No output image!');
+    exit
+  end;
+
+  if PromptForFileName(fn, '*.png|*.png|*.bmp|*.bmp|*.jpg|*.jpg|*.*|*.*', 'png', '', '', true) then begin
+    if FileExists(fn) then
+      if MessageDlg('Overwrite ['+fn+'] ?', mtConfirmation, mbYesNo, 0)<>mrYes then exit;
+    if btnTxt2Img.Down then
+      image1.Picture.SaveToFile(fn)
+    else
+      image2.Picture.SaveToFile(fn);
+  end;
+end;
+
 procedure TMainForm.btnImg2ImgClick(Sender: TObject);
 begin
-  img2img.Show;
+  Image2.Show;
+  btnLoadPic.Show;
+  image2.width := image2.parent.width div 2
 end;
 
 procedure TMainForm.cmbModelsDropDown(Sender: TObject);
 begin
   checkExistingModels;
+end;
+
+procedure TMainForm.edtCFGChange(Sender: TObject);
+var s:Currency;
+begin
+  if not TryStrToCurr(edtCFG.Text, s) then exit;
+  pnlNegative.Visible := StrToFloat(edtCFG.Text) <> 1.0;
+  if pnlNegative.Visible then
+    pnlNegative.Width := pnlNegative.parent.Width div 2;
+end;
+
+procedure TMainForm.edtCFGMouseWheel(Sender: TObject; Shift: TShiftState;
+  WheelDelta: Integer; MousePos: TPoint; var Handled: Boolean);
+var s:currency;
+begin
+  if TryStrToCurr(TEdit(sender).text, s) then
+    if (s>0) or (WheelDelta>0) then
+      TEdit(Sender).Text := CurrToStr(s + (2*ord(WheelDelta>0)-1)*0.1);
 end;
 
 procedure TMainForm.FormClose(Sender: TObject; var CloseAction: TCloseAction);
@@ -773,72 +864,89 @@ begin
 end;
 
 procedure TMainForm.FormCreate(Sender: TObject);
+var i:TQNNSchedule; s:ansistring;
 begin
   checkExistingModels;
   if cmbModels.Items.count>0 then
     cmbModels.ItemIndex:=0;
+  cmbSchedular.Items.Clear;
+
+  for i := low(TQNNSchedule) to high(TQNNSchedule) do begin
+    str(i, s);
+    cmbSchedular.Items.add(copy(s,14));
+  end;
+  if cmbSchedular.items.count>0 then
+    cmbSchedular.ItemIndex:=0;
+
+
   cmbModels.hide;
   cmbImgRes.hide;
+  cmbSchedular.hide;
 
   modelEdit1:= THSEdit.Create(Self);
-  modeledit1.Parent:=Panel4;
+  modeledit1.Parent:=cmbModels.Parent;
   modelEdit1.SetBounds(cmbModels.Left, cmbModels.Top, cmbModels.Width, cmbModels.Height);
-  modelEdit1.Anchors:=[akLeft, akTop, akRight];
+  modelEdit1.Anchors:=[akLeft, akTop];
   modeledit1.Items.Text:=cmbModels.Items.Text;
   if modeledit1.Items.Count>0 then
     modeledit1.ItemIndex:=0;
 
   imgRes := THSEdit.Create(Self);
-  imgRes.parent := panel4;
+  imgRes.parent := cmbImgRes.parent;
   imgRes.SetBounds(cmbImgRes.Left, cmbImgRes.Top, cmbImgRes.Width, cmbImgRes.Height);
-  modelEdit1.Anchors:=[akLeft, akTop];
+  imgRes.Anchors:=[akRight, akTop];
   imgRes.items.Text := cmbImgRes.items.text;
   if imgRes.Items.Count>0 then
     imgRes.ItemIndex:=0;
+
+  schedularEdit1 := THSEdit.Create(Self);
+  schedularEdit1.parent := cmbSchedular.parent;
+  schedularEdit1.SetBounds(cmbSchedular.Left, cmbSchedular.Top, cmbSchedular.Width, cmbSchedular.Height);
+  schedularEdit1.Anchors:=[akRight, akTop];
+  schedularEdit1.items.Text := cmbSchedular.items.text;
+  if schedularEdit1.Items.Count>0 then
+    schedularEdit1.ItemIndex:=0;
+
+
+  spnSteps.BorderStyle := bsNone;
 
   progressBar1 := THSProgressBar.Create(Self);
   progressBar1.BarShowText:=true;
   ProgressBar1.Parent := Self;
   ProgressBar1.Height := 12;
   ProgressBar1.Align  := alBottom;
+
+
+
+
   {$ifdef MSWindows}
   SetDarkModeTitleBar(self, true);
   {$endif}
 end;
 
 procedure TMainForm.btnLoadPicClick(Sender: TObject);
-type
-
-     TRGB = packed record r, g, b, a:byte end;
-     PRGB = ^TRGB;
-var img:TQNNImage;
+var
+  img:TQNNImage;
   bmp:Graphics.TBitmap;
-  y, x:longint;
-  rgb:PRGB;
+
+  i, w, h : longint;
+  dims : string;
 begin
+  dlgImage.FileName:='';
   if not dlgImage.Execute  then exit;
   img := TQNNImage.loadFromFile(dlgImage.FileName);
   bmp := Graphics.TBitmap.Create;
-  {$ifdef MSWINDOWS}
-    bmp.PixelFormat:=pf32bit;
-  {$else}
-    bmp.PixelFormat:=pf24bit;
-  {$endif}
-  bmp.SetSize(img.width, img.height);
-  bmp.BeginUpdate();
-  for y:=0 to img.Height-1 do begin
-    RGB := bmp.ScanLine[y];
-    for x :=0 to img.width-1 do begin
-      rgb[x].r := img.data[y*img.width*3 + x*3+2];
-      rgb[x].g := img.data[y*img.width*3 + x*3+1];
-      rgb[x].b := img.data[y*img.width*3 + x*3];
-{$ifdef MSWINDOWS}
-      rgb[x].a := 255;
-{$endif}
-    end;
+  QNNImageToBitmap(img, bmp);
+  mainform.Image1.Picture.Graphic:= bmp;
+  for i:= 1 to 8 do begin
+    w := trunc(i*0.25*bmp.width);
+    h := trunc(w * bmp.Height / bmp.width);
+    if (w>=QNN_VAE_MAX_DIM) or (h>=QNN_VAE_MAX_DIM) then break;
+    dims := format('%d X %d', [w, h]);
+    if imgRes.Items.IndexOf(dims)<0 then
+      imgRes.Items.add(dims);
+    if i=1 then imgRes.ItemIndex:=imgRes.Items.IndexOf(dims);
   end;
-  bmp.EndUpdate();
-  mainform.Image2.Picture.Graphic:= bmp;
   MainForm.generateThread.Synchronize(MainForm.Update);
   img.free;
   freeAndNil(bmp)
@@ -849,6 +957,28 @@ procedure TMainForm.FormShow(Sender: TObject);
 begin
   //modeledit1.parent := self;
   //
+end;
+
+procedure TMainForm.btnLoadPicMouseEnter(Sender: TObject);
+begin
+  TControl(Sender).font.Style := TControl(Sender).font.Style + [fsUnderline]
+end;
+
+procedure TMainForm.btnLoadPicMouseLeave(Sender: TObject);
+begin
+  TControl(Sender).font.Style := TControl(Sender).font.Style - [fsUnderline]
+end;
+
+procedure TMainForm.Image1DblClick(Sender: TObject);
+begin
+  if btnImg2Img.Down then
+    btnLoadPicClick(btnLoadPic);
+end;
+
+procedure TMainForm.lblSetAsRefClick(Sender: TObject);
+begin
+  Image1.Picture.Graphic := Image2.Picture.Graphic;
+  dlgImage.FileName := lastGenerated;
 end;
 
 procedure TMainForm.checkExistingModels;

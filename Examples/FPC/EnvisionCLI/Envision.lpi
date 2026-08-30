@@ -139,6 +139,10 @@
         <Filename Value="..\..\..\src\ops_avx2.inc"/>
         <IsPartOfProject Value="True"/>
       </Unit>
+      <Unit>
+        <Filename Value="..\..\..\src\ops_avx512_bf16.inc"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
@@ -176,13 +180,12 @@
     </Linking>
     <Other>
       <CustomOptions Value="-dUSE_MULTITHREADING
--dDEBUG"/>
-      <OtherDefines Count="5">
+-dUSE_AVX2
+-dUSE_PROFILING"/>
+      <OtherDefines Count="3">
         <Define0 Value="USE_MULTITHREADING"/>
         <Define1 Value="DEBUG"/>
-        <Define2 Value="USE_FLASHATTENTION"/>
-        <Define3 Value="USE_CPP_GEMM"/>
-        <Define4 Value="USE_CPU"/>
+        <Define2 Value="USE_AVX2"/>
       </OtherDefines>
     </Other>
   </CompilerOptions>

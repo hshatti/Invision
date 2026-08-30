@@ -123,8 +123,8 @@ type
     function GetElement(const key: variant): TJSON;
     procedure SetElement(const key: variant; const AValue: TJSON);
   public
-    jsonType : TJSONType;
     name : rawbytestring;
+    jsonType : TJSONType;
     Value : variant;
     //innerText : PCHAR;
     //innerTextLen : int64;
@@ -504,7 +504,9 @@ begin
   end;
   // traverse deeper if no object type associated
   while (result.jsonType=jtNone) and assigned(result.childObjs) do begin
-    result:= result.childObjs[0];
+    result.jsonType := result.childObjs[0].jsonType;
+    result.Value    := result.childObjs[0].Value;
+    result.childObjs:= result.childObjs[0].childObjs;
   end
 end;
 
