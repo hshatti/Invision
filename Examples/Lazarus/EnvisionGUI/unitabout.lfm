@@ -1,0 +1,63 @@
+object frmAbout: TfrmAbout
+  Left = 343
+  Height = 366
+  Top = 250
+  Width = 560
+  BorderStyle = bsNone
+  Caption = 'frmAbout'
+  ClientHeight = 366
+  ClientWidth = 560
+  Color = 3355443
+  Position = poScreenCenter
+  LCLVersion = '4.8.0.0'
+  OnCreate = FormCreate
+  OnPaint = FormPaint
+  object Label3: TLabel
+    Left = 200
+    Height = 59
+    Top = 0
+    Width = 166
+    Anchors = [akTop, akLeft, akRight]
+    Caption = 'Envision '
+    Font.Color = 13421772
+    Font.Height = -43
+    ParentFont = False
+  end
+  object Label1: TLabel
+    Left = 12
+    Height = 210
+    Top = 138
+    Width = 544
+    Alignment = taCenter
+    Anchors = [akLeft, akRight]
+    Caption = 'Written in pure pascal for Delphi/Free Pascal'#13#10#13#10'Copyright (C) <2026> <Haitham Shatti> <haitham.shatti@gmail.com>'#13#10'This source is free software; you can redistribute it and/or modify it under'#13#10'the terms of the GNU General Public License as published by the Free'#13#10'Software Foundation; either version 2 of the License, or (at your option) any later version.'#13#10#13#10'This code is distributed in the hope that it will be useful, but WITHOUT ANY'#13#10'WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS'#13#10'FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.'#13#10'A copy of the GNU General Public License is available on the World Wide Web'#13#10'at <http://www.gnu.org/copyleft/gpl.html>. You can also obtain it by writing'#13#10'to the Free Software Foundation, Inc., 51 Franklin Street - Fifth Floor,'#13#10'Boston, MA 02110-1335, USA.'
+    Font.Color = 13421772
+    ParentFont = False
+    OnClick = Label1Click
+  end
+  object Label2: TLabel
+    Left = 8
+    Height = 42
+    Top = 60
+    Width = 544
+    Alignment = taCenter
+    Anchors = [akTop, akLeft, akRight]
+    Caption = 'A Lightweight optimized and self dependant Inference Demo'#13#10'for [Flux2] and [ZImage] Image Generation models'
+    Font.Color = 13421772
+    Font.Height = -16
+    ParentFont = False
+  end
+  object Label4: TLabel
+    Cursor = crHandPoint
+    Left = 180
+    Height = 15
+    Top = 108
+    Width = 192
+    Anchors = [akTop, akLeft, akRight]
+    Caption = 'https://github.com/hshatti/Envision'
+    Font.Color = 16763921
+    Font.Style = [fsUnderline]
+    ParentFont = False
+    OnClick = Label4Click
+  end
+end

@@ -2,10 +2,10 @@ object MainForm: TMainForm
   Left = 200
   Height = 616
   Top = 100
-  Width = 992
-  Caption = 'MainForm'
+  Width = 968
+  Caption = 'Envision GUI'
   ClientHeight = 616
-  ClientWidth = 992
+  ClientWidth = 968
   Color = 3355443
   Constraints.MinHeight = 480
   Constraints.MinWidth = 760
@@ -15,6 +15,7 @@ object MainForm: TMainForm
   Font.Quality = fqDraft
   ShowHint = True
   LCLVersion = '4.8.0.0'
+  Visible = True
   OnClose = FormClose
   OnCreate = FormCreate
   OnShow = FormShow
@@ -218,18 +219,18 @@ object MainForm: TMainForm
     Left = 0
     Height = 34
     Top = 0
-    Width = 992
+    Width = 968
     Align = alTop
     BevelOuter = bvSpace
     ClientHeight = 34
-    ClientWidth = 992
+    ClientWidth = 968
     ParentBackground = False
     TabOrder = 1
     object cmbModels: TComboBox
-      Left = 52
+      Left = 104
       Height = 23
       Top = 4
-      Width = 671
+      Width = 595
       Anchors = [akTop, akLeft, akRight]
       Color = 2236962
       ItemHeight = 15
@@ -238,38 +239,89 @@ object MainForm: TMainForm
       OnDropDown = cmbModelsDropDown
     end
     object Label3: TLabel
-      Left = 12
+      Left = 48
       Height = 15
       Top = 8
       Width = 34
       Caption = 'Model'
+    end
+    object pnlDL: TPanel
+      Left = 712
+      Height = 31
+      Top = 0
+      Width = 252
+      Anchors = [akTop, akRight]
+      BevelOuter = bvSpace
+      ClientHeight = 31
+      ClientWidth = 252
+      ParentBackground = False
+      TabOrder = 1
+      Visible = False
+      object Label10: TLabel
+        Left = 212
+        Height = 15
+        Top = 8
+        Width = 36
+        Anchors = [akTop, akRight]
+        Caption = 'Cancel'
+        OnClick = Label10Click
+        OnMouseEnter = btnLoadPicMouseEnter
+        OnMouseLeave = btnLoadPicMouseLeave
+      end
+      object lblDownload: TLabel
+        Left = 0
+        Height = 15
+        Top = 8
+        Width = 71
+        Caption = 'Downloading'
+      end
+    end
+    object lblMore: TLabel
+      Left = 0
+      Height = 31
+      Top = 0
+      Width = 32
+      Alignment = taCenter
+      AutoSize = False
+      Caption = '≡'
+      Font.CharSet = ANSI_CHARSET
+      Font.Color = 13290186
+      Font.Height = -27
+      Font.Pitch = fpVariable
+      Font.Quality = fqDraft
+      Layout = tlBottom
+      ParentFont = False
+      Transparent = False
+      OnClick = lblMoreClick
+      OnMouseEnter = lblMoreMouseEnter
+      OnMouseLeave = lblMoreMouseLeave
     end
   end
   object Panel2: TPanel
     Left = 48
     Height = 582
     Top = 34
-    Width = 944
+    Width = 920
     Align = alClient
     BevelOuter = bvNone
     ClientHeight = 582
-    ClientWidth = 944
+    ClientWidth = 920
     ParentBackground = False
     TabOrder = 2
     object Panel3: TPanel
       Left = 0
       Height = 200
       Top = 382
-      Width = 944
+      Width = 920
       Align = alBottom
       BevelOuter = bvNone
       ClientHeight = 200
-      ClientWidth = 944
+      ClientWidth = 920
       Constraints.MinHeight = 200
       ParentBackground = False
       TabOrder = 0
       object btnGenerate: TSpeedButton
-        Left = 729
+        Left = 705
         Height = 78
         Top = 4
         Width = 82
@@ -574,7 +626,7 @@ object MainForm: TMainForm
         OnClick = btnGenerateClick
       end
       object Label2: TLabel
-        Left = 725
+        Left = 701
         Height = 15
         Top = 100
         Width = 98
@@ -582,7 +634,7 @@ object MainForm: TMainForm
         Caption = 'Seed (0 = random)'
       end
       object edtSeed: TEdit
-        Left = 829
+        Left = 805
         Height = 15
         Top = 100
         Width = 107
@@ -593,7 +645,7 @@ object MainForm: TMainForm
         Text = '0'
       end
       object cmbImgRes: TComboBox
-        Left = 829
+        Left = 805
         Height = 23
         Top = 72
         Width = 107
@@ -616,7 +668,7 @@ object MainForm: TMainForm
         Text = '256 X 256'
       end
       object Label6: TLabel
-        Left = 829
+        Left = 805
         Height = 15
         Top = 52
         Width = 77
@@ -624,7 +676,7 @@ object MainForm: TMainForm
         Caption = 'Output Image '
       end
       object spnSteps: TSpinEdit
-        Left = 829
+        Left = 805
         Height = 23
         Top = 24
         Width = 107
@@ -636,7 +688,7 @@ object MainForm: TMainForm
         Value = 4
       end
       object Label1: TLabel
-        Left = 829
+        Left = 805
         Height = 15
         Top = 4
         Width = 28
@@ -644,7 +696,7 @@ object MainForm: TMainForm
         Caption = 'Steps'
       end
       object Label9: TLabel
-        Left = 725
+        Left = 701
         Height = 15
         Top = 124
         Width = 67
@@ -653,7 +705,7 @@ object MainForm: TMainForm
       end
       object edtPowerAlpha: TEdit
         Cursor = crVSplit
-        Left = 797
+        Left = 773
         Height = 15
         Top = 124
         Width = 48
@@ -666,7 +718,7 @@ object MainForm: TMainForm
       end
       object edtCFG: TEdit
         Cursor = crVSplit
-        Left = 881
+        Left = 857
         Height = 15
         Hint = 'Classifier-Free Guidance'
         Top = 124
@@ -680,7 +732,7 @@ object MainForm: TMainForm
         OnMouseWheel = edtCFGMouseWheel
       end
       object Label7: TLabel
-        Left = 853
+        Left = 829
         Height = 15
         Top = 124
         Width = 22
@@ -688,7 +740,7 @@ object MainForm: TMainForm
         Caption = 'CFG'
       end
       object cmbSchedular: TComboBox
-        Left = 725
+        Left = 701
         Height = 23
         Top = 168
         Width = 211
@@ -698,7 +750,7 @@ object MainForm: TMainForm
         TabOrder = 5
       end
       object Label8: TLabel
-        Left = 725
+        Left = 701
         Height = 15
         Top = 148
         Width = 52
@@ -709,30 +761,30 @@ object MainForm: TMainForm
         Left = 0
         Height = 200
         Top = 0
-        Width = 713
+        Width = 689
         Align = alLeft
         Anchors = [akTop, akLeft, akRight, akBottom]
         BevelOuter = bvNone
         ClientHeight = 200
-        ClientWidth = 713
+        ClientWidth = 689
         ParentBackground = False
         TabOrder = 6
         object pnlPrompt: TPanel
           Left = 0
           Height = 200
           Top = 0
-          Width = 409
+          Width = 385
           Align = alClient
           BevelOuter = bvNone
           ClientHeight = 200
-          ClientWidth = 409
+          ClientWidth = 385
           ParentBackground = False
           TabOrder = 0
           object memoPrompt: TMemo
             Left = 0
             Height = 184
             Top = 16
-            Width = 409
+            Width = 385
             Align = alBottom
             Anchors = [akTop, akLeft, akRight]
             BorderStyle = bsNone
@@ -751,7 +803,7 @@ object MainForm: TMainForm
           end
         end
         object Splitter3: TSplitter
-          Left = 409
+          Left = 385
           Height = 200
           Top = 0
           Width = 5
@@ -759,7 +811,7 @@ object MainForm: TMainForm
           ResizeAnchor = akRight
         end
         object pnlNegative: TPanel
-          Left = 414
+          Left = 390
           Height = 200
           Top = 0
           Width = 299
@@ -799,7 +851,7 @@ object MainForm: TMainForm
       Left = 0
       Height = 5
       Top = 377
-      Width = 944
+      Width = 920
       Align = alBottom
       ResizeAnchor = akBottom
     end
@@ -807,22 +859,22 @@ object MainForm: TMainForm
       Left = 0
       Height = 377
       Top = 0
-      Width = 944
+      Width = 920
       Align = alClient
       BevelOuter = bvNone
       ClientHeight = 377
-      ClientWidth = 944
+      ClientWidth = 920
       ParentBackground = False
       TabOrder = 2
       object Panel6: TPanel
         Left = 0
         Height = 377
         Top = 0
-        Width = 944
+        Width = 920
         Align = alClient
         BevelOuter = bvNone
         ClientHeight = 377
-        ClientWidth = 944
+        ClientWidth = 920
         Color = 2236962
         ParentBackground = False
         ParentColor = False
@@ -831,7 +883,7 @@ object MainForm: TMainForm
           Left = 0
           Height = 377
           Top = 0
-          Width = 505
+          Width = 481
           Align = alClient
           Center = True
           Images = ImageList1
@@ -840,7 +892,7 @@ object MainForm: TMainForm
           OnDblClick = Image1DblClick
         end
         object Splitter2: TSplitter
-          Left = 505
+          Left = 481
           Height = 377
           Top = 0
           Width = 5
@@ -848,7 +900,7 @@ object MainForm: TMainForm
           ResizeAnchor = akRight
         end
         object Image2: TImage
-          Left = 510
+          Left = 486
           Height = 377
           Top = 0
           Width = 434
@@ -881,7 +933,7 @@ object MainForm: TMainForm
           OnMouseLeave = btnLoadPicMouseLeave
         end
         object lblSetAsRef: TLabel
-          Left = 820
+          Left = 796
           Height = 15
           Top = 8
           Width = 118
@@ -924,5 +976,34 @@ object MainForm: TMainForm
       33CAC5175C1F6CC01874E19526D0CDF6C838D0CF3A31047B237D6350C014ECFB
       27633FA66191FFDF6F2F081EE5
     }
+  end
+  object PopupMenu1: TPopupMenu
+    Left = 560
+    Top = 56
+    object MenuItem1: TMenuItem
+      Caption = 'Downoad'
+      object mnuDL1: TMenuItem
+        Caption = 'Flux2 Klein 4B'
+        OnClick = mnuDL1Click
+      end
+      object mnuDL2: TMenuItem
+        Caption = 'ZImage Turbo'
+        Visible = False
+      end
+      object Separator2: TMenuItem
+        Caption = '-'
+      end
+      object mnuDLOpenBLAS: TMenuItem
+        Caption = 'OpenBLAS'
+        OnClick = mnuDLOpenBLASClick
+      end
+    end
+    object Separator1: TMenuItem
+      Caption = '-'
+    end
+    object MenuItem2: TMenuItem
+      Caption = 'About'
+      OnClick = MenuItem2Click
+    end
   end
 end

@@ -136,6 +136,7 @@ type
   );
 
   TGenerateParams = record
+    model_name:string;
     width, height, num_steps :longint;
     seed : Int64;
     guidance :single;
@@ -542,7 +543,7 @@ var
 
 function getIndex(const idx, Strides: TArray<int64>): int64;
 var
-  i: SizeInt;
+  i: NativeInt;
 begin
   Assert(length(Strides) = Length(Idx), '[getIndex]: idx and Tensor shape must be identical.');
   Result := 0;

@@ -1,4 +1,4 @@
-unit quicknncpu;
+ï»¿unit quicknncpu;
 
 {$ifdef FPC}
   //{$ifdef USE_CPP_GEMM}
@@ -221,7 +221,9 @@ type
     class procedure QNNUpSample(const dst, src: PSingle; const batch, channels, H, W:longint; const scale_h, scale_w: Single; const interpolation:TInterpolation = iNearest);
     class procedure QNNPatchify(const dst, src: PSingle; const batch, channels, H, W, patch_size: longint);
     class procedure QNNUnpatchify(const dst, src: PSingle; const batch, channels, H, W, patch_size: longint);
-    class procedure QNNPermut(const dst, src:PSingle; const axisPerm:TArray<byte>; const inShape:TArray<int64>; outShape:TArray<int64> = nil; inIdx:TArray<int64> = nil; outIdx: TArray<int64> = nil; const lvl: int64 = 0; inStrides:TArray<int64> = nil; outStrides:TArray<int64> = nil);
+    class procedure QNNPermut(const dst, src:PSingle;
+                          const axisPerm:TArray<byte>;
+                          const inShape:TArray<int64>);
     class procedure QNNCopy(const dst, src:PSingle; const N:integer); overload;
     class procedure QNNCopyStrided(const dst:PSingle; const dstStride:integer; const src:PSingle; const srcStride: integer; const N:integer); overload;
     class procedure QNNFill(const dst:PSingle; const val:Single; const N:integer; const stride:integer=1);
@@ -2474,7 +2476,7 @@ var
 {$ifdef FPC}
 procedure worker(idx:IntPtr; data:pointer);
 {$else}
-   worker:THreadProcNested;
+   worker:TThreadProcNested;
 begin
   worker := procedure (idx:IntPtr; data:pointer)
 {$endif}
@@ -2577,7 +2579,7 @@ end;
  * Flash Attention - Memory-Efficient Tiled Attention
  *
  * Uses online softmax algorithm to compute attention without materializing
- * the full [seq_q, seq_k] attention matrix. Reduces memory from O(n²) to O(n).
+ * the full [seq_q, seq_k] attention matrix. Reduces memory from O(nï¿½) to O(n).
  *
  * Algorithm (for each query position):
  * 1. Initialize: max_score = -inf, sum = 0, output = 0
@@ -2756,7 +2758,7 @@ end;
  * V: [seq_k, heads * head_dim]
  * out: [seq_q, heads * head_dim]
  *
- * Memory usage: O(seq_q + tile_size²) instead of O(seq_q * seq_k)
+ * Memory usage: O(seq_q + tile_sizeï¿½) instead of O(seq_q * seq_k)
  *)
 class procedure TQNNSingleOPS.QNNFlashAttention(const dst, Q, K, V: PSingle; const heads, seq_q, seq_k, head_dim: longint; const scale: Single);
 const
@@ -3266,7 +3268,7 @@ begin
                   dst[out_idx] := src[in_idx]
                 end
 end;
-
+(*
 class procedure TQNNSingleOPS.QNNPermut(
   const dst, src: PSingle;
   const axisPerm: TArray<byte>;
@@ -3314,6 +3316,219 @@ begin
       //  end;
     end;
 end;
+
+
+procedure QNNPermutRec(
+  const dst, src: PSingle;
+  const axisPerm: TArray<byte>;
+  const inShape: TArray<int64>; const outShape: TArray<int64>;
+  inIdx: TArray<int64>; outIdx: TArray<int64>; const lvl: int64;
+  const inStrides: TArray<int64>; const outStrides: TArray<int64>;
+  const inBase, outBase: int64);
+var
+  i, inLinear, outLinear: int64;
+begin
+  if lvl < high(outShape) then begin
+    for i := 0 to outShape[lvl]-1 do begin
+      outIdx[lvl] := i;
+      inIdx[axisPerm[lvl]] := i;
+      QNNPermutRec(dst, src, axisPerm, inShape, outShape,
+                   inIdx, outIdx, lvl+1, inStrides, outStrides,
+                   inBase  + i * inStrides[axisPerm[lvl]],
+                   outBase + i * outStrides[lvl]);
+    end;
+  end
+  else begin
+    inLinear  := inBase;
+    outLinear := outBase;
+    for i := 0 to outShape[lvl]-1 do begin
+      dst[outLinear] := src[inLinear];
+      Inc(outLinear, outStrides[lvl]);
+      Inc(inLinear,  inStrides[axisPerm[lvl]]);
+    end;
+  end;
+end;
+
+
+class procedure TQNNSingleOPS.QNNPermut(
+  const dst, src: PSingle;
+  const axisPerm: TArray<byte>;
+  const inShape: TArray<int64>; outShape: TArray<int64>;
+  inIdx: TArray<int64> = nil; outIdx: TArray<int64> = nil; const lvl: int64 = 0;
+  inStrides: TArray<int64> = nil; outStrides: TArray<int64> = nil);
+var
+  i: int64;
+begin
+  if not assigned(inStrides)  then inStrides := getStrides(inShape);
+  if not assigned(outShape) then outShape := Copy(inShape);
+  for i := 0 to high(inShape) do
+    outShape[i] := inShape[axisPerm[i]];
+  if not assigned(outStrides) then outStrides := getStrides(outShape);
+  if not assigned(inIdx)  then setLength(inIdx, length(inShape));
+  if not assigned(outIdx) then setLength(outIdx, length(outShape));
+
+  QNNPermutRec(dst, src, axisPerm, inShape, outShape,
+               inIdx, outIdx, 0, inStrides, outStrides, 0, 0);
+end;
+*)
+
+class procedure TQNNSingleOPS.QNNPermut(
+  const dst, src: PSingle;
+  const axisPerm: TArray<byte>;
+  const inShape: TArray<int64>);
+var
+  i, lvl, {ndims, }total: int64;
+  outLinear, inLinear: int64;
+  outShape, inIdx, outIdx, inStrides, outStrides: TArray<int64>;
+
+begin
+  inStrides := getStrides(inShape);
+  outShape  := Copy(inShape);
+  for i := 0 to high(inShape) do
+    outShape[i] := inShape[axisPerm[i]];
+  outStrides := getStrides(outShape);
+  setLength(inIdx,  length(inShape));   // setLength will initiate the array to zero
+  setLength(outIdx, length(outShape));  // setLength will initiate the array to zero
+
+  //ndims := length(outShape);
+  total := product(outShape);
+  //for i := 0 to ndims-1 do total := total * outShape[i];
+
+  //for i := 0 to ndims-1 do begin inIdx[i] := 0; outIdx[i] := 0; end;
+  outLinear := 0;
+  inLinear  := 0;
+
+  for i := 0 to total-1 do begin
+    dst[outLinear] := src[inLinear];
+
+    lvl := high(outShape);
+    while (lvl >= 0) and (outIdx[lvl] + 1 >= outShape[lvl]) do begin
+      Dec(outLinear, (outShape[lvl]-1) * outStrides[lvl]);
+      Dec(inLinear,  (outShape[lvl]-1) * inStrides[axisPerm[lvl]]);
+      outIdx[lvl] := 0;
+      Dec(lvl);
+    end;
+    if lvl >= 0 then begin
+      Inc(outIdx[lvl]);
+      //inIdx[axisPerm[lvl]] := outIdx[lvl];
+      Inc(outLinear, outStrides[lvl]);
+      Inc(inLinear,  inStrides[axisPerm[lvl]]);
+    end;
+  end;
+end;
+
+// ============================================================================
+// QNNReduce DRAFT (commented, not active).
+//
+// numpy-style tensor reduction over one or more axes.
+//   - outShape = inShape with reduceAxes removed; remaining dims keep original
+//     order (numpy behaviour).
+//   - For each output element it folds the whole reduced volume via the binary
+//     combiner reduceCb:  acc = src[first]; acc = reduceCb(acc, src[next]) ...
+//   - divideByCount=True => mean: divide the fold result by the total number of
+//     reduced elements (product of the reduced axis sizes). Only meaningful when
+//     reduceCb is a sum-combiner; caller's responsibility otherwise.
+//   - dst must be pre-allocated to product(outShape) elements (scalar output => 1).
+//   - The reduced shape is returned in the `out outShape` parameter.
+//
+// Validation:
+//   - each axis in reduceAxes must satisfy  0 <= axis < length(inShape)
+//   - no duplicate axes
+//   - empty reduceAxes => identity (copies src to dst); reducing ALL axes yields
+//     a single scalar element.
+//
+// Callback type (declare once near the class):
+//   TReduceFunc = function(const a, b: Single): Single;
+// ============================================================================
+{
+class procedure TQNNSingleOPS.QNNReduce(
+  const dst, src: PSingle;
+  const inShape: TArray<int64>;
+  const reduceAxes: TArray<int64>;
+  const reduceCb: TReduceFunc;
+  const divideByCount: boolean;
+  out outShape: TArray<int64>);
+var
+  ndims, outNdim, na, i, j, k, d, oLin, rem, v, base, extra, t, reduceCount, st: int64;
+  inStrides, outStrides, keepAxes, rIdx: TArray<int64>;
+  toReduce: TArray<boolean>;
+  acc: Single;
+begin
+  ndims := length(inShape);
+  na    := length(reduceAxes);
+
+  // validate & mark reduced axes
+  setLength(toReduce, ndims);
+  for i := 0 to ndims-1 do toReduce[i] := False;
+  for j := 0 to na-1 do begin
+    d := reduceAxes[j];
+    if (d < 0) or (d >= ndims) then
+      raise Exception.Create(Format('QNNReduce: axis %d out of range [0..%d]', [d, ndims-1]));
+    if toReduce[d] then
+      raise Exception.Create(Format('QNNReduce: duplicate axis %d', [d]));
+    toReduce[d] := True;
+  end;
+
+  // build keepAxes (original order) and outShape
+  outNdim := 0;
+  for i := 0 to ndims-1 do if not toReduce[i] then Inc(outNdim);
+  setLength(keepAxes, outNdim);
+  setLength(outShape, outNdim);
+  j := 0;
+  for i := 0 to ndims-1 do
+    if not toReduce[i] then begin
+      keepAxes[j] := i;
+      outShape[j] := inShape[i];
+      Inc(j);
+    end;
+
+  inStrides  := getStrides(inShape);
+  outStrides := getStrides(outShape);
+
+  // total number of elements removed by the reduction
+  reduceCount := 1;
+  for j := 0 to na-1 do reduceCount := reduceCount * inShape[reduceAxes[j]];
+
+  setLength(rIdx, na);
+  for oLin := 0 to product(outShape)-1 do begin
+    // decode output linear index into kept-dim indices -> input base offset
+    rem  := oLin;
+    base := 0;
+    for j := 0 to outNdim-1 do begin
+      v := rem div outStrides[j];
+      rem := rem mod outStrides[j];
+      Inc(base, v * inStrides[keepAxes[j]]);
+    end;
+
+    // fold: start from first reduced combination, then combine the rest
+    acc := src[base];
+    if na = 1 then begin
+      st := inStrides[reduceAxes[0]];
+      for t := 1 to reduceCount-1 do
+        acc := reduceCb(acc, src[base + t*st]);
+    end
+    else begin
+      for j := 0 to na-1 do rIdx[j] := 0;
+      for t := 1 to reduceCount-1 do begin
+        // advance odometer over the reduced axes
+        j := na-1;
+        while (j >= 0) and (rIdx[j] + 1 >= inShape[reduceAxes[j]]) do begin
+          rIdx[j] := 0;
+          Dec(j);
+        end;
+        Inc(rIdx[j]);
+        extra := 0;
+        for k := 0 to na-1 do
+          Inc(extra, rIdx[k] * inStrides[reduceAxes[k]]);
+        acc := reduceCb(acc, src[base + extra]);
+      end;
+    end;
+
+    if divideByCount then acc := acc / reduceCount;
+    dst[oLin] := acc;
+  end;
+end;
+}
 
 //var
 //  i, newLvl, dst_stride: int64;

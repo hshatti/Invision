@@ -11,8 +11,8 @@ interface
 
 uses
   Classes, SysUtils, Types, LCLType, Forms, Controls, Graphics, Dialogs, ExtCtrls, StdCtrls,
-  Buttons, ComCtrls, Spin, ExtDlgs, quicknn_transformers,
-  quicknn_common, quicknn_vae, quicknn_flux, quicknn_zimage;
+  Buttons, ComCtrls, Spin, ExtDlgs, Menus, quicknn_transformers,
+  quicknn_common, quicknn_vae, quicknn_flux, quicknn_zimage, quicknn_downloader;
 
 type
 
@@ -89,7 +89,7 @@ type
     FBarColor: TColor;
     FBarShowText: boolean;
     FMax: integer;
-    FMin: integer;
+    //FMin: integer;
     FOrientation: TProgressBarOrientation;
     FPosition: integer;
     FStep: integer;
@@ -97,7 +97,7 @@ type
     procedure SetBarColor(AValue: TColor);
     procedure SetBarShowText(AValue: boolean);
     procedure SetMax(AValue: integer);
-    procedure SetMin(AValue: integer);
+    //procedure SetMin(AValue: integer);
     procedure SetOrientation(AValue: TProgressBarOrientation);
     procedure SetPosition(AValue: integer);
     procedure SetStep(AValue: integer);
@@ -107,7 +107,7 @@ type
     constructor Create(AOwner:TComponent);   override;
     destructor Destroy();                    override;
   published
-    property Min:integer read FMin write SetMin;
+    //property Min:integer read FMin write SetMin;
     property Max:integer read FMax write SetMax;
     property Position:integer read FPosition write SetPosition;
     property Step:integer read FStep write SetStep;
@@ -136,6 +136,9 @@ type
     ImageList1: TImageList;
     Label1: TLabel;
     btnLoadPic: TLabel;
+    Label10: TLabel;
+    lblDownload: TLabel;
+    lblMore: TLabel;
     lblSetAsRef: TLabel;
     Label2: TLabel;
     Label3: TLabel;
@@ -148,6 +151,11 @@ type
     Label9: TLabel;
     memoPrompt: TMemo;
     memoNegPrompt: TMemo;
+    MenuItem1: TMenuItem;
+    MenuItem2: TMenuItem;
+    mnuDLOpenBLAS: TMenuItem;
+    mnuDL1: TMenuItem;
+    mnuDL2: TMenuItem;
     Panel2: TPanel;
     Panel3: TPanel;
     Panel4: TPanel;
@@ -155,13 +163,17 @@ type
     Panel5: TPanel;
     Panel6: TPanel;
     Panel7: TPanel;
+    pnlDL: TPanel;
     pnlPrompt: TPanel;
     pnlNegative: TPanel;
-    ProgressBar1:THSProgressBar;
+    PopupMenu1: TPopupMenu;
+    Separator1: TMenuItem;
+    Separator2: TMenuItem;
     Splitter1: TSplitter;
     Splitter2: TSplitter;
     Splitter3: TSplitter;
     spnSteps: TSpinEdit;
+    prog, subDL, totalDL :THSProgressBar;
     procedure btnGenerateClick(Sender: TObject);
     procedure btnLoadPic1Click(Sender: TObject);
     procedure btnTxt2ImgClick(Sender: TObject);
@@ -177,9 +189,17 @@ type
     procedure btnLoadPicMouseEnter(Sender: TObject);
     procedure btnLoadPicMouseLeave(Sender: TObject);
     procedure Image1DblClick(Sender: TObject);
+    procedure Label10Click(Sender: TObject);
+    procedure lblMoreClick(Sender: TObject);
+    procedure lblMoreMouseEnter(Sender: TObject);
+    procedure lblMoreMouseLeave(Sender: TObject);
     procedure lblSetAsRefClick(Sender: TObject);
+    procedure MenuItem2Click(Sender: TObject);
+    procedure mnuDL1Click(Sender: TObject);
+    procedure mnuDLOpenBLASClick(Sender: TObject);
   private
     procedure checkExistingModels;
+    procedure OnDownload(const subReceived, subTotal, received, total:int64);
   public
     modeledit1, imgRes, schedularEdit1:THSEdit;
     generateThread : TGenerateThread
@@ -192,10 +212,11 @@ var
   lastGenerated : string = '';
 
   procedure QNNImageToBitmap(const img:TQNNImage; var bmp:TBitmap);
-
+  const DL_Symbols : array of rawbytestring = ['   ', '  .', ' ..', '...', '.. ', '.  '];
 implementation
 uses
   math
+  ,unitAbout
 {$ifdef MSWINDOWS}
   ,DwmApi
 {$endif};
@@ -235,8 +256,8 @@ var AppPath : RawByteString;
 
 procedure OnStepCallback(const msg:TSubstepType; const step, steps:longint);
 begin
-  MainForm.ProgressBar1.StepIt;
-  MainForm.ProgressBar1.caption := format('%d/%d', [MainForm.ProgressBar1.Position, MainForm.ProgressBar1.Max]);
+  MainForm.prog.StepIt;
+  MainForm.prog.caption := format('%d/%d', [MainForm.Prog.Position, MainForm.Prog.Max]);
   MainForm.generateThread.Synchronize(MainForm.Update);
   //MainForm.Update;
   if MainForm.generateThread.CheckTerminated then
@@ -245,8 +266,8 @@ end;
 
 procedure OnTextStepCallback(const step, steps:longint);
 begin
-  MainForm.ProgressBar1.StepIt;
-  MainForm.ProgressBar1.caption := format('%d/%d', [MainForm.ProgressBar1.Position, MainForm.ProgressBar1.Max]);
+  MainForm.Prog.StepIt;
+  MainForm.Prog.caption := format('%d/%d', [MainForm.Prog.Position, MainForm.Prog.Max]);
   MainForm.generateThread.Synchronize(MainForm.Update);
   if MainForm.generateThread.CheckTerminated then
     abort
@@ -283,10 +304,10 @@ begin
 
 end;
 
-function ColorBright(C:TColor;B:Integer):TColor;
+function ColorBright(C:TColor;Brightness:Integer):TColor;
 begin
 //  C:=ColorToRGB(C);
-  Result:=RGBToColor(EnsureRange(red(c)+B, 0, 255), EnsureRange(green(c)+B, 0, 255), EnsureRange(blue(c)+B, 0, 255))
+  Result:=RGBToColor(EnsureRange(red(c)+Brightness, 0, 255), EnsureRange(green(c)+Brightness, 0, 255), EnsureRange(blue(c)+Brightness, 0, 255))
 end;
 
 procedure QNNImageToBitmap(const img: TQNNImage; var bmp: TBitmap);
@@ -321,12 +342,16 @@ begin
     bmp.EndUpdate();
 end;
 
-procedure TGenerateThread.Execute;
 var
   params:TGenerateParams;
+const
+  strMeta = 'EnvisionGUI, a (txt2img/img2img) generator example written in Object Pascal (Delphi and FPC)';
+procedure TGenerateThread.Execute;
+var
   img:TQNNImage;
   fn : TFileName;
   strRes : array of string;
+  s:string;
   imWidth, imHeight:longInt;
 begin
   strRes := string(MainForm.imgRes.Text).Split(' ');
@@ -346,7 +371,7 @@ begin
       params.seed := random(Int64.MaxValue)
     else
       params.seed := strToInt(edtSeed.text);
-
+    str(params.schedule, s);
     if btnTxt2Img.Down then try // txt2Img
 
       MainForm.generateThread.Synchronize(MainForm.Update);
@@ -354,22 +379,30 @@ begin
       substep_callback:=OnStepCallback;
       text_progress_callback:= OnTextStepCallback;
       vae_progress_callback:= OnTextStepCallback;
-      ProgressBar1.Position := 0;
+      prog.position := 0;
       if LowerCase(ModelEdit1.Text).Contains('flux') then begin
         flux := TQNNFlux.load(AppPath+MODELS_DIR+'/'+modeledit1.Text);
-        ProgressBar1.Max:= 27 + params.num_steps*(5 + 20 + 2) + 16+100;  // text_encode_steps + steps*transformer_blocks + ve_decoder_steps
+        params.model_name := flux.model_name;
+        prog.max:= 27 + params.num_steps*(5 + 20 + 2) + 16+100;  // text_encode_steps + steps*transformer_blocks + ve_decoder_steps
         flux.use_mmap:=true;
         img := flux.generate(memoPrompt.Text, memoNegPrompt.Text, params, OnPreviewCallback);
       end;
       if lowerCase(ModelEdit1.Text).Contains('z-image') then begin
         zi := TQNNZImage.load(AppPath+MODELS_DIR+'/'+modeledit1.Text);
-        ProgressBar1.Max:= 35 + params.num_steps*(2 + 2 + 44) + 15+100;  // text_encode_steps + steps*transformer_blocks + ve_decoder_step;
+        params.model_name := zi.model_name;
+        prog.max:= 35 + params.num_steps*(2 + 2 + 44) + 15+100;  // text_encode_steps + steps*transformer_blocks + ve_decoder_step;
         zi.use_mmap:=true;
         img := zi.generate(memoPrompt.Text, params{, OnPreviewCallback});
       end;
       fn := AppPath+FormatDateTime('yyyymmdd_hhnnss', now())+'.png';
       lastGenerated := fn;
-      img.saveToFile(fn);
+      img.saveToFile(fn, 'program', strMeta);
+      img.addPngMeta(fn, 'json',
+                              '{"model" : "'+params.model_name+'"'+
+                              ', "prompt" : "'+StringReplace(memoPrompt.Text, '"', '\"', [rfReplaceAll])+
+                              '", "seed" : '+IntToStr(params.seed)+
+                              ', "steps" : '+intToStr(params.num_steps)+
+                              ', "schedueler" : "'+copy(s, 5)+'"}');
       image1.Picture.LoadFromFile(fn);
       dlgImage.FileName := fn;
       gotImage := true;
@@ -388,13 +421,21 @@ begin
       text_progress_callback:= OnTextStepCallback;
       vae_progress_callback:= OnTextStepCallback;
       flux := TQNNFlux.load(MODELs_DIR+'/'+modeledit1.Text);
-      ProgressBar1.Max:= 27 + params.num_steps*(5 + 20 + 2) + 16 + 100;  // text_encode_steps + steps*transformer_blocks + ve_decoder_steps
-      ProgressBar1.Position := 0;
+      prog.max:= 27 + params.num_steps*(5 + 20 + 2) + 16 + 100;  // text_encode_steps + steps*transformer_blocks + ve_decoder_steps
+      prog.position := 0;
       flux.use_mmap:=true;
+      params.model_name := flux.model_name;
       img := flux.generate(memoPrompt.Text, memoNegPrompt.Text, params, img, OnPreviewCallback);
       fn := AppPath+FormatDateTime('yyyymmdd_hhnnss', now())+'.png';
       lastGenerated := fn;
-      img.saveToFile(fn);
+      img.saveToFile(fn, 'program', strMeta);
+      img.addPngMeta(fn, 'json',
+                              '{"model" : "'+params.model_name+'"'+
+                              ', "prompt" : "'+StringReplace(memoPrompt.Text, '"', '\"', [rfReplaceAll])+
+                              '", "seed" : '+IntToStr(params.seed)+
+                              ', "steps" : '+intToStr(params.num_steps)+
+                              ', "schedueler" : "'+copy(s, 5)+'"}');
+
       image2.Picture.LoadFromFile(fn);
       gotImage2 := true;
       lblSetAsRef.Show;
@@ -408,7 +449,7 @@ end;
 procedure TGenerateThread.DoTerminate;
 begin
   with MainForm do begin
-    ProgressBar1.Position := 0;
+    prog.position := 0;
     btnGenerate.Caption := 'Generate';
     btnTxt2Img.Enabled:=True;
     btnImg2Img.Enabled:=True;
@@ -659,7 +700,7 @@ end;
 constructor THSProgressBar.Create(AOwner: TComponent);
 begin
   inherited Create(AOwner);
-  FMin := 0;
+  //FMin := 0;
   FMax := 10;
   FStep:= 1;
   FBarColor := $bb6600;
@@ -677,21 +718,23 @@ begin
   with canvas do begin
     Pen.Style := psClear;
     Brush.Style := bsSolid;
-    Brush.Color := Color;
+    Brush.Color := ColorBright(Color, -$10);
     FillRect(Canvas.ClipRect);
+
     Brush.Style := bsSolid;
     Brush.Color := FBarColor;
-    case FOrientation of
-      pbVertical:
-        RoundRect(0, 0, ClientWidth, round(ClientHeight*FPosition/FMax), 4, 4);
-      pbHorizontal:
-        RoundRect(0, 0, round(ClientWidth*FPosition/FMax), ClientHeight, 4, 4);
-      pbTopDown:
-        RoundRect(0, round(ClientHeight*FPosition/FMax), ClientWidth, ClientHeight, 4, 4);
-      pbRightToLeft:
-        RoundRect(round(ClientWidth*FPosition/FMax), 0, ClientWidth, ClientHeight, 4, 4);
-    end;
-    if FBarShowText then begin
+    if FMax>0 then
+      case FOrientation of
+        pbVertical:
+          RoundRect(0, 0, ClientWidth, round(ClientHeight*FPosition/FMax), 4, 4);
+        pbHorizontal:
+          RoundRect(0, 0, round(ClientWidth*FPosition/FMax), ClientHeight, 4, 4);
+        pbTopDown:
+          RoundRect(0, round(ClientHeight*FPosition/FMax), ClientWidth, ClientHeight, 4, 4);
+        pbRightToLeft:
+          RoundRect(round(ClientWidth*FPosition/FMax), 0, ClientWidth, ClientHeight, 4, 4);
+      end;
+    if BarShowText then begin
       font.assign(self.font);
       brush.Style:=bsClear;
       ts:= TextStyle;
@@ -707,38 +750,44 @@ procedure THSProgressBar.SetBarShowText(AValue: boolean);
 begin
   if FBarShowText=AValue then Exit;
   FBarShowText:=AValue;
+  Invalidate;
 end;
 
 procedure THSProgressBar.SetBarColor(AValue: TColor);
 begin
   if FBarColor=AValue then Exit;
   FBarColor:=AValue;
+  Invalidate;
 end;
 
 procedure THSProgressBar.SetMax(AValue: integer);
 begin
   if FMax=AValue then Exit;
   FMax:=AValue;
+  Invalidate;
 end;
 
-procedure THSProgressBar.SetMin(AValue: integer);
-begin
-  if FMin=AValue then Exit;
-  FMin:=AValue;
-end;
+//procedure THSProgressBar.SetMin(AValue: integer);
+//begin
+//  if FMin=AValue then Exit;
+//  FMin:=AValue;
+//  Invalidate;
+//end;
 
 procedure THSProgressBar.SetOrientation(AValue: TProgressBarOrientation);
 begin
   if FOrientation=AValue then Exit;
   FOrientation:=AValue;
+  Invalidate;
 end;
 
 procedure THSProgressBar.SetPosition(AValue: integer);
 begin
   if FPosition=AValue then Exit;
-  assert((AValue>=FMin) and (AValue<=FMax),'[ProgressBar] Position is out of range!');
+  assert({(AValue>=FMin) and} (AValue<=FMax),'[ProgressBar] Position is out of range!');
   FPosition := AValue;
   Invalidate;
+  Update;
 end;
 
 procedure THSProgressBar.SetStep(AValue: integer);
@@ -769,7 +818,6 @@ begin
 end;
 
 procedure TMainForm.btnGenerateClick(Sender: TObject);
-var params : TGenerateParams;
 begin
   if btnTxt2Img.Down then begin
     if (btnGenerate.Caption = 'Generate') then begin
@@ -810,17 +858,34 @@ begin
   fn := AppPath+FormatDateTime('yyyymmdd_hhnnss', now())+'.png';
 
   if not ((btnTxt2Img.Down and gotImage) or (btnImg2Img.Down and gotImage2)) then begin
-    ShowMessage('No output image!');
+    ShowMessage('No output image yet!');
     exit
   end;
 
-  if PromptForFileName(fn, '*.png|*.png|*.bmp|*.bmp|*.jpg|*.jpg|*.*|*.*', 'png', '', '', true) then begin
+  if PromptForFileName(fn, '*.png|*.png|*.bmp|*.bmp|*.jpg|*.jpg|*.ico|*.ico|*.*|*.*', 'png', '', '', true) then begin
     if FileExists(fn) then
       if MessageDlg('Overwrite ['+fn+'] ?', mtConfirmation, mbYesNo, 0)<>mrYes then exit;
-    if btnTxt2Img.Down then
-      image1.Picture.SaveToFile(fn)
-    else
+    if btnTxt2Img.Down then begin
+      image1.Picture.SaveToFile(fn);
+      TQNNImage.addPngMeta(fn, 'program', strMeta);
+      TQNNImage.addPngMeta(fn, 'json',
+                              '{"model" : "'+modeledit1.text+'"'+
+                              ', "prompt" : "'+StringReplace(memoPrompt.text, '"', '\"', [rfReplaceAll])+
+                              '", "seed" : '+edtSeed.text+
+                              ', "steps" : '+spnSteps.text);
+
+    end
+    else begin
       image2.Picture.SaveToFile(fn);
+
+      TQNNImage.addPngMeta(fn,'program', strMeta);
+      TQNNImage.addPngMeta(fn, 'json',
+                              '{"model" : "'+modeledit1.text+'"'+
+                              ', "prompt" : "'+StringReplace(memoPrompt.text, '"', '\"', [rfReplaceAll])+
+                              '", "seed" : '+edtSeed.text+
+                              ', "steps" : '+spnSteps.text);
+
+    end;
   end;
 end;
 
@@ -910,13 +975,28 @@ begin
 
   spnSteps.BorderStyle := bsNone;
 
-  progressBar1 := THSProgressBar.Create(Self);
-  progressBar1.BarShowText:=true;
-  ProgressBar1.Parent := Self;
-  ProgressBar1.Height := 12;
-  ProgressBar1.Align  := alBottom;
+  prog             := THSProgressBar.Create(Self);
+  prog.BarShowText :=true;
+  prog.parent      := Self;
+  prog.height      := 12;
+  prog.align       := alBottom;
 
+  totalDL := THSProgressBar.Create(self);
+  totalDL.parent := pnlDl;
+  totalDL.SetBounds(lblDownload.width+2, 4, 120, 12);
+  totalDL.Anchors := [akLeft, akTop, akRight];
+  totalDL.position := totalDL.max div 2;
+  totalDL.BarShowText:= true;
+  //totalDL.Font.Size := totalDL.Font.Size - 4;
 
+  subDL := THSProgressBar.Create(self);
+  subDL.parent := pnlDl;
+  subDL.SetBounds(lblDownload.width+2, totalDL.Height+8, 120, 12);
+  subDL.Anchors :=  [akLeft, akTop, akRight];
+  subDL.position := subDL.max div 2;
+  //subDl.BorderSpacing.top:=2;
+  subDL.BarShowText:= true;
+  //subDL.Font.Size := subDL.Font.Size - 4;
 
 
   {$ifdef MSWindows}
@@ -975,10 +1055,70 @@ begin
     btnLoadPicClick(btnLoadPic);
 end;
 
+var model:TFLUX4BDownloader;
+procedure TMainForm.Label10Click(Sender: TObject);
+begin
+  if Assigned(model.FHttp) then begin
+    model.FHttp.FHTTP.Terminate;
+  end;
+  pnlDL.Hide;
+end;
+
+procedure TMainForm.lblMoreClick(Sender: TObject);
+begin
+  PopupMenu1.PopUp(lblMore.ClientOrigin.X, lblMore.ClientOrigin.Y+lblMore.Height);
+end;
+
+procedure TMainForm.lblMoreMouseEnter(Sender: TObject);
+begin
+  lblMore.ParentColor:=false;
+  lblMore.Color:=clBlack;
+end;
+
+procedure TMainForm.lblMoreMouseLeave(Sender: TObject);
+begin
+  lblMore.ParentColor:=true;
+end;
+
 procedure TMainForm.lblSetAsRefClick(Sender: TObject);
 begin
   Image1.Picture.Graphic := Image2.Picture.Graphic;
   dlgImage.FileName := lastGenerated;
+end;
+
+procedure TMainForm.MenuItem2Click(Sender: TObject);
+begin
+  frmAbout.ShowModal;
+end;
+
+procedure TMainForm.mnuDL1Click(Sender: TObject);
+
+begin
+  try
+    subDL.Position:=0;
+    totalDL.Position:=0;
+    pnlDL.Show;
+    Application.ProcessMessages;
+    model.OnProgress:=OnDownload;
+    model.download(appPath+'../../models');
+    pnlDL.Hide;
+  finally
+
+    pnlDL.Hide;
+  end;
+end;
+
+procedure TMainForm.mnuDLOpenBLASClick(Sender: TObject);
+begin
+  {$if defined(MSWINDOWS)}
+  if MessageDlg('Download [Open Basic Linear Algebra]?'#13'This will improve the generation speed by ~X2', mtConfirmation, mbYesNo, 0)<>mrYes then exit;
+  getOpenBlas();
+  ShowMessage('OpenBLAS installed successfully, re-launch this program.');
+  {$elseif defined(DARWIN) or defined(MACOS)}
+  ShowMessage('Already using Apple''s native "Accelerate" library, no need for OpenBLAS!');
+  {$else}
+  ShowMessage('Install OpenBLAS from your package manager, e.g :'#13'"sudo apt install openblas"');
+  {$endif}
 end;
 
 procedure TMainForm.checkExistingModels;
@@ -995,11 +1135,25 @@ begin
     r := FindFirst(path +'/*', faDirectory, sr);
     while r=0 do begin
       if (sr.name<>'.') and (sr.name<>'..') then cmbModels.Items.Add(sr.Name);
-      r := FindNext(sr)
+      r := FindNext(sr)            ;
     end;
   finally
     FindClose(sr);
   end;
+end;
+
+const i: integer = 0;
+procedure TMainForm.OnDownload(const subReceived, subTotal, received, total: int64);
+begin
+  subDL.Max:=ceil(subTotal / $4FFFFF); // 4MB
+  subDL.Position:=subReceived div $4FFFFF;
+  i := subDL.Position mod length(DL_Symbols);
+  subDL.Caption := DL_Symbols[i];
+  totalDL.Max:=Total;
+  totalDL.Position:=Received;
+  totalDL.Caption:=format('%d/%d', [totalDL.Position, totalDL.Max]);
+
+  Application.ProcessMessages;
 end;
 
 initialization

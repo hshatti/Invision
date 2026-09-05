@@ -1523,10 +1523,10 @@ asm
   vxorps        ymm4 , ymm4 , ymm4
   xor           rax              , rax
 @resetC:
-  vmovups       [c4x4 + rax*4]         , ymm1
-  vmovups       [c4x4 + rax*4 + $20]   , ymm2
-  vmovups       [c4x4 + rax*4 + $40]   , ymm3
-  vmovups       [c4x4 + rax*4 + $60]   , ymm4
+  vmovups       yword [c4x4 + rax*4]         , ymm1
+  vmovups       yword [c4x4 + rax*4 + $20]   , ymm2
+  vmovups       yword [c4x4 + rax*4 + $40]   , ymm3
+  vmovups       yword [c4x4 + rax*4 + $60]   , ymm4
   add           rax                    , $8*4
   cmp           rax                    , 4*4*8
   jl            @resetC
@@ -1733,10 +1733,10 @@ asm
 
 @final:
 
-  vmovups       ymm1 , [c4x4 + rax]
-  vmovups       ymm2 , [c4x4 + rax + $20]
-  vmovups       ymm3 , [c4x4 + rax + $40]
-  vmovups       ymm4 , [c4x4 + rax + $60]
+  vmovups       ymm1 , yword [c4x4 + rax]
+  vmovups       ymm2 , yword [c4x4 + rax + $20]
+  vmovups       ymm3 , yword [c4x4 + rax + $40]
+  vmovups       ymm4 , yword [c4x4 + rax + $60]
 
   vextractf128  xmm6 , ymm1 , $1
   vextractf128  xmm7 , ymm2 , $1

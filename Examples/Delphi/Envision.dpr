@@ -7,7 +7,7 @@ program Envision;
 uses
   SysUtils, Generics.Collections, safetensor, quicknn_kernels, quicknn_common, quicknn_tokenizer,
   quicknn_transformers, quicknn_vae, quicknn_sample,
-  quicknn_qwen3, quicknn_flux, quicknn_zimage, sixel, quicknn_downloader, nchrono, termesc;
+  quicknn_qwen3, quicknn_flux, quicknn_zimage, sixel, nchrono, termesc;
 
 var
   dict : TDictionary<string, PMemoryBlock>;
@@ -136,12 +136,11 @@ begin
   zimage.free;
   {$else}
 
-  TFLUX4B.download('../../../models');
   //src := TQNNImage.loadFromFile('C:\development\flux2.c\bear.png');
   //src.print();
   //printSixel(pointer(src.data), src.width, src.height, true);
   //flux := TQNNFLux.load('c:\development\flux2.c\FLUX.2-klein-9B');
-  flux := TQNNFlux.load('../../../models/'+TFLUX4B.DST_PATH, afterphase);
+  flux := TQNNFlux.load('../../../models/'+'FLUX.2-klein-4B', afterphase);
   flux.use_mmap := true;
   //flux.loadVAE('c:\development\flux2.c\flux-klein-model');
   //l := flux.vae.encode(src.asMemoryBlock(), 1, src.height, src.width, l_h, l_w);

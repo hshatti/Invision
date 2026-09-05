@@ -1740,11 +1740,12 @@ end;
 procedure QNNPermut(var dst: TMemoryBlock; const src: TMemoryBlock; const axis: TArray<byte>);
 var
   i: int64;
-  dims : set of byte = [];
+  dims : set of byte;
 begin
   {$if defined(USE_PROFILING)}
   metrics.start(opTranspose);
   {$endif}
+  dims := [];
   assert(length(axis)=length(src.shape), 'ERROR [QNNPermute] : Axis and Source dimensions dimensions must be the same.');
   if not dst.isAssigned() then begin
     dst := TMemoryBlock.Create(copy(src.shape), '');
@@ -1770,7 +1771,6 @@ end;
 
 function QNNPermut(const src: TMemoryBlock; const axis: TArray<byte>): TMemoryBlock;
 begin
-  result := nil;
   QNNPermut(result, src, axis)
 end;
 

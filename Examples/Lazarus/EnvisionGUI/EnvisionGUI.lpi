@@ -76,6 +76,14 @@
         <ResourceBaseClass Value="Form"/>
         <UnitName Value="mainUnit"/>
       </Unit>
+      <Unit>
+        <Filename Value="unitabout.pas"/>
+        <IsPartOfProject Value="True"/>
+        <ComponentName Value="frmAbout"/>
+        <HasResources Value="True"/>
+        <ResourceBaseClass Value="Form"/>
+        <UnitName Value="unitAbout"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
@@ -117,7 +125,8 @@
     </Linking>
     <Other>
       <CustomOptions Value="-dUSE_MULTITHREADING
--dUSE_PROFILING"/>
+-dUSE_PROFILING
+-dUSE_AVX2"/>
       <OtherDefines Count="2">
         <Define0 Value="USE_MULTITHREADING"/>
         <Define1 Value="USE_CALLOC"/>

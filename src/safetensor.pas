@@ -593,18 +593,18 @@ begin
           case d.dtype of
             stBF16:
               begin
-                {$ifdef DEBUG} if IsConsole then writeln('BF16 -> FP32 : ', d.name);  {$endif}
+                {$ifdef _DEBUG} if IsConsole then writeln('BF16 -> FP32 : ', d.name);  {$endif}
                 result := TMemoryBlock.Create(d.shape, d.name, dtF32);
                 BF16ToSingle(d.count(), d.data, result);
               end;
             stF16:
               begin
-                {$ifdef DEBUG} if IsConsole then writeln('FP16 -> FP32 : ', d.name);  {$endif}
+                {$ifdef _DEBUG} if IsConsole then writeln('FP16 -> FP32 : ', d.name);  {$endif}
                 result := TMemoryBlock.Create(d.shape, d.name, dtF32);
                 FP16ToSingle(d.count(), d.data, result);
               end;
             stF32: begin
-              {$ifdef DEBUG} if IsConsole then writeln('mmap FP32 : ', d.name);     {$endif}
+              {$ifdef _DEBUG} if IsConsole then writeln('mmap FP32 : ', d.name);     {$endif}
               result.assignPtr(d.DataF32, d.shape);
               result.name := d.name;
             end
@@ -617,19 +617,19 @@ begin
           case d.dtype of
             stBF16:
               begin
-                {$ifdef DEBUG} if IsConsole then writeln('BF16 -> FP32 : ', d.name);  {$endif}
+                {$ifdef _DEBUG} if IsConsole then writeln('BF16 -> FP32 : ', d.name);  {$endif}
                 result := TMemoryBlock.Create(d.shape, d.name, dtF32);
                 BF16ToSingle(d.count(), d.data, result);
               end;
             stF16:
               begin
-                {$ifdef DEBUG} if IsConsole then writeln('FP16 -> FP32 : ', d.name);  {$endif}
+                {$ifdef _DEBUG} if IsConsole then writeln('FP16 -> FP32 : ', d.name);  {$endif}
                 result := TMemoryBlock.Create(d.shape, d.name, dtF32);
                 FP16ToSingle(d.count(), d.data, result);
               end;
             stF32:
               begin
-                {$ifdef DEBUG} if IsConsole then writeln('alloc FP32 : ', d.name);    {$endif}
+                {$ifdef _DEBUG} if IsConsole then writeln('alloc FP32 : ', d.name);    {$endif}
                 result := TMemoryBlock.Create(d.shape, d.name, dtF32);
                 move(d.data^, psingle(result)^, d.count*sizeOf(Single));
               end;
@@ -659,7 +659,7 @@ begin
         if useMMap then begin
           assert(d.dtype = stBF16, 'ERROR [getTnsorDataB16] : Cannot convert data type in mmap mode : '+name);
           result := default(TMemoryBlock);
-          if IsConsole then writeln('mmap BF16 : ', d.name);
+          {$ifdef _DEBUG}if IsConsole then writeln('mmap BF16 : ', d.name);{$endif}
           result.assignPtr(d.DataBF16, d.shape);
           result.name := d.name;
         end else begin
@@ -667,11 +667,11 @@ begin
           result := TMemoryBlock.create(d.shape, d.name, dtBF16);
           assert(assigned(result.Data16), 'ERROR [getTnsorDataB16] : not enough memory to allocate for : '+name);
           if d.dtype=stBf16 then begin
-            if IsConsole then writeln('alloc BF16 : ', d.name);
+            {$ifdef _DEBUG}if IsConsole then writeln('alloc BF16 : ', d.name);{$endif}
             move(d.data^, PBF16(result)^, sz)
           end
           else begin
-            if IsConsole then writeln('FP32 -> BF16 : ', d.name);
+            {$ifdef _DEBUG}if IsConsole then writeln('FP32 -> BF16 : ', d.name);{$endif}
             SingleToBF16(d.count(), d.data, result)
           end;
         end;
