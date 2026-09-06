@@ -32,6 +32,7 @@
 - **Zero Runtime** – The binary can be shipped to any machine without requiring a Pascal compiler or DLLs.
 - **Safety & Readability** – Pascal’s strong typing and modularity reduce bugs in tensor manipulation.
 - **Cross‑Platform** – Works on Windows, Linux, macOS with minimal changes.
+- **Concise Executable** - The output executable is self-dependent, less than 4MB (Windows)
 
 ---
 
