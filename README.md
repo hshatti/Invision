@@ -89,14 +89,15 @@ Open the provided Project from the Example folder (If using Lazarus I recommend 
 - More models support *(working on [Microsoft Mage](https://github.com/microsoft/Mage) and [Krea2](https://github.com/krea-ai/krea-2) now so stay tuned)*.
 - Lightweight MCP Server for AI Agents.
 - Further Optimisation
+- LoRA Support.
   
 ## Contribution
 Issues and suggestions are welcome.
 
-Pull requests are welcome too please consider the following guidelines :
-- Rely on no external libraries or components, if you have to make it optional not mandatory
-- Stay with-in the FreePascal/Lazarus/Delphi native units and insure that the code works the same on both Lazarus and Delphi
-- if you have to use an optional dynamic linked (.so .dll .dylib) library load it dynamically using ```loadlibrary```, do not declare functions with ```external``` and the the program load them when they are detected in the system.
+Pull requests are welcome too, please consider the following guidelines :
+- Rely on no external libraries or components, if you have to, make it optional not mandatory.
+- Stay with-in the FreePascal/Lazarus/Delphi native units and ensure that the code works the same on both Lazarus and Delphi.
+- if you have to use an optional dynamic linked (.so .dll .dylib) library, load it dynamically using ```loadlibrary()```, do not declare functions with ```external```, let the program load them if they were detected in the system.
 
 Donations :
 
