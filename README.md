@@ -42,11 +42,11 @@
 
 | Model | Model Format | Distilled | Ref img2img | Size |
 |-------|------|------|------|------|
-| [FLUX2‑Klein-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) | SafeTensor | :white_check_mark: | :white_check_mark: | ~14 GB |
-| [FLUX2‑Klein-9B](https://huggingface.co/black-forest-labs/FLUX.2-klein-9B) | SafeTensor | :white_check_mark: | :white_check_mark: | ~20 GB |
-| [FLUX2‑Klein-base-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4B) | SafeTensor | :x: | :white_check_mark: | ~14 GB |
-| [FLUX2‑Klein-base-9B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9B) | SafeTensor | :x: | :white_check_mark: | ~20 GB |
-| [ZImage‑Turbo-9B](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo) | SafeTensor | :white_check_mark: | :x: | ~40 GB |
+| [FLUX2‑Klein-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) | SafeTensors | :white_check_mark: | :white_check_mark: | ~14 GB |
+| [FLUX2‑Klein-9B](https://huggingface.co/black-forest-labs/FLUX.2-klein-9B) | SafeTensors | :white_check_mark: | :white_check_mark: | ~20 GB |
+| [FLUX2‑Klein-base-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4B) | SafeTensors | :x: | :white_check_mark: | ~14 GB |
+| [FLUX2‑Klein-base-9B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9B) | SafeTensors | :x: | :white_check_mark: | ~20 GB |
+| [ZImage‑Turbo-9B](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo) | SafeTensors | :white_check_mark: | :x: | ~40 GB |
 
 ## Installation
 **Requirement**
