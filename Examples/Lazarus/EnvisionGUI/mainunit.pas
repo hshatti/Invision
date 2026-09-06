@@ -931,6 +931,7 @@ end;
 procedure TMainForm.FormCreate(Sender: TObject);
 var i:TQNNSchedule; s:ansistring;
 begin
+  DefaultFormatSettings.DecimalSeparator:='.';
   checkExistingModels;
   if cmbModels.Items.count>0 then
     cmbModels.ItemIndex:=0;
