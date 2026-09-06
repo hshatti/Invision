@@ -1,33 +1,33 @@
 
 # Envision
 
-![dreamy](https://github.com/user-attachments/assets/b35a5277-6497-47ee-aef3-03539fc7772a)
+<h3 align="left">A Lightweight FLUX2 or ZImage Inference engine<br/>Written in Pure Pascal for (FPC, Lazarus or Delphi)</h3>
 
-A Lightweight FLUX2 or ZImage Inference engine Written in Pure Pascal for (FPC, Lazarus or Delphi)
-  
+![dreamy](https://github.com/user-attachments/assets/b35a5277-6497-47ee-aef3-03539fc7772a)  
 
-> - A lightweight, pure‑Pascal inference engine for text‑to‑image and image‑to‑image generation (FLUX2 / ZImage). 
-> - Nativly parses .SafeTensor and .JSON files. 
-> - Runs out‑of‑the‑box with no external dependencies.
-> - uses lazy loading and native mmap() significantly saving memory to for systems with low RAM.
-> - Hand written Intel x86_64 assembly code to squeeze out the best CPU performance possible.
-> - **[Windows/Linux]** if OpenBLAS is present on it will automatically bind to it and gain ~20× speed‑up.
-> - **[MacOS]** will automatically utilise the [Accelerate Framework](https://developer.apple.com/accelerate/).
-> - Image edit support for FLUX2 ( reference image to image, multi ref images to image ) 
+> [!NOTE]
+> Nativly parses .SafeTensor and .JSON files. 
+> Runs out‑of‑the‑box with no external dependencies.
+> uses lazy loading and native mmap() significantly saving memory to for systems with low RAM.
+> Hand written Intel x86_64 assembly code to squeeze out the best CPU performance possible.
+> **[Windows/Linux]** if OpenBLAS is present on it will automatically bind to it and gain ~20× speed‑up.
+> **[MacOS]** will automatically utilise the [Accelerate Framework](https://developer.apple.com/accelerate/).
+> Image edit support for FLUX2 ( reference image to image, multi ref images to image ) 
 
 
 ## Table of Contents
 
-- [Why Pure Pascal?](#why-pure-pascal)
+- [Why pure pascal?](#why-pure-pascal)
 - [Supported Models](#supported-models)
 - [Installation](#installation)
+- [Showcae](#showcase)
 - [Work in Progress](#work-in-progress) 
 - [Contribution](#contribution)
 
 
 
 
-## Why Pure Pascal? {#why-pure-pascal}
+## Why pure pascal?
 
 - **Zero Runtime** – The binary can be shipped to any machine without requiring a Pascal compiler or DLLs.
 - **Safety & Readability** – Pascal’s strong typing and modularity reduce bugs in tensor manipulation.
@@ -35,7 +35,7 @@ A Lightweight FLUX2 or ZImage Inference engine Written in Pure Pascal for (FPC, 
 
 ---
 
-## Supported Models {#supported-models}
+## Supported Models
 
 *Currently only the following weights are shipped:*
 
@@ -51,22 +51,39 @@ A Lightweight FLUX2 or ZImage Inference engine Written in Pure Pascal for (FPC, 
 **Requirement**
 
 Any of the two mainstream object pascal compilers :
-- [Lazarus-IDE + FPC 3.2 and above](https://www.lazarus-ide.org/) or
-- [Delphi 12 CE and above](https://www.embarcadero.com/products/delphi/starter)
+- [Lazarus-IDE + FPC 3.2 or above](https://www.lazarus-ide.org/) or
+- [Delphi 12 CE or above](https://www.embarcadero.com/products/delphi/starter)
 
 (Optional for Windows and Linux) :
 Installing [OpenBLAS](https://www.openmathlib.org/OpenBLAS/) will improve the CPU performance by ~X2 to 3 on x86_64 processors.
 
-OpenBLAS is not required for **MacOS** (Intel or Silicon Bases) since it will automatically use the native **Accelerate** Library.
+OpenBLAS is not required on **MacOS** _(Intel or Silicon)_ since it will automatically use the native **Accelerate** framework.
 
 
 **[Windows / Linux /MacOS]**
 Open the provided Project from the Example folder (If using Lazarus I recommend trying EnvisionGUI ) and hit **run** ▶️ *(Debug or Release)*
 
+## Showcase
+
+**Text To Image**
+
+
+<p align="left"><i>on linux (GTK2)</i><br/><img width="600" src="./Examples/Lazarus/EnvisionGUI/screenshot_linux.png"/></p>
+
+**Image to Image**
+
+<p align="left"><i>Windows</i><br/><img width="600" src="./Examples/Lazarus/EnvisionGUI/screenshot_venus_army.png"/></p>
+
+| Prompt | Originale Image | Generated Image |
+|:-|:-|:-|
+| *Make it smile and cartoonish!* | <img width="255" height="255" src="./Examples/Lazarus/EnvisionGUI/cheeta1.png"/> | <img width="255" height="255" src="./Examples/Lazarus/EnvisionGUI/cheeta_smiling.png"/> |
+| *Make her leading an aramy of steel robots, <br/>holding the same signboard.* | <img width="255" height="255" src="./Examples/Lazarus/EnvisionGUI/venus_pascal.png"/> | <img width="255" height="255" src="./Examples/Lazarus/EnvisionGUI/venus_robots.png"/> |
+
 ## Work in progress
 
 *(always in in pure pascal)*
-- Vulkan Support 
+
+- Vulkan support 
 - CUDA support
 - More models support *(working on [Microsoft Mage](https://github.com/microsoft/Mage) and [Krea2](https://github.com/krea-ai/krea-2) now so stay tuned)*.
 - Lightweight MCP Server for AI Agents.
