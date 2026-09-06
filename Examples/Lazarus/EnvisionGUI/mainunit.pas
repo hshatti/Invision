@@ -245,9 +245,9 @@ end;
 {$endif}
 
 {$if defined(MacOS) or defined(DARWIN)}
-const MODELS_DIR = '../../../../../models';
+const MODELS_DIR:string = '../../../../../models';
 {$else}
-const MODELS_DIR = '../../models';
+const MODELS_DIR:string = '../../models';
 {$endif}
 
 var AppPath : RawByteString;
@@ -819,6 +819,10 @@ end;
 
 procedure TMainForm.btnGenerateClick(Sender: TObject);
 begin
+  if modelEdit1.Items.count=0 then
+    if MessageDlg('No models found, Would you like to download a recommended one? [FLUX-klein-4B]', mtConfirmation, mbYesNo, 0) = mrYes then
+      mnuDL1.Click
+    else exit;
   if btnTxt2Img.Down then begin
     if (btnGenerate.Caption = 'Generate') then begin
       TControl(btnGenerate).Caption := 'Stop';
@@ -931,7 +935,10 @@ end;
 procedure TMainForm.FormCreate(Sender: TObject);
 var i:TQNNSchedule; s:ansistring;
 begin
-  DefaultFormatSettings.DecimalSeparator:='.';
+  DefaultFormatSettings.DecimalSeparator := '.';
+  if not DirectoryExists(AppPath + '/../../../Examples') then
+    MODELS_DIR := 'models';
+  if DirectoryExists(AppPath + MODELS_DIR) then ;
   checkExistingModels;
   if cmbModels.Items.count>0 then
     cmbModels.ItemIndex:=0;
@@ -1101,7 +1108,7 @@ begin
     pnlDL.Show;
     Application.ProcessMessages;
     model.OnProgress:=OnDownload;
-    model.download(appPath+'../../models');
+    model.download(appPath+MODELS_DIR);
     pnlDL.Hide;
   finally
 

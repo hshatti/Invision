@@ -27,6 +27,7 @@
           </Target>
           <SearchPaths>
             <IncludeFiles Value="$(ProjOutDir)"/>
+            <OtherUnitFiles Value="..\..\..\src"/>
             <UnitOutputDirectory Value="lib\$(TargetCPU)-$(TargetOS)"/>
           </SearchPaths>
           <CodeGeneration>
@@ -48,6 +49,10 @@
               </Win32>
             </Options>
           </Linking>
+          <Other>
+            <CustomOptions Value="-dUSE_MULTITHREADING
+-dUSE_AVX2"/>
+          </Other>
         </CompilerOptions>
       </Item>
     </BuildModes>
@@ -127,10 +132,6 @@
       <CustomOptions Value="-dUSE_MULTITHREADING
 -dUSE_PROFILING
 -dUSE_AVX2"/>
-      <OtherDefines Count="2">
-        <Define0 Value="USE_MULTITHREADING"/>
-        <Define1 Value="USE_CALLOC"/>
-      </OtherDefines>
     </Other>
   </CompilerOptions>
   <Debugging>

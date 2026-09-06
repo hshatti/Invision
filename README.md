@@ -8,7 +8,7 @@
 > [!NOTE]
 > - Natively parses .Safetensors and .JSON files. 
 > - Runs out‑of‑the‑box with no external dependencies.
-> - uses lazy loading and Disk Memory Mapping  ```mmap()``` significantly saving memory to for systems with low RAM.
+> - uses lazy loading and Disk Memory Mapping ```mmap()``` significantly saving memory for systems with low RAM.
 > - Hand written Intel x86_64 assembly code to squeeze out the best CPU performance possible.
 > - **[Windows/Linux]** if OpenBLAS is present on it will automatically bind to it and gain ~20× speed‑up.
 > - **[MacOS]** will automatically utilise the [Accelerate Framework](https://developer.apple.com/accelerate/).
