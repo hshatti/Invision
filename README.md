@@ -20,7 +20,7 @@
 - [Why pure pascal?](#why-pure-pascal)
 - [Supported Models](#supported-models)
 - [Installation](#installation)
-- [Showcae](#showcase)
+- [Showcase](#showcase)
 - [Work in Progress](#work-in-progress) 
 - [Contribution](#contribution)
 
@@ -60,6 +60,7 @@ Installing [OpenBLAS](https://www.openmathlib.org/OpenBLAS/) will improve the CP
 
 OpenBLAS is not required on **MacOS** _(Intel or Silicon)_ since it will automatically use the native **Accelerate** framework.
 
+**Building**
 
 **[Windows / Linux /MacOS]**
 Open the provided Project from the Example folder (If using Lazarus I recommend trying EnvisionGUI ) and hit **run** ▶️ *(Debug or Release)*
@@ -78,7 +79,7 @@ Open the provided Project from the Example folder (If using Lazarus I recommend 
 | Prompt | Originale Image | Generated Image |
 |:-|:-|:-|
 | *Make it smile and cartoonish!* | <img width="255" height="255" src="./Examples/Lazarus/EnvisionGUI/cheeta1.png"/> | <img width="255" height="255" src="./Examples/Lazarus/EnvisionGUI/cheeta_smiling.png"/> |
-| *Make her leading an aramy of steel robots, <br/>holding the same signboard.* | <img width="255" height="255" src="./Examples/Lazarus/EnvisionGUI/venus_pascal.png"/> | <img width="255" height="255" src="./Examples/Lazarus/EnvisionGUI/venus_robots.png"/> |
+| *Make her leading an army of steel robots, <br/>holding the same signboard.* | <img width="255" height="255" src="./Examples/Lazarus/EnvisionGUI/venus_pascal.png"/> | <img width="255" height="255" src="./Examples/Lazarus/EnvisionGUI/venus_robots.png"/> |
 
 ## Work in progress
 
@@ -92,14 +93,20 @@ Open the provided Project from the Example folder (If using Lazarus I recommend 
 - LoRA Support.
   
 ## Contribution
+
 Issues and suggestions are welcome.
+
+**Star :star:** this repository if you wish to see it improving.
 
 Pull requests are welcome too, please consider the following guidelines :
 - Rely on no external libraries or components, if you have to, make it optional not mandatory.
 - Stay with-in the FreePascal/Lazarus/Delphi native units and ensure that the code works the same on both Lazarus and Delphi.
 - if you have to use an optional dynamic linked (.so .dll .dylib) library, load it dynamically using ```loadlibrary()```, do not declare functions with ```external```, let the program load them if they were detected in the system.
 
-Donations :
+Donations (This will help improving this further):
 
 <p align="center"><a href="https://www.paypal.com/donate/?hosted_button_id=ANXTNK87HYP4Q"><img src="https://www.paypalobjects.com/en_US/i/btn/btn_donate_SM.gif" alt="Buy me coffee"/></a></p>
-Let me know what you would like to see in this library, your contribution will be acknowledged, generous donations will get your name recognised in the about forms.   
+
+Submit what improvements/features you would like to see in the [issues](https://github.com/hshatti/Envision/issues) section.
+
+Contribution will be acknowledged, generous donations will get your name recognised in the about forms.
