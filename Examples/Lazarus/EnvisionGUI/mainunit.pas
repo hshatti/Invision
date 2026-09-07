@@ -823,6 +823,7 @@ begin
     if MessageDlg('No models found, Would you like to download a recommended one? [FLUX-klein-4B]', mtConfirmation, mbYesNo, 0) = mrYes then
       mnuDL1.Click
     else exit;
+  checkExistingModels;
   if btnTxt2Img.Down then begin
     if (btnGenerate.Caption = 'Generate') then begin
       TControl(btnGenerate).Caption := 'Stop';
@@ -871,24 +872,28 @@ begin
       if MessageDlg('Overwrite ['+fn+'] ?', mtConfirmation, mbYesNo, 0)<>mrYes then exit;
     if btnTxt2Img.Down then begin
       image1.Picture.SaveToFile(fn);
-      TQNNImage.addPngMeta(fn, 'program', strMeta);
-      TQNNImage.addPngMeta(fn, 'json',
-                              '{"model" : "'+modeledit1.text+'"'+
-                              ', "prompt" : "'+StringReplace(memoPrompt.text, '"', '\"', [rfReplaceAll])+
-                              '", "seed" : '+edtSeed.text+
-                              ', "steps" : '+spnSteps.text);
+      if ExtractFileExt(fn)='.png' then begin
+        TQNNImage.addPngMeta(fn, 'program', strMeta);
+        TQNNImage.addPngMeta(fn, 'json',
+                                '{"model" : "'+modeledit1.text+'"'+
+                                ', "prompt" : "'+StringReplace(memoPrompt.text, '"', '\"', [rfReplaceAll])+
+                                '", "seed" : '+edtSeed.text+
+                                ', "steps" : '+spnSteps.text);
+
+      end;
 
     end
     else begin
       image2.Picture.SaveToFile(fn);
+      if ExtractFileExt(fn)='.png' then begin
 
-      TQNNImage.addPngMeta(fn,'program', strMeta);
-      TQNNImage.addPngMeta(fn, 'json',
+        TQNNImage.addPngMeta(fn,'program', strMeta);
+        TQNNImage.addPngMeta(fn, 'json',
                               '{"model" : "'+modeledit1.text+'"'+
                               ', "prompt" : "'+StringReplace(memoPrompt.text, '"', '\"', [rfReplaceAll])+
                               '", "seed" : '+edtSeed.text+
                               ', "steps" : '+spnSteps.text);
-
+      end
     end;
   end;
 end;
@@ -937,8 +942,7 @@ var i:TQNNSchedule; s:ansistring;
 begin
   DefaultFormatSettings.DecimalSeparator := '.';
   if not DirectoryExists(AppPath + '/../../../Examples') then
-    MODELS_DIR := 'models';
-  if DirectoryExists(AppPath + MODELS_DIR) then ;
+    MODELS_DIR := ExtractFileName(MODELS_DIR);
   checkExistingModels;
   if cmbModels.Items.count>0 then
     cmbModels.ItemIndex:=0;
