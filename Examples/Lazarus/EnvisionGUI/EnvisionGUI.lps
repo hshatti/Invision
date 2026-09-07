@@ -8,9 +8,8 @@
       <Unit>
         <Filename Value="EnvisionGUI.lpr"/>
         <IsPartOfProject Value="True"/>
-        <IsVisibleTab Value="True"/>
-        <EditorIndex Value="9"/>
-        <CursorPos X="31" Y="15"/>
+        <EditorIndex Value="11"/>
+        <CursorPos Y="15"/>
         <UsageCount Value="215"/>
         <Loaded Value="True"/>
       </Unit>
@@ -21,8 +20,9 @@
         <HasResources Value="True"/>
         <ResourceBaseClass Value="Form"/>
         <UnitName Value="mainUnit"/>
-        <TopLine Value="804"/>
-        <CursorPos X="127" Y="823"/>
+        <IsVisibleTab Value="True"/>
+        <TopLine Value="310"/>
+        <CursorPos X="28" Y="328"/>
         <UsageCount Value="215"/>
         <Loaded Value="True"/>
         <LoadedDesigner Value="True"/>
@@ -34,33 +34,33 @@
         <HasResources Value="True"/>
         <ResourceBaseClass Value="Form"/>
         <UnitName Value="unitAbout"/>
-        <EditorIndex Value="1"/>
+        <EditorIndex Value="3"/>
         <TopLine Value="35"/>
-        <CursorPos X="29" Y="52"/>
-        <UsageCount Value="163"/>
+        <CursorPos Y="58"/>
+        <UsageCount Value="168"/>
         <Loaded Value="True"/>
         <LoadedDesigner Value="True"/>
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\nhttp.pas"/>
         <UnitName Value="nHttp"/>
-        <EditorIndex Value="20"/>
-        <TopLine Value="125"/>
-        <CursorPos X="37" Y="147"/>
+        <EditorIndex Value="22"/>
+        <TopLine Value="553"/>
+        <CursorPos Y="584"/>
         <UsageCount Value="101"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\quickjson.pas"/>
-        <EditorIndex Value="27"/>
-        <TopLine Value="496"/>
-        <CursorPos Y="506"/>
+        <EditorIndex Value="29"/>
+        <TopLine Value="725"/>
+        <CursorPos Y="745"/>
         <UsageCount Value="107"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\quicknn_common.pas"/>
-        <EditorIndex Value="18"/>
+        <EditorIndex Value="20"/>
         <TopLine Value="249"/>
         <CursorPos X="23" Y="267"/>
         <UsageCount Value="107"/>
@@ -68,7 +68,7 @@
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\quicknn_qwen3.pas"/>
-        <EditorIndex Value="17"/>
+        <EditorIndex Value="19"/>
         <TopLine Value="743"/>
         <CursorPos X="10" Y="771"/>
         <UsageCount Value="107"/>
@@ -76,15 +76,15 @@
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\quicknn_flux.pas"/>
-        <EditorIndex Value="14"/>
-        <TopLine Value="69"/>
-        <CursorPos X="14" Y="87"/>
+        <EditorIndex Value="16"/>
+        <TopLine Value="101"/>
+        <CursorPos Y="119"/>
         <UsageCount Value="107"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\quicknn_transformers.pas"/>
-        <EditorIndex Value="15"/>
+        <EditorIndex Value="17"/>
         <TopLine Value="10"/>
         <CursorPos X="3" Y="31"/>
         <UsageCount Value="107"/>
@@ -92,7 +92,7 @@
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\quicknncpu.pas"/>
-        <EditorIndex Value="24"/>
+        <EditorIndex Value="26"/>
         <TopLine Value="3956"/>
         <CursorPos X="18" Y="3960"/>
         <UsageCount Value="105"/>
@@ -100,13 +100,13 @@
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\sixel.pas"/>
-        <EditorIndex Value="10"/>
+        <EditorIndex Value="12"/>
         <UsageCount Value="105"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\quicknn_kernels.pas"/>
-        <EditorIndex Value="16"/>
+        <EditorIndex Value="18"/>
         <TopLine Value="1738"/>
         <CursorPos X="46" Y="1762"/>
         <UsageCount Value="102"/>
@@ -114,7 +114,7 @@
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\ops_avx2.inc"/>
-        <EditorIndex Value="25"/>
+        <EditorIndex Value="27"/>
         <TopLine Value="1144"/>
         <CursorPos Y="1111"/>
         <UsageCount Value="101"/>
@@ -122,7 +122,7 @@
       </Unit>
       <Unit>
         <Filename Value="C:\Users\Sam\Downloads\oprs_simd.pas"/>
-        <EditorIndex Value="26"/>
+        <EditorIndex Value="28"/>
         <TopLine Value="39"/>
         <CursorPos X="75" Y="61"/>
         <UsageCount Value="100"/>
@@ -137,7 +137,7 @@
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\quicknn_zimage.pas"/>
-        <EditorIndex Value="6"/>
+        <EditorIndex Value="8"/>
         <TopLine Value="230"/>
         <CursorPos X="31" Y="290"/>
         <UsageCount Value="119"/>
@@ -145,7 +145,7 @@
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\quicknn_vae.pas"/>
-        <EditorIndex Value="8"/>
+        <EditorIndex Value="10"/>
         <TopLine Value="110"/>
         <CursorPos X="16" Y="139"/>
         <UsageCount Value="119"/>
@@ -153,7 +153,7 @@
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\safetensor.pas"/>
-        <EditorIndex Value="5"/>
+        <EditorIndex Value="7"/>
         <TopLine Value="410"/>
         <CursorPos X="44" Y="422"/>
         <UsageCount Value="118"/>
@@ -272,9 +272,9 @@
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\quicknn_downloader.pas"/>
-        <EditorIndex Value="19"/>
-        <TopLine Value="63"/>
-        <CursorPos Y="90"/>
+        <EditorIndex Value="21"/>
+        <TopLine Value="146"/>
+        <CursorPos X="65" Y="174"/>
         <UsageCount Value="106"/>
         <Loaded Value="True"/>
       </Unit>
@@ -288,14 +288,14 @@
       <Unit>
         <Filename Value="..\..\..\src\nvulkanhelper.pas"/>
         <UnitName Value="nVulkanHelper"/>
-        <EditorIndex Value="2"/>
+        <EditorIndex Value="4"/>
         <CursorPos X="20" Y="102"/>
         <UsageCount Value="107"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\quicknn_vulkan.pas"/>
-        <EditorIndex Value="4"/>
+        <EditorIndex Value="6"/>
         <TopLine Value="31"/>
         <CursorPos X="9" Y="62"/>
         <UsageCount Value="107"/>
@@ -303,7 +303,7 @@
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\vulkan_api.pas"/>
-        <EditorIndex Value="3"/>
+        <EditorIndex Value="5"/>
         <TopLine Value="41"/>
         <CursorPos Y="49"/>
         <UsageCount Value="107"/>
@@ -311,7 +311,7 @@
       </Unit>
       <Unit>
         <Filename Value="..\..\..\src\quicknn_sample.pas"/>
-        <EditorIndex Value="7"/>
+        <EditorIndex Value="9"/>
         <CursorPos X="10" Y="36"/>
         <UsageCount Value="106"/>
         <Loaded Value="True"/>
@@ -326,10 +326,11 @@
       </Unit>
       <Unit>
         <Filename Value="..\..\..\..\..\lazarus\lcl\include\application.inc"/>
-        <EditorIndex Value="-1"/>
-        <TopLine Value="433"/>
-        <CursorPos Y="452"/>
-        <UsageCount Value="42"/>
+        <EditorIndex Value="2"/>
+        <TopLine Value="1026"/>
+        <CursorPos Y="1045"/>
+        <UsageCount Value="44"/>
+        <Loaded Value="True"/>
       </Unit>
       <Unit>
         <Filename Value="..\..\..\..\..\lazarus\lcl\interfaces\nogui\interfaces.pp"/>
@@ -396,23 +397,23 @@
       </Unit>
       <Unit>
         <Filename Value="..\..\..\..\..\lazarus\fpc\3.3.1\source\rtl\objpas\classes\classesh.inc"/>
-        <EditorIndex Value="22"/>
+        <EditorIndex Value="24"/>
         <TopLine Value="1012"/>
         <CursorPos X="14" Y="1027"/>
-        <UsageCount Value="36"/>
+        <UsageCount Value="39"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
         <Filename Value="..\..\..\..\..\lazarus\fpc\3.3.1\source\rtl\objpas\classes\stringl.inc"/>
-        <EditorIndex Value="23"/>
+        <EditorIndex Value="25"/>
         <TopLine Value="1361"/>
         <CursorPos X="3" Y="1364"/>
-        <UsageCount Value="36"/>
+        <UsageCount Value="39"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
         <Filename Value="D:\development\projects\darknet\yolo4\pascal\source\NN\source\ntensors.pas"/>
-        <EditorIndex Value="11"/>
+        <EditorIndex Value="13"/>
         <CursorPos X="16" Y="1195"/>
         <UsageCount Value="100"/>
         <Loaded Value="True"/>
@@ -420,7 +421,7 @@
       <Unit>
         <Filename Value="..\..\..\src\nopmetrics.pas"/>
         <UnitName Value="nOpMetrics"/>
-        <EditorIndex Value="12"/>
+        <EditorIndex Value="14"/>
         <CursorPos X="200" Y="19"/>
         <UsageCount Value="100"/>
         <Loaded Value="True"/>
@@ -428,7 +429,7 @@
       <Unit>
         <Filename Value="..\..\..\src\nchrono.pas"/>
         <UnitName Value="nChrono"/>
-        <EditorIndex Value="13"/>
+        <EditorIndex Value="15"/>
         <TopLine Value="34"/>
         <UsageCount Value="100"/>
         <Loaded Value="True"/>
@@ -634,10 +635,10 @@
       <Unit>
         <Filename Value="..\..\..\..\..\lazarus\fpc\3.2.2\source\packages\paszlib\src\zipper.pp"/>
         <UnitName Value="Zipper"/>
-        <EditorIndex Value="21"/>
+        <EditorIndex Value="23"/>
         <TopLine Value="4"/>
-        <CursorPos X="29" Y="2760"/>
-        <UsageCount Value="34"/>
+        <CursorPos X="8" Y="2760"/>
+        <UsageCount Value="37"/>
         <Loaded Value="True"/>
       </Unit>
       <Unit>
@@ -647,127 +648,135 @@
         <CursorPos Y="58"/>
         <UsageCount Value="5"/>
       </Unit>
+      <Unit>
+        <Filename Value="..\..\..\..\..\lazarus\lcl\include\menuitem.inc"/>
+        <EditorIndex Value="1"/>
+        <TopLine Value="46"/>
+        <CursorPos Y="65"/>
+        <UsageCount Value="12"/>
+        <Loaded Value="True"/>
+      </Unit>
     </Units>
     <JumpHistory HistoryIndex="29">
       <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="937" Column="26" TopLine="906"/>
+        <Filename Value="..\..\..\src\nhttp.pas"/>
+        <Caret Line="571" TopLine="547"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\nhttp.pas"/>
+        <Caret Line="575" TopLine="547"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\nhttp.pas"/>
+        <Caret Line="576" TopLine="547"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\nhttp.pas"/>
+        <Caret Line="558" TopLine="547"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\nhttp.pas"/>
+        <Caret Line="584" TopLine="553"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\nhttp.pas"/>
+        <Caret Line="558" TopLine="551"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\nhttp.pas"/>
+        <Caret Line="584" TopLine="553"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknn_downloader.pas"/>
+        <Caret Line="170" TopLine="139"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknn_downloader.pas"/>
+        <Caret Line="171" TopLine="140"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknn_downloader.pas"/>
+        <Caret Line="172" TopLine="141"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknn_downloader.pas"/>
+        <Caret Line="173" TopLine="142"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknn_downloader.pas"/>
+        <Caret Line="175" TopLine="144"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknn_downloader.pas"/>
+        <Caret Line="177" TopLine="146"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknn_downloader.pas"/>
+        <Caret Line="170" TopLine="146"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknn_downloader.pas"/>
+        <Caret Line="171" TopLine="146"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknn_downloader.pas"/>
+        <Caret Line="172" TopLine="146"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknn_downloader.pas"/>
+        <Caret Line="173" TopLine="146"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknn_downloader.pas"/>
+        <Caret Line="175" TopLine="146"/>
+      </Position>
+      <Position>
+        <Filename Value="..\..\..\src\quicknn_downloader.pas"/>
+        <Caret Line="177" TopLine="146"/>
       </Position>
       <Position>
         <Filename Value="mainunit.pas"/>
-        <Caret Line="938" Column="38" TopLine="907"/>
+        <Caret Line="1098" Column="25" TopLine="1087"/>
       </Position>
       <Position>
         <Filename Value="mainunit.pas"/>
-        <Caret Line="939" Column="22" TopLine="908"/>
+        <Caret Line="403" Column="32" TopLine="390"/>
       </Position>
       <Position>
         <Filename Value="mainunit.pas"/>
-        <Caret Line="940" Column="15" TopLine="909"/>
+        <Caret Line="431" Column="17" TopLine="416"/>
       </Position>
       <Position>
         <Filename Value="mainunit.pas"/>
-        <Caret Line="941" Column="14" TopLine="919"/>
+        <Caret Line="887" Column="30" TopLine="870"/>
       </Position>
       <Position>
         <Filename Value="mainunit.pas"/>
-        <Caret Line="952" Column="12" TopLine="921"/>
+        <Caret Line="399" Column="21" TopLine="378"/>
       </Position>
       <Position>
         <Filename Value="mainunit.pas"/>
-        <Caret Line="957" Column="31" TopLine="926"/>
+        <Caret Line="431" Column="21" TopLine="410"/>
       </Position>
       <Position>
         <Filename Value="mainunit.pas"/>
-        <Caret Line="958" Column="81" TopLine="927"/>
+        <Caret Line="874" Column="32" TopLine="846"/>
       </Position>
       <Position>
         <Filename Value="mainunit.pas"/>
-        <Caret Line="960" Column="35" TopLine="929"/>
+        <Caret Line="887" Column="32" TopLine="856"/>
       </Position>
       <Position>
         <Filename Value="mainunit.pas"/>
-        <Caret Line="1108" Column="34" TopLine="1077"/>
+        <Caret Line="863" Column="3" TopLine="860"/>
       </Position>
       <Position>
         <Filename Value="mainunit.pas"/>
-        <Caret Line="1129" Column="40" TopLine="1098"/>
+        <Caret Line="1027" Column="3" TopLine="1019"/>
       </Position>
       <Position>
         <Filename Value="mainunit.pas"/>
-        <Caret Line="1134" Column="25" TopLine="1103"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="1129" Column="34" TopLine="1103"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="1108" Column="28" TopLine="1101"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="960" Column="29" TopLine="942"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="958" Column="27" TopLine="942"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="957" Column="25" TopLine="942"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="958" Column="81" TopLine="942"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="960" Column="35" TopLine="942"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="1108" Column="34" TopLine="1077"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="1129" Column="40" TopLine="1098"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="1108" Column="28" TopLine="1098"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="1129" Column="40" TopLine="1098"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="1134" Column="25" TopLine="1103"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="1138" Column="12" TopLine="1107"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="1142" Column="59" TopLine="1111"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="138" Column="102" TopLine="110"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="822" Column="3" TopLine="820"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="825" Column="14" TopLine="820"/>
-      </Position>
-      <Position>
-        <Filename Value="mainunit.pas"/>
-        <Caret Line="823" Column="127" TopLine="804"/>
+        <Caret Line="863" Column="3" TopLine="860"/>
       </Position>
     </JumpHistory>
     <RunParams>
@@ -775,15 +784,4 @@
       <Modes ActiveMode=""/>
     </RunParams>
   </ProjectSession>
-  <Debugging>
-    <BreakPoints>
-      <Item>
-        <Kind Value="bpkSource"/>
-        <WatchScope Value="wpsLocal"/>
-        <WatchKind Value="wpkWrite"/>
-        <Source Value="mainunit.pas"/>
-        <Line Value="939"/>
-      </Item>
-    </BreakPoints>
-  </Debugging>
 </CONFIG>

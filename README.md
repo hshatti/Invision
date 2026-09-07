@@ -1,9 +1,9 @@
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/b35a5277-6497-47ee-aef3-03539fc7772a"/>
+  <h1>Envision</h1>  
+  <h3>A Lightweight FLUX2 or ZImage Inference engine<br/>Written in Pure Pascal for (FPC, Lazarus or Delphi)</h3>
+</div>
 
-# Envision
-
-<h3 align="left">A Lightweight FLUX2 or ZImage Inference engine<br/>Written in Pure Pascal for (FPC, Lazarus or Delphi)</h3>
-
-![dreamy](https://github.com/user-attachments/assets/b35a5277-6497-47ee-aef3-03539fc7772a)  
 
 > [!NOTE]
 > - Natively parses .Safetensors and .JSON files. 

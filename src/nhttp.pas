@@ -3,6 +3,7 @@
 {$mode Delphi}
 {$modeswitch advancedrecords}
 {$endif}
+{$assertions on}
 interface
 
 uses
